@@ -1,0 +1,7 @@
+{
+  "name": "DineSplit - Modern Ordering & Bill Splitting",
+  "description": "A comprehensive restaurant application for table ordering, guest management, real-time order tracking, and sophisticated bill splitting.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
