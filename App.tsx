@@ -16,16 +16,13 @@ import ConfirmationView from './views/ConfirmationView';
 const SESSION_KEY = 'dinesplit_active_session';
 
 const App: React.FC = () => {
-  // 1. DETECCIÓN INMEDIATA (Sincrona) de parámetros para evitar parpadeos y cámara accidental
+  // Detection of URL parameters to decide initial bypass
   const searchParams = useMemo(() => new URLSearchParams(window.location.search), []);
   const resParam = searchParams.get('res');
   const tableParam = searchParams.get('table');
   
-  // Log de depuración prioritario para Vercel
-  console.log('[DineSplit] Render inicial. Parámetros detectados:', { res: resParam, table: tableParam });
-
   const [currentView, setCurrentView] = useState<AppView>('SCAN');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true); // Start as true to check context first
   const [error, setError] = useState<string | null>(null);
   
   const [restaurant, setRestaurant] = useState<any>(null);
@@ -43,43 +40,33 @@ const App: React.FC = () => {
   const [editingCartItem, setEditingCartItem] = useState<OrderItem | null>(null);
 
   /**
-   * Carga los datos del restaurante, mesa y menú.
-   * Maneja errores de Supabase sin romper el renderizado.
+   * Loads restaurant, table and menu data.
    */
-  const handleStartSession = useCallback(async (accessCode: string, tableNum: string, isFromStorage = false) => {
-    console.log(`[DineSplit] Iniciando sesión: Res=${accessCode}, Mesa=${tableNum}, Storage=${isFromStorage}`);
-    
-    if (!accessCode || !tableNum) {
-      setLoading(false);
-      return false;
-    }
-    
+  const handleStartSession = useCallback(async (accessCode: string, tableNum: string) => {
+    console.log(`[DineSplit] Starting session logic for: Res=${accessCode}, Table=${tableNum}`);
     setLoading(true);
     setError(null);
     const cleanCode = accessCode.trim().toUpperCase();
 
     try {
-      // Validación de cliente Supabase
-      if (!supabase) {
-        throw new Error("El cliente de Supabase no se pudo inicializar. Revisa las variables de entorno.");
-      }
+      if (!supabase) throw new Error("Database connection unavailable.");
 
-      // 1. Datos del Restaurante
+      // 1. Validate Restaurant
       const { data: resData, error: resError } = await supabase
         .from('restaurants')
         .select('*')
         .eq('access_code', cleanCode)
         .maybeSingle();
 
-      if (resError) throw new Error(`Error Supabase (Restaurante): ${resError.message}`);
+      if (resError) throw new Error(`Error fetching restaurant: ${resError.message}`);
       if (!resData) {
-        setError(`Restaurante "${cleanCode}" no encontrado.`);
+        setError(`El restaurante "${cleanCode}" no existe.`);
         localStorage.removeItem(SESSION_KEY);
         setLoading(false);
         return false;
       }
 
-      // 2. Datos de la Mesa
+      // 2. Validate Table
       const { data: tableData, error: tableError } = await supabase
         .from('tables')
         .select('*')
@@ -87,15 +74,15 @@ const App: React.FC = () => {
         .eq('table_number', parseInt(tableNum))
         .maybeSingle();
 
-      if (tableError) throw new Error(`Error Supabase (Mesa): ${tableError.message}`);
+      if (tableError) throw new Error(`Error fetching table: ${tableError.message}`);
       if (!tableData) {
-        setError(`Mesa ${tableNum} no registrada.`);
+        setError(`La mesa ${tableNum} no está configurada.`);
         localStorage.removeItem(SESSION_KEY);
         setLoading(false);
         return false;
       }
 
-      // 3. Datos del Mesero (Staff)
+      // 3. Load Staff
       let waiterInfo = null;
       if (tableData.waiter_id) {
         const { data: waiterData } = await supabase.from('waiters').select('*').eq('id', tableData.waiter_id).maybeSingle();
@@ -106,7 +93,7 @@ const App: React.FC = () => {
         waiterInfo = staffData;
       }
 
-      // 4. Datos del Menú
+      // 4. Load Menu
       const [catRes, itemRes] = await Promise.all([
         supabase.from('categories').select('*').eq('restaurant_id', resData.id).order('sort_order'),
         supabase.from('menu_items').select('*').eq('restaurant_id', resData.id).order('sort_order')
@@ -118,7 +105,6 @@ const App: React.FC = () => {
       setCategories(catRes.data || []);
       setMenuItems(itemRes.data || []);
       
-      // Persistir para evitar re-escaneo al refrescar
       localStorage.setItem(SESSION_KEY, JSON.stringify({
         res: cleanCode,
         table: tableNum,
@@ -130,44 +116,44 @@ const App: React.FC = () => {
       return true;
 
     } catch (err: any) {
-      console.error("[DineSplit] Error crítico:", err);
-      setError(`Problema de conexión: ${err.message || 'Error desconocido'}`);
+      console.error("[DineSplit] Init error:", err);
+      setError(`Error: ${err.message || 'Error de conexión'}`);
       setLoading(false);
       return false;
     }
   }, []);
 
   /**
-   * Efecto de inicialización: Prioriza Bypass de URL -> Storage -> Scan
+   * Effect to check URL bypass or storage on mount
    */
   useEffect(() => {
     const initApp = async () => {
-      // 1. Prioridad: URL
+      // Case 1: URL Parameters (Highest Priority)
       if (resParam && tableParam) {
-        console.log('[DineSplit] Aplicando Bypass de URL');
+        console.log('[DineSplit] Bypass URL parameters detected.');
         const success = await handleStartSession(resParam, tableParam);
         if (success) {
-          // Limpiar parámetros para una URL limpia, pero el estado ya está cargado
           window.history.replaceState({}, '', window.location.pathname);
           return;
         }
       }
 
-      // 2. Prioridad: Storage
+      // Case 2: Storage
       const savedSession = localStorage.getItem(SESSION_KEY);
       if (savedSession) {
         try {
           const { res, table, timestamp } = JSON.parse(savedSession);
           if (Date.now() - timestamp < 12 * 60 * 60 * 1000) {
-            const success = await handleStartSession(res, table, true);
+            const success = await handleStartSession(res, table);
             if (success) return;
           }
         } catch (e) {
-          console.error("Error leyendo storage");
+          console.error("Invalid session storage");
         }
       }
 
-      // 3. Fallback: Escaneo Manual
+      // Case 3: Manual Entrance (No automatic camera start)
+      console.log('[DineSplit] No valid context found. Directing to SCAN view.');
       setLoading(false);
       setCurrentView('SCAN');
     };
@@ -175,271 +161,79 @@ const App: React.FC = () => {
     initApp();
   }, [handleStartSession, resParam, tableParam]);
 
-  const navigate = useCallback((view: AppView) => {
-    setCurrentView(view);
-  }, []);
+  const navigate = (view: AppView) => setCurrentView(view);
 
-  const handleSendOrder = async () => {
-    if (cart.length === 0) return;
-    setLoading(true);
-    try {
-      const { data: orderData, error: orderError } = await supabase
-        .from('orders')
-        .insert({
-          restaurant_id: restaurant.id,
-          table_id: currentTable.id,
-          waiter_id: currentWaiter?.id,
-          status: 'PREPARING'
-        })
-        .select()
-        .single();
-
-      if (orderError) throw orderError;
-
-      const itemsToInsert = cart.map(item => ({
-        order_id: orderData.id,
-        menu_item_id: item.itemId,
-        guest_id: item.guestId,
-        quantity: item.quantity
-      }));
-
-      const { data: insertedItems, error: itemsError } = await supabase
-        .from('order_items')
-        .insert(itemsToInsert)
-        .select();
-
-      if (itemsError) throw itemsError;
-
-      const updatedCart = cart.map(cartItem => {
-        const dbItem = insertedItems.find(di => 
-          di.menu_item_id === cartItem.itemId && 
-          di.guest_id === cartItem.guestId
-        );
-        return {
-          ...cartItem,
-          id: dbItem ? dbItem.id : cartItem.id,
-          order_id: orderData.id
-        };
-      });
-
-      setCart(updatedCart);
-      setCurrentView('PROGRESS');
-    } catch (err: any) {
-      console.error("Error al persistir orden:", err);
-      alert(`No pudimos enviar tu orden: ${err.message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleAddToCart = useCallback((item: MenuItem, guestId: string, extras: string[], removedIngredients: string[]) => {
-    const newItem: OrderItem = {
-      id: Math.random().toString(36).substr(2, 9),
-      itemId: item.id,
-      guestId: guestId,
-      quantity: 1,
-      extras,
-      removedIngredients
-    };
-    setCart(prev => [...prev, newItem]);
-  }, []);
-
-  const handleUpdateCartItem = useCallback((cartItemId: string, updates: Partial<OrderItem>) => {
-    setCart(prev => prev.map(item => item.id === cartItemId ? { ...item, ...updates } : item));
-  }, []);
-
-  const handleUpdateQuantity = useCallback((id: string, delta: number) => {
-    setCart(prev => prev.map(item => {
-      if (item.id === id) {
-        const newQty = Math.max(1, item.quantity + delta);
-        return { ...item, quantity: newQty };
-      }
-      return item;
-    }));
-  }, []);
-
-  const handleEditItem = useCallback((cartItem: OrderItem) => {
-    setEditingCartItem(cartItem);
-    setCurrentView('MENU');
-  }, []);
-
-  const handleNavigateToCategory = useCallback((guestId: string, category: string) => {
-    setActiveGuestId(guestId);
-    setActiveCategory(category);
-    setCurrentView('MENU');
-  }, []);
-
-  // 1. Pantalla de Error (Previene blanco infinito)
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-background-dark p-8 text-center animate-fade-in">
-        <div className="size-20 bg-red-500/10 rounded-full flex items-center justify-center mb-6">
-          <span className="material-symbols-outlined text-red-500 text-4xl">error</span>
-        </div>
-        <h2 className="text-white text-2xl font-black mb-4">Error de Sincronización</h2>
-        <p className="text-text-secondary text-sm mb-8 leading-relaxed">{error}</p>
-        <button onClick={() => window.location.href = '/'} className="bg-primary text-background-dark px-8 py-3 rounded-xl font-bold active:scale-95 transition-transform">Reintentar</button>
+      <div className="flex flex-col items-center justify-center min-h-screen bg-background-dark p-8 text-center">
+        <span className="material-symbols-outlined text-red-500 text-5xl mb-4">error</span>
+        <h2 className="text-white text-xl font-bold mb-4">No pudimos conectar con tu mesa</h2>
+        <p className="text-text-secondary text-sm mb-8">{error}</p>
+        <button onClick={() => window.location.href = '/'} className="bg-primary text-background-dark px-8 py-3 rounded-xl font-bold">Volver al inicio</button>
       </div>
     );
   }
 
-  // 2. Pantalla de Carga (Prioridad mientras se procesa Bypass)
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-background-dark">
-        <div className="flex flex-col items-center gap-8">
-          <div className="relative">
-            <div className="size-28 border-4 border-primary/5 rounded-full"></div>
-            <div className="absolute top-0 size-28 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-            <div className="absolute inset-0 flex items-center justify-center">
-              <span className="material-symbols-outlined text-primary text-4xl animate-pulse">restaurant</span>
-            </div>
-          </div>
-          <div className="text-center px-10">
-            <h3 className="text-primary text-xl font-black tracking-[0.2em] uppercase mb-2 animate-pulse">DineSplit</h3>
-            <p className="text-text-secondary text-xs font-medium max-w-[220px] mx-auto leading-relaxed">Sincronizando mesa y cargando menú...</p>
-          </div>
+      <div className="flex flex-col items-center justify-center min-h-screen bg-background-dark">
+        <div className="size-16 border-4 border-primary border-t-transparent rounded-full animate-spin mb-6"></div>
+        <div className="text-center px-10">
+          <p className="text-primary text-xs font-black uppercase tracking-[0.2em] animate-pulse">Sincronizando Mesa</p>
         </div>
       </div>
     );
   }
 
   const renderView = () => {
-    // Si ya hay parámetros en la URL, NO permitimos que SCAN se renderice incluso si hay un fallo de lógica
-    // Esto es un renderizado de emergencia preventivo para la cámara
-    if ((resParam && tableParam) && currentView === 'SCAN') {
-      return (
-         <div className="flex-1 flex items-center justify-center p-8 text-center text-white">
-           <div className="flex flex-col items-center gap-4">
-             <div className="size-10 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
-             <p className="text-sm font-bold opacity-60">Redirigiendo a tu mesa...</p>
-           </div>
-         </div>
-      );
-    }
-
     switch (currentView) {
       case 'SCAN':
         return <ScanView onNext={handleStartSession} restaurantName={restaurant?.name} />;
       case 'GUEST_INFO':
         return (
           <GuestInfoView 
-            onBack={() => {
-              localStorage.removeItem(SESSION_KEY);
-              navigate('SCAN');
-            }} 
+            onBack={() => { localStorage.removeItem(SESSION_KEY); navigate('SCAN'); }} 
             onNext={() => navigate('MENU')} 
-            guests={guests} 
-            setGuests={setGuests} 
-            table={currentTable}
-            waiter={currentWaiter}
-            restaurant={restaurant}
+            guests={guests} setGuests={setGuests} table={currentTable} waiter={currentWaiter} restaurant={restaurant}
           />
         );
       case 'MENU':
         return (
           <MenuView 
-            onNext={() => navigate('ORDER_SUMMARY')} 
-            guests={guests} 
-            setGuests={setGuests} 
-            cart={cart} 
-            onAddToCart={handleAddToCart} 
-            onUpdateCartItem={handleUpdateCartItem}
+            onNext={() => navigate('ORDER_SUMMARY')} guests={guests} setGuests={setGuests} cart={cart} 
+            onAddToCart={(item, gId, ext, rem) => {
+              const newItem = { id: Math.random().toString(36).substr(2, 9), itemId: item.id, guestId: gId, quantity: 1, extras: ext, removedIngredients: rem };
+              setCart(prev => [...prev, newItem]);
+            }} 
+            onUpdateCartItem={(id, upd) => setCart(prev => prev.map(it => it.id === id ? {...it, ...upd} : it))}
             onIndividualShare={() => navigate('INDIVIDUAL_SHARE')}
-            selectedGuestId={activeGuestId}
-            onSelectGuest={setActiveGuestId}
-            initialCategory={activeCategory}
-            onCategoryChange={setActiveCategory}
-            editingCartItem={editingCartItem}
-            onCancelEdit={() => setEditingCartItem(null)}
-            menuItems={menuItems}
-            categories={categories}
-            restaurantName={restaurant?.name}
-            tableNumber={currentTable?.table_number}
+            selectedGuestId={activeGuestId} onSelectGuest={setActiveGuestId}
+            initialCategory={activeCategory} onCategoryChange={setActiveCategory}
+            editingCartItem={editingCartItem} onCancelEdit={() => setEditingCartItem(null)}
+            menuItems={menuItems} categories={categories} restaurantName={restaurant?.name} tableNumber={currentTable?.table_number}
           />
         );
       case 'ORDER_SUMMARY':
         return (
           <OrderSummaryView 
-            guests={guests}
-            cart={cart}
-            onBack={() => navigate('MENU')}
-            onNavigateToCategory={handleNavigateToCategory}
-            onEditItem={handleEditItem}
-            onSend={handleSendOrder}
-            onUpdateQuantity={handleUpdateQuantity}
-            menuItems={menuItems}
-            categories={categories}
-            tableNumber={currentTable?.table_number}
-            waiter={currentWaiter}
+            guests={guests} cart={cart} onBack={() => navigate('MENU')}
+            onNavigateToCategory={(gId, cat) => { setActiveGuestId(gId); setActiveCategory(cat); navigate('MENU'); }}
+            onEditItem={(item) => { setEditingCartItem(item); navigate('MENU'); }}
+            onSend={() => navigate('PROGRESS')}
+            onUpdateQuantity={(id, d) => setCart(prev => prev.map(it => it.id === id ? {...it, quantity: Math.max(1, it.quantity + d)} : it))}
+            menuItems={menuItems} categories={categories} tableNumber={currentTable?.table_number} waiter={currentWaiter}
           />
         );
       case 'PROGRESS':
-        return (
-          <OrderProgressView 
-            cart={cart}
-            onNext={() => navigate('SPLIT_BILL')}
-            onBack={() => navigate('MENU')}
-            tableNumber={currentTable?.table_number}
-            waiter={currentWaiter}
-          />
-        );
+        return <OrderProgressView cart={cart} onNext={() => navigate('SPLIT_BILL')} onBack={() => navigate('MENU')} tableNumber={currentTable?.table_number} waiter={currentWaiter} />;
       case 'SPLIT_BILL':
-        return (
-          <SplitBillView 
-            guests={guests}
-            cart={cart}
-            onBack={() => navigate('PROGRESS')}
-            onConfirm={() => navigate('CHECKOUT')}
-            menuItems={menuItems}
-          />
-        );
-      case 'INDIVIDUAL_SHARE':
-        return (
-          <IndividualShareView 
-            onBack={() => navigate('MENU')}
-            onPay={() => navigate('FEEDBACK')}
-          />
-        );
+        return <SplitBillView guests={guests} cart={cart} onBack={() => navigate('PROGRESS')} onConfirm={() => navigate('CHECKOUT')} menuItems={menuItems} />;
       case 'CHECKOUT':
-        return (
-          <CheckoutView 
-            onBack={() => navigate('SPLIT_BILL')}
-            onConfirm={() => navigate('FEEDBACK')}
-            cart={cart}
-            guests={guests}
-            menuItems={menuItems}
-            tableNumber={currentTable?.table_number}
-          />
-        );
+        return <CheckoutView onBack={() => navigate('SPLIT_BILL')} onConfirm={() => navigate('FEEDBACK')} cart={cart} guests={guests} menuItems={menuItems} tableNumber={currentTable?.table_number} />;
       case 'FEEDBACK':
-        return (
-          <FeedbackView 
-            onNext={() => {
-              localStorage.removeItem(SESSION_KEY);
-              navigate('CONFIRMATION');
-            }}
-            onSkip={() => {
-              localStorage.removeItem(SESSION_KEY);
-              navigate('CONFIRMATION');
-            }}
-            cart={cart}
-            menuItems={menuItems}
-            waiter={currentWaiter}
-            restaurant={restaurant}
-          />
-        );
+        return <FeedbackView onNext={() => navigate('CONFIRMATION')} onSkip={() => navigate('CONFIRMATION')} cart={cart} menuItems={menuItems} waiter={currentWaiter} restaurant={restaurant} />;
       case 'CONFIRMATION':
-        return (
-          <ConfirmationView 
-            onRestart={() => {
-              localStorage.removeItem(SESSION_KEY);
-              window.location.href = '/';
-            }}
-            guests={guests}
-            tableNumber={currentTable?.table_number}
-          />
-        );
+        return <ConfirmationView onRestart={() => { localStorage.removeItem(SESSION_KEY); window.location.href = '/'; }} guests={guests} tableNumber={currentTable?.table_number} />;
       default:
         return <ScanView onNext={handleStartSession} />;
     }

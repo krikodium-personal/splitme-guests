@@ -83,7 +83,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
         if (unit.assignedGuestIds.length > 0) {
           const portion = unit.unitPrice / unit.assignedGuestIds.length;
           unit.assignedGuestIds.forEach(gid => {
-            // FIX: Access shares with explicit fallback and ensure numeric addition
+            // Fix: Use Number() to resolve "Operator '+' cannot be applied to types 'unknown' and 'number'"
             const current = Number(shares[gid] || 0);
             shares[gid] = current + portion;
           });
@@ -94,7 +94,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
       cart.forEach(item => {
         const menuItem = menuItems.find(m => m.id === item.itemId);
         if (menuItem) {
-          // FIX: Access shares with explicit fallback and ensure numeric addition
+          // Fix: Use Number() to resolve "Operator '+' cannot be applied to types 'unknown' and 'number'"
           const current = Number(shares[item.guestId] || 0);
           shares[item.guestId] = current + (Number(menuItem.price) * item.quantity);
         }

@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 
-// Declaración global para la librería cargada por script
+// External QR library
 declare const Html5Qrcode: any;
 
 interface ScanViewProps {
@@ -15,57 +15,39 @@ const ScanView: React.FC<ScanViewProps> = ({ onNext, restaurantName }) => {
   const [tableNumber, setTableNumber] = useState('');
   const [scannerError, setScannerError] = useState<string | null>(null);
   const [isCameraActive, setIsCameraActive] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(false);
   
   const scannerRef = useRef<any>(null);
   const manualInputRef = useRef<HTMLInputElement>(null);
   const scannerId = "qr-reader";
 
+  // Shutdown scanner on unmount
   useEffect(() => {
-    // Verificar que la librería externa esté disponible antes de iniciar
-    if (typeof Html5Qrcode !== 'undefined') {
-      startScanner();
-    } else {
-      console.warn("Html5Qrcode no detectado, esperando...");
-      const checkInterval = setInterval(() => {
-        if (typeof Html5Qrcode !== 'undefined') {
-          clearInterval(checkInterval);
-          startScanner();
-        }
-      }, 500);
-      return () => clearInterval(checkInterval);
-    }
-
     return () => {
       stopScanner();
     };
   }, []);
 
-  // Efecto para enfocar el input cuando se abre el modal manual
-  useEffect(() => {
-    if (isManualModalOpen) {
-      const timer = setTimeout(() => {
-        manualInputRef.current?.focus();
-      }, 150); 
-      return () => clearTimeout(timer);
-    }
-  }, [isManualModalOpen]);
-
   const startScanner = async () => {
+    if (isCameraActive || isInitializing) return;
+
+    setIsInitializing(true);
+    setScannerError(null);
+
     try {
-      setScannerError(null);
-      
-      // Doble verificación de seguridad
+      // Ensure the script is available
       if (typeof Html5Qrcode === 'undefined') {
-        throw new Error("Librería de escaneo no cargada.");
+        throw new Error("Librería de escaneo no disponible. Reintenta.");
       }
 
+      // Initializing the component
       const html5QrCode = new Html5Qrcode(scannerId);
       scannerRef.current = html5QrCode;
 
       const config = { 
         fps: 10, 
         qrbox: { width: 250, height: 250 },
-        aspectRatio: 0.75 
+        aspectRatio: 1.0 
       };
 
       await html5QrCode.start(
@@ -74,13 +56,16 @@ const ScanView: React.FC<ScanViewProps> = ({ onNext, restaurantName }) => {
         onScanSuccess,
         onScanFailure
       );
+      
       setIsCameraActive(true);
     } catch (err: any) {
-      console.error("Error iniciando cámara:", err);
+      console.error("Camera access error:", err);
       setScannerError(err.message?.includes("Permission") 
-        ? "Permiso de cámara denegado. Por favor activa la cámara o usa el ingreso manual." 
-        : "No pudimos conectar con la cámara.");
+        ? "Acceso a cámara denegado. Actívala o ingresa el código manualmente." 
+        : "No pudimos iniciar la cámara.");
       setIsCameraActive(false);
+    } finally {
+      setIsInitializing(false);
     }
   };
 
@@ -88,204 +73,150 @@ const ScanView: React.FC<ScanViewProps> = ({ onNext, restaurantName }) => {
     if (scannerRef.current && scannerRef.current.isScanning) {
       try {
         await scannerRef.current.stop();
+        setIsCameraActive(false);
       } catch (err) {
-        console.error("Error deteniendo el scanner:", err);
+        console.error("Stop error:", err);
       }
     }
   };
 
   const onScanSuccess = (decodedText: string) => {
-    console.log(`Código detectado: ${decodedText}`);
-    
     let resCode = "";
     let tableNum = "";
 
     try {
-      // 1. Intentar detectar parámetros de consulta (res=...&table=...)
       if (decodedText.includes("?")) {
-        const queryPart = decodedText.split('?')[1];
-        const params = new URLSearchParams(queryPart);
+        const params = new URLSearchParams(decodedText.split('?')[1]);
         resCode = params.get('res') || "";
         tableNum = params.get('table') || "";
       } 
       
-      // 2. Si no hay parámetros de consulta, intentar parseo por segmentos de ruta
       if (!resCode || !tableNum) {
-        if (decodedText.includes("://")) {
-          // Formatos: "https://dinesplit.app/LAP006/1"
-          const urlObj = new URL(decodedText);
-          const pathParts = urlObj.pathname.split('/').filter(Boolean);
-          if (pathParts.length >= 2) {
-            tableNum = pathParts.pop() || "";
-            resCode = pathParts.pop() || "";
-          }
-        } else {
-          // Formatos: "LAP006-1", "LAP006/1", "LAP006 1"
-          const separators = /[-/: ]/;
-          const parts = decodedText.split(separators);
-          if (parts.length >= 2) {
-            resCode = parts[0];
-            tableNum = parts[1];
-          } else {
-            // Caso borde: solo un código
-            resCode = decodedText;
-          }
+        const parts = decodedText.split(/[-/: ]/);
+        if (parts.length >= 2) {
+          resCode = parts[parts.length - 2];
+          tableNum = parts[parts.length - 1];
         }
       }
 
       if (resCode && tableNum) {
         stopScanner();
-        onNext(resCode.toUpperCase(), tableNum);
+        onNext(resCode, tableNum);
       }
     } catch (e) {
-      console.error("Error parseando código:", e);
-      // Fallback simple: dividir por separadores comunes
-      const separators = /[-/: ]/;
-      const parts = decodedText.split(separators);
-      if (parts.length >= 2) {
-        stopScanner();
-        onNext(parts[0].toUpperCase(), parts[1]);
-      }
+      console.error("Parse error:", e);
     }
   };
 
-  const onScanFailure = (error: any) => {
-    // No alertamos en cada fallo de lectura (es normal mientras busca el QR)
-  };
+  const onScanFailure = () => {};
 
   const handleManualConfirm = (e: React.FormEvent) => {
     e.preventDefault();
     if (restaurantCode && tableNumber) {
-      stopScanner();
-      onNext(restaurantCode.toUpperCase(), tableNumber);
-    } else {
-      alert("Por favor ingresa ambos datos");
+      onNext(restaurantCode, tableNumber);
     }
   };
 
   return (
-    <div className="relative flex flex-col flex-1 overflow-hidden bg-background-dark animate-fade-in">
+    <div className="relative flex flex-col flex-1 bg-background-dark animate-fade-in overflow-hidden">
       <div className="h-12 shrink-0"></div>
-      <div className="flex items-center px-4 py-2 justify-between shrink-0 z-20">
+      
+      <div className="flex items-center px-6 justify-between shrink-0 z-20">
         <div className="flex flex-col">
           <span className="text-[10px] font-black text-primary uppercase tracking-[0.2em]">Bienvenido a</span>
-          <h2 className="text-white text-lg font-bold leading-tight tracking-tight">{restaurantName || 'DineSplit'}</h2>
+          <h2 className="text-white text-xl font-bold">{restaurantName || 'DineSplit'}</h2>
         </div>
-        <button className="flex size-10 items-center justify-center rounded-full hover:bg-white/10 transition-colors">
-          <span className="material-symbols-outlined text-white">help</span>
+        <button onClick={() => setIsManualModalOpen(true)} className="size-10 flex items-center justify-center rounded-full bg-white/5 text-white">
+          <span className="material-symbols-outlined">help</span>
         </button>
       </div>
 
-      <div className="flex-1 flex flex-col items-center justify-start pt-4 relative">
-        <div className="text-center px-6 mb-2 shrink-0 z-20">
-          <h1 className="text-3xl font-extrabold tracking-tight mb-2 text-white">¡A comer se ha dicho!</h1>
-          <p className="text-text-secondary text-sm">Escanea el código QR de tu mesa para ordenar.</p>
+      <div className="flex-1 flex flex-col items-center justify-center px-8 relative">
+        <div className="text-center mb-10">
+          <h1 className="text-3xl font-extrabold text-white mb-3">¡Bienvenido!</h1>
+          <p className="text-text-secondary text-sm">Escanea el código QR de tu mesa para empezar a pedir.</p>
         </div>
 
-        <div className="relative w-full max-w-[340px] aspect-[3/4] my-6 rounded-[2.5rem] overflow-hidden shadow-2xl border border-white/10 group bg-black/40">
-          <div id={scannerId} className="w-full h-full"></div>
+        {/* Scanner Container */}
+        <div className="relative w-full max-w-[320px] aspect-square rounded-[3rem] overflow-hidden bg-black/40 border border-white/10 shadow-2xl flex items-center justify-center">
+          <div id={scannerId} className={`w-full h-full absolute inset-0 transition-opacity duration-700 ${isCameraActive ? 'opacity-100' : 'opacity-0'}`}></div>
 
           {!isCameraActive && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center bg-surface-dark/95 backdrop-blur-md z-30">
-               <span className="material-symbols-outlined text-primary text-5xl mb-4">no_photography</span>
-               <p className="text-white text-sm font-bold mb-6 leading-relaxed">{scannerError || "Inicializando cámara..."}</p>
-               <div className="flex flex-col gap-3 w-full">
-                  <button onClick={startScanner} className="bg-primary text-background-dark w-full py-3 rounded-xl text-xs font-black uppercase tracking-widest active:scale-95 transition-transform">Reintentar Cámara</button>
-                  <button onClick={() => setIsManualModalOpen(true)} className="bg-white/5 border border-white/10 text-white w-full py-3 rounded-xl text-xs font-black uppercase tracking-widest active:scale-95 transition-transform">Ingreso Manual</button>
-               </div>
+            <div className="relative z-10 flex flex-col items-center p-8 text-center animate-fade-in">
+              {isInitializing ? (
+                <>
+                  <div className="size-12 border-4 border-primary border-t-transparent rounded-full animate-spin mb-4"></div>
+                  <p className="text-white text-xs font-bold uppercase tracking-widest">Iniciando...</p>
+                </>
+              ) : (
+                <>
+                  <div className="size-20 bg-primary/10 rounded-full flex items-center justify-center mb-6">
+                    <span className="material-symbols-outlined text-primary text-5xl">qr_code_scanner</span>
+                  </div>
+                  {scannerError && <p className="text-red-400 text-xs font-bold mb-4">{scannerError}</p>}
+                  <button 
+                    onClick={startScanner} 
+                    className="bg-primary text-background-dark px-8 py-4 rounded-2xl text-sm font-black uppercase tracking-widest shadow-xl shadow-primary/20 active:scale-95 transition-transform"
+                  >
+                    Activar Cámara
+                  </button>
+                </>
+              )}
             </div>
           )}
 
-          <div className="absolute inset-0 pointer-events-none p-6 flex flex-col justify-between z-10">
-            <div className="flex justify-between">
-              <div className="w-12 h-12 border-l-4 border-t-4 border-primary rounded-tl-2xl shadow-[0_0_15px_rgba(19,236,106,0.5)]"></div>
-              <div className="w-12 h-12 border-r-4 border-t-4 border-primary rounded-tr-2xl shadow-[0_0_15px_rgba(19,236,106,0.5)]"></div>
-            </div>
-            
-            <div className="absolute left-0 w-full h-[2px] bg-primary shadow-[0_0_10px_#13ec6a] animate-scan opacity-50"></div>
-            
-            <div className="flex justify-between">
-              <div className="w-12 h-12 border-l-4 border-b-4 border-primary rounded-bl-2xl shadow-[0_0_15px_rgba(19,236,106,0.5)]"></div>
-              <div className="w-12 h-12 border-r-4 border-b-4 border-primary rounded-br-2xl shadow-[0_0_15px_rgba(19,236,106,0.5)]"></div>
-            </div>
-          </div>
+          {isCameraActive && (
+             <div className="absolute inset-0 pointer-events-none z-20">
+                <div className="absolute top-0 left-0 w-full h-full border-[1.5rem] border-background-dark/20"></div>
+                <div className="absolute inset-6 border-2 border-primary/40 rounded-[2rem]"></div>
+                <div className="absolute left-0 top-[10%] w-full h-[2px] bg-primary/60 shadow-[0_0_15px_#13ec6a] animate-scan"></div>
+             </div>
+          )}
         </div>
 
-        <div className="flex flex-col items-center gap-6 w-full px-6 mt-auto pb-10 z-20">
-          <div className="flex items-center gap-3 w-full">
-            <div className="h-[1px] bg-white/10 flex-1"></div>
-            <span className="text-xs uppercase font-black text-slate-500 tracking-widest">O</span>
-            <div className="h-[1px] bg-white/10 flex-1"></div>
+        <div className="mt-12 w-full flex flex-col items-center gap-6">
+          <div className="flex items-center gap-4 w-full opacity-30">
+            <div className="h-[1px] bg-white flex-1"></div>
+            <span className="text-[10px] font-black uppercase text-white tracking-widest">O</span>
+            <div className="h-[1px] bg-white flex-1"></div>
           </div>
           
           <button 
             onClick={() => setIsManualModalOpen(true)}
-            className="w-full h-16 bg-white/5 border border-white/10 rounded-2xl flex items-center justify-between px-6 hover:bg-white/10 active:scale-[0.98] transition-all duration-200 group"
+            className="w-full h-14 bg-white/5 border border-white/10 rounded-2xl flex items-center justify-center gap-3 active:scale-95 transition-all"
           >
-            <span className="text-white font-bold text-lg">Ingreso manual</span>
-            <div className="size-10 rounded-full bg-white flex items-center justify-center group-hover:bg-primary transition-colors">
-              <span className="material-symbols-outlined text-black text-[20px] font-bold">dialpad</span>
-            </div>
+            <span className="material-symbols-outlined text-white text-xl">dialpad</span>
+            <span className="text-white font-bold">Ingreso Manual</span>
           </button>
         </div>
       </div>
 
       {isManualModalOpen && (
-        <div className="fixed inset-0 z-[100] flex flex-col justify-end animate-fade-in">
+        <div className="fixed inset-0 z-[100] flex flex-col justify-end">
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setIsManualModalOpen(false)}></div>
-          <div className="bg-surface-dark w-full max-w-md mx-auto rounded-t-[32px] overflow-hidden flex flex-col relative z-10 animate-fade-in-up border-t border-white/10 shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
-            <div className="flex justify-center pt-3 pb-1 shrink-0">
-              <div className="w-12 h-1.5 bg-white/20 rounded-full"></div>
-            </div>
-
-            <div className="px-6 py-4 flex items-center justify-between border-b border-white/5">
-              <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                <span className="material-symbols-outlined text-primary">login</span>
-                Acceso Manual
-              </h2>
-              <button onClick={() => setIsManualModalOpen(false)} className="size-10 rounded-full bg-white/5 flex items-center justify-center text-text-secondary hover:text-white transition-colors">
-                <span className="material-symbols-outlined">close</span>
+          <div className="bg-surface-dark w-full rounded-t-[32px] p-8 border-t border-white/10 relative z-10 animate-fade-in-up">
+            <h2 className="text-2xl font-black text-white mb-8">Acceso Manual</h2>
+            <form onSubmit={handleManualConfirm} className="space-y-6">
+              <div>
+                <label className="text-[10px] font-black text-text-secondary uppercase tracking-widest block mb-2">Código Local</label>
+                <input 
+                  type="text" value={restaurantCode} onChange={e => setRestaurantCode(e.target.value.toUpperCase())}
+                  placeholder="Ej: LAP006" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-4 text-white text-xl font-bold outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-text-secondary uppercase tracking-widest block mb-2">Número de Mesa</label>
+                <input 
+                  type="number" value={tableNumber} onChange={e => setTableNumber(e.target.value)}
+                  placeholder="Ej: 1" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-4 text-white text-xl font-bold outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+              <button 
+                type="submit" disabled={!restaurantCode || !tableNumber}
+                className="w-full h-16 bg-primary text-background-dark rounded-2xl font-black text-lg disabled:opacity-30 transition-all"
+              >
+                Ingresar a la mesa
               </button>
-            </div>
-
-            <form onSubmit={handleManualConfirm} className="p-8 space-y-6">
-              <div className="space-y-4">
-                <div>
-                  <label className="text-text-secondary text-[10px] font-black uppercase tracking-widest mb-2 block pl-1">Código Restaurante</label>
-                  <input 
-                    ref={manualInputRef}
-                    type="text" 
-                    placeholder="Ej: LAP006"
-                    value={restaurantCode}
-                    onChange={(e) => setRestaurantCode(e.target.value.toUpperCase())}
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-4 text-white text-xl font-bold focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all placeholder-white/10"
-                  />
-                </div>
-                
-                <div>
-                  <label className="text-text-secondary text-[10px] font-black uppercase tracking-widest mb-2 block pl-1">Número de Mesa</label>
-                  <input 
-                    type="number" 
-                    placeholder="Ej: 1"
-                    value={tableNumber}
-                    onChange={(e) => setTableNumber(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-4 text-white text-xl font-bold focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all placeholder-white/10"
-                  />
-                </div>
-              </div>
-
-              <div className="pt-4">
-                <button 
-                  type="submit"
-                  disabled={!restaurantCode || !tableNumber}
-                  className={`w-full h-16 rounded-2xl font-black text-lg flex items-center justify-center gap-3 transition-all ${
-                    (restaurantCode && tableNumber) ? 'bg-primary text-background-dark shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98]' : 'bg-white/5 text-white/20 cursor-not-allowed'
-                  }`}
-                >
-                  <span>Ingresar a la Mesa</span>
-                  <span className="material-symbols-outlined font-bold">sync</span>
-                </button>
-              </div>
             </form>
           </div>
         </div>
