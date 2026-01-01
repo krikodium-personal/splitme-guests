@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useEffect } from 'react';
 import { Guest, OrderItem, MenuItem } from '../types';
 import { getInitials, getGuestColor } from './GuestInfoView';
@@ -65,34 +64,51 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
   const grandTotal = subtotal + taxesValue + serviceChargeValue;
 
   const guestShares = useMemo(() => {
+    // Explicitly initializing shares and ensuring keys exist to avoid 'unknown' or 'undefined' errors during addition.
     const shares: Record<string, number> = {};
-    guests.forEach(g => shares[g.id] = 0);
+    guests.forEach(g => {
+      shares[g.id] = 0;
+    });
 
     if (method === 'equal') {
       const participantCount = selectedForEqual.length;
       if (participantCount > 0) {
         const perGuest = subtotal / participantCount;
-        selectedForEqual.forEach(gid => shares[gid] = perGuest);
+        selectedForEqual.forEach(gid => {
+          shares[gid] = perGuest;
+        });
       }
     } else if (method === 'item') {
       assignments.forEach(unit => {
         if (unit.assignedGuestIds.length > 0) {
           const portion = unit.unitPrice / unit.assignedGuestIds.length;
-          unit.assignedGuestIds.forEach(gid => shares[gid] += portion);
+          unit.assignedGuestIds.forEach(gid => {
+            // Fix: Using explicit addition and nullish coalescing to avoid 'unknown' or operator errors.
+            shares[gid] = (shares[gid] ?? 0) + portion;
+          });
         }
       });
     } else if (method === 'guest') {
       // Original cart order
       cart.forEach(item => {
         const menuItem = menuItems.find(m => m.id === item.itemId);
-        if (menuItem) shares[item.guestId] += Number(menuItem.price) * item.quantity;
+        if (menuItem) {
+          // Fix: Ensuring shares[id] is treated as number before addition.
+          shares[item.guestId] = (shares[item.guestId] ?? 0) + Number(menuItem.price) * item.quantity;
+        }
       });
     } else if (method === 'custom') {
-      guests.forEach(g => shares[g.id] = parseFloat(customAmounts[g.id]) || 0);
+      guests.forEach(g => {
+        // Fix: Checking customAmounts value before passing to parseFloat to avoid 'unknown' or 'undefined' errors.
+        const val = customAmounts[g.id];
+        const valStr = typeof val === 'string' ? val : '0';
+        shares[g.id] = parseFloat(valStr) || 0;
+      });
     }
 
     return guests.map(g => {
-      const guestSubtotal = shares[g.id];
+      // Safely access calculated share
+      const guestSubtotal = shares[g.id] ?? 0;
       const guestTotal = guestSubtotal * (1 + taxRate + serviceRate);
       
       const items = cart
@@ -108,11 +124,11 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
 
       return { ...g, subtotal: guestSubtotal, total: guestTotal, items };
     });
-  }, [method, selectedForEqual, assignments, customAmounts, cart, guests, menuItems, subtotal]);
+  }, [method, selectedForEqual, assignments, customAmounts, cart, guests, menuItems, subtotal, taxRate, serviceRate]);
 
   const assignedSubtotal = useMemo(() => {
     if (method === 'item') return assignments.filter(a => a.assignedGuestIds.length > 0).reduce((sum, a) => sum + a.unitPrice, 0);
-    if (method === 'custom') return Object.values(customAmounts).reduce((sum, val) => sum + (parseFloat(val) || 0), 0);
+    if (method === 'custom') return Object.values(customAmounts).reduce((sum, val) => sum + (parseFloat(val as string) || 0), 0);
     if (method === 'equal') return selectedForEqual.length > 0 ? subtotal : 0;
     return subtotal; 
   }, [method, assignments, customAmounts, selectedForEqual, subtotal]);

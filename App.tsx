@@ -13,9 +13,11 @@ import CheckoutView from './views/CheckoutView';
 import FeedbackView from './views/FeedbackView';
 import ConfirmationView from './views/ConfirmationView';
 
+const SESSION_KEY = 'dinesplit_active_session';
+
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<AppView>('SCAN');
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true); // Iniciamos en true para el check de sesión
   const [restaurant, setRestaurant] = useState<any>(null);
   const [currentTable, setCurrentTable] = useState<any>(null);
   const [currentWaiter, setCurrentWaiter] = useState<any>(null);
@@ -30,12 +32,21 @@ const App: React.FC = () => {
   const [cart, setCart] = useState<OrderItem[]>([]);
   const [editingCartItem, setEditingCartItem] = useState<OrderItem | null>(null);
 
-  const handleStartSession = useCallback(async (accessCode: string, tableNum: string) => {
-    if (!accessCode || !tableNum) return;
+  /**
+   * Función central para iniciar sesión en una mesa.
+   * Valida datos en Supabase, carga el menú y persiste la sesión localmente.
+   */
+  const handleStartSession = useCallback(async (accessCode: string, tableNum: string, isFromStorage = false) => {
+    if (!accessCode || !tableNum) {
+      setLoading(false);
+      return;
+    }
+    
     setLoading(true);
     const cleanCode = accessCode.trim().toUpperCase();
 
     try {
+      // 1. Validar Restaurante
       const { data: resData, error: resError } = await supabase
         .from('restaurants')
         .select('*')
@@ -43,11 +54,13 @@ const App: React.FC = () => {
         .maybeSingle();
 
       if (resError || !resData) {
-        alert("Código de restaurante no encontrado. Verifica que sea LAP006");
+        if (!isFromStorage) alert("Código de restaurante no válido.");
+        localStorage.removeItem(SESSION_KEY);
         setLoading(false);
         return;
       }
 
+      // 2. Validar Mesa
       const { data: tableData, error: tableError } = await supabase
         .from('tables')
         .select('*')
@@ -56,14 +69,13 @@ const App: React.FC = () => {
         .maybeSingle();
 
       if (tableError || !tableData) {
-        alert(`La mesa ${tableNum} no existe en este restaurante`);
+        if (!isFromStorage) alert(`Mesa ${tableNum} no encontrada.`);
+        localStorage.removeItem(SESSION_KEY);
         setLoading(false);
         return;
       }
 
-      setRestaurant(resData);
-      setCurrentTable(tableData);
-
+      // 3. Cargar Staff/Mesero
       let waiterInfo = null;
       if (tableData.waiter_id) {
         const { data: waiterData } = await supabase
@@ -83,31 +95,84 @@ const App: React.FC = () => {
           .maybeSingle();
         waiterInfo = staffData;
       }
-      
-      setCurrentWaiter(waiterInfo);
 
+      // 4. Cargar Menú y Categorías
       const [catRes, itemRes] = await Promise.all([
         supabase.from('categories').select('*').eq('restaurant_id', resData.id),
         supabase.from('menu_items').select('*').eq('restaurant_id', resData.id)
       ]);
 
+      // Guardar en estado
+      setRestaurant(resData);
+      setCurrentTable(tableData);
+      setCurrentWaiter(waiterInfo);
       setCategories(catRes.data || []);
       setMenuItems(itemRes.data || []);
       
-      setCurrentView('GUEST_INFO');
+      // Persistir en LocalStorage para recargas de página
+      localStorage.setItem(SESSION_KEY, JSON.stringify({
+        res: cleanCode,
+        table: tableNum,
+        timestamp: Date.now()
+      }));
+
+      // Si la sesión es nueva (no viene de storage), vamos a configurar invitados
+      // Si viene de storage, intentamos mantener la vista actual o ir al menú
+      setCurrentView(prev => prev === 'SCAN' ? 'GUEST_INFO' : prev);
+
     } catch (err) {
-      console.error("Error en la sesión:", err);
-      alert("Error de conexión con el servidor");
+      console.error("Error crítico en auto-login:", err);
+      localStorage.removeItem(SESSION_KEY);
     } finally {
       setLoading(false);
     }
   }, []);
 
+  /**
+   * Efecto Inicial: 
+   * 1. Revisa parámetros URL (Prioridad máxima)
+   * 2. Revisa LocalStorage (Persistencia)
+   */
+  useEffect(() => {
+    const initSession = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const resParam = params.get('res');
+      const tableParam = params.get('table');
+
+      // Caso A: El usuario escaneó un QR o entró con link directo
+      if (resParam && tableParam) {
+        await handleStartSession(resParam, tableParam);
+        // Limpiar URL para una estética limpia
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, '', newUrl);
+        return;
+      }
+
+      // Caso B: El usuario refrescó la página (Buscar sesión guardada)
+      const savedSession = localStorage.getItem(SESSION_KEY);
+      if (savedSession) {
+        const { res, table, timestamp } = JSON.parse(savedSession);
+        // Validar que la sesión no sea de hace más de 12 horas (opcional)
+        if (Date.now() - timestamp < 12 * 60 * 60 * 1000) {
+          await handleStartSession(res, table, true);
+          // Si ya teníamos datos de la sesión, podemos saltar a MENU si ya hay invitados
+          // Por simplicidad, lo dejamos en handleStartSession que setea GUEST_INFO si viene de SCAN
+        } else {
+          localStorage.removeItem(SESSION_KEY);
+          setLoading(false);
+        }
+      } else {
+        setLoading(false);
+      }
+    };
+
+    initSession();
+  }, [handleStartSession]);
+
   const handleSendOrder = async () => {
     if (cart.length === 0) return;
     setLoading(true);
     try {
-      // 1. Crear la Orden principal
       const { data: orderData, error: orderError } = await supabase
         .from('orders')
         .insert({
@@ -121,7 +186,6 @@ const App: React.FC = () => {
 
       if (orderError) throw orderError;
 
-      // 2. Insertar Items de la Orden
       const itemsToInsert = cart.map(item => ({
         order_id: orderData.id,
         menu_item_id: item.itemId,
@@ -136,17 +200,15 @@ const App: React.FC = () => {
 
       if (itemsError) throw itemsError;
 
-      // 3. Actualizar Carrito con IDs de DB (UUIDs) para el Feedback
       const updatedCart = cart.map(cartItem => {
-        // Buscamos el item insertado que corresponde
         const dbItem = insertedItems.find(di => 
           di.menu_item_id === cartItem.itemId && 
           di.guest_id === cartItem.guestId
         );
         return {
           ...cartItem,
-          id: dbItem ? dbItem.id : cartItem.id, // Reemplazar temporal por UUID
-          order_id: orderData.id // Guardar referencia de orden
+          id: dbItem ? dbItem.id : cartItem.id,
+          order_id: orderData.id
         };
       });
 
@@ -159,18 +221,6 @@ const App: React.FC = () => {
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const res = params.get('res');
-    const table = params.get('table');
-
-    if (res && table) {
-      handleStartSession(res, table);
-      const newUrl = window.location.pathname;
-      window.history.replaceState({}, '', newUrl);
-    }
-  }, [handleStartSession]);
 
   const navigate = useCallback((view: AppView) => {
     setCurrentView(view);
@@ -221,12 +271,12 @@ const App: React.FC = () => {
             <div className="size-20 border-4 border-primary/20 rounded-full"></div>
             <div className="absolute top-0 size-20 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
             <div className="absolute inset-0 flex items-center justify-center">
-              <span className="material-symbols-outlined text-primary text-3xl animate-pulse">qr_code_scanner</span>
+              <span className="material-symbols-outlined text-primary text-3xl animate-pulse">restaurant</span>
             </div>
           </div>
           <div className="text-center">
-            <p className="text-primary text-xl font-black tracking-widest uppercase animate-pulse">Procesando...</p>
-            <p className="text-text-secondary text-xs mt-2 font-medium">Sincronizando con el servidor</p>
+            <p className="text-primary text-xl font-black tracking-widest uppercase animate-pulse">Sincronizando Mesa...</p>
+            <p className="text-text-secondary text-xs mt-2 font-medium">Validando acceso y menú</p>
           </div>
         </div>
       </div>
@@ -240,7 +290,10 @@ const App: React.FC = () => {
       case 'GUEST_INFO':
         return (
           <GuestInfoView 
-            onBack={() => navigate('SCAN')} 
+            onBack={() => {
+              localStorage.removeItem(SESSION_KEY);
+              navigate('SCAN');
+            }} 
             onNext={() => navigate('MENU')} 
             guests={guests} 
             setGuests={setGuests} 
@@ -328,8 +381,14 @@ const App: React.FC = () => {
       case 'FEEDBACK':
         return (
           <FeedbackView 
-            onNext={() => navigate('CONFIRMATION')}
-            onSkip={() => navigate('CONFIRMATION')}
+            onNext={() => {
+              localStorage.removeItem(SESSION_KEY);
+              navigate('CONFIRMATION');
+            }}
+            onSkip={() => {
+              localStorage.removeItem(SESSION_KEY);
+              navigate('CONFIRMATION');
+            }}
             cart={cart}
             menuItems={menuItems}
             waiter={currentWaiter}
@@ -339,7 +398,10 @@ const App: React.FC = () => {
       case 'CONFIRMATION':
         return (
           <ConfirmationView 
-            onRestart={() => window.location.reload()}
+            onRestart={() => {
+              localStorage.removeItem(SESSION_KEY);
+              window.location.href = '/';
+            }}
             guests={guests}
             tableNumber={currentTable?.table_number}
           />
