@@ -21,8 +21,19 @@ const ScanView: React.FC<ScanViewProps> = ({ onNext, restaurantName }) => {
   const scannerId = "qr-reader";
 
   useEffect(() => {
-    // Iniciar el scanner al montar el componente
-    startScanner();
+    // Verificar que la librería externa esté disponible antes de iniciar
+    if (typeof Html5Qrcode !== 'undefined') {
+      startScanner();
+    } else {
+      console.warn("Html5Qrcode no detectado, esperando...");
+      const checkInterval = setInterval(() => {
+        if (typeof Html5Qrcode !== 'undefined') {
+          clearInterval(checkInterval);
+          startScanner();
+        }
+      }, 500);
+      return () => clearInterval(checkInterval);
+    }
 
     return () => {
       stopScanner();
@@ -42,6 +53,12 @@ const ScanView: React.FC<ScanViewProps> = ({ onNext, restaurantName }) => {
   const startScanner = async () => {
     try {
       setScannerError(null);
+      
+      // Doble verificación de seguridad
+      if (typeof Html5Qrcode === 'undefined') {
+        throw new Error("Librería de escaneo no cargada.");
+      }
+
       const html5QrCode = new Html5Qrcode(scannerId);
       scannerRef.current = html5QrCode;
 
@@ -58,9 +75,11 @@ const ScanView: React.FC<ScanViewProps> = ({ onNext, restaurantName }) => {
         onScanFailure
       );
       setIsCameraActive(true);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error iniciando cámara:", err);
-      setScannerError("No se pudo acceder a la cámara. Por favor usa el ingreso manual.");
+      setScannerError(err.message?.includes("Permission") 
+        ? "Permiso de cámara denegado. Por favor activa la cámara o usa el ingreso manual." 
+        : "No pudimos conectar con la cámara.");
       setIsCameraActive(false);
     }
   };
@@ -145,7 +164,7 @@ const ScanView: React.FC<ScanViewProps> = ({ onNext, restaurantName }) => {
   };
 
   return (
-    <div className="relative flex flex-col flex-1 overflow-hidden bg-background-dark">
+    <div className="relative flex flex-col flex-1 overflow-hidden bg-background-dark animate-fade-in">
       <div className="h-12 shrink-0"></div>
       <div className="flex items-center px-4 py-2 justify-between shrink-0 z-20">
         <div className="flex flex-col">
@@ -167,10 +186,13 @@ const ScanView: React.FC<ScanViewProps> = ({ onNext, restaurantName }) => {
           <div id={scannerId} className="w-full h-full"></div>
 
           {!isCameraActive && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center bg-surface-dark/80 backdrop-blur-md">
+            <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center bg-surface-dark/95 backdrop-blur-md z-30">
                <span className="material-symbols-outlined text-primary text-5xl mb-4">no_photography</span>
-               <p className="text-white text-sm font-bold mb-4">{scannerError || "Iniciando cámara..."}</p>
-               <button onClick={startScanner} className="bg-primary/20 text-primary px-4 py-2 rounded-full text-xs font-black uppercase tracking-widest">Reintentar Cámara</button>
+               <p className="text-white text-sm font-bold mb-6 leading-relaxed">{scannerError || "Inicializando cámara..."}</p>
+               <div className="flex flex-col gap-3 w-full">
+                  <button onClick={startScanner} className="bg-primary text-background-dark w-full py-3 rounded-xl text-xs font-black uppercase tracking-widest active:scale-95 transition-transform">Reintentar Cámara</button>
+                  <button onClick={() => setIsManualModalOpen(true)} className="bg-white/5 border border-white/10 text-white w-full py-3 rounded-xl text-xs font-black uppercase tracking-widest active:scale-95 transition-transform">Ingreso Manual</button>
+               </div>
             </div>
           )}
 

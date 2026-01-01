@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useEffect } from 'react';
 import { Guest, OrderItem, MenuItem } from '../types';
 import { getInitials, getGuestColor } from './GuestInfoView';
@@ -84,8 +83,8 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
         if (unit.assignedGuestIds.length > 0) {
           const portion = unit.unitPrice / unit.assignedGuestIds.length;
           unit.assignedGuestIds.forEach(gid => {
-            // Fix: Use Number() to ensure type is number for calculations and avoid 'unknown' issues
-            const current = Number(shares[gid]) || 0;
+            // FIX: Access shares with explicit fallback and ensure numeric addition
+            const current = Number(shares[gid] || 0);
             shares[gid] = current + portion;
           });
         }
@@ -95,9 +94,9 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
       cart.forEach(item => {
         const menuItem = menuItems.find(m => m.id === item.itemId);
         if (menuItem) {
-          // Fix: Use Number() to ensure type is number for calculations and avoid 'unknown' issues
-          const current = Number(shares[item.guestId]) || 0;
-          shares[item.guestId] = current + Number(menuItem.price) * item.quantity;
+          // FIX: Access shares with explicit fallback and ensure numeric addition
+          const current = Number(shares[item.guestId] || 0);
+          shares[item.guestId] = current + (Number(menuItem.price) * item.quantity);
         }
       });
     } else if (method === 'custom') {
@@ -110,8 +109,8 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
     }
 
     return guests.map(g => {
-      // Fix: Safely access calculated share with Number() to bypass indexing/unknown limitations
-      const guestSubtotal = Number(shares[g.id]) || 0;
+      // FIX: Access shares with explicit fallback to bypass indexing limitations in strict TS modes
+      const guestSubtotal = Number(shares[g.id] || 0);
       const guestTotal = guestSubtotal * (1 + taxRate + serviceRate);
       
       const items = cart

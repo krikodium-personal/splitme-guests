@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { supabase } from './lib/supabase';
 import { AppView, Guest, OrderItem, MenuItem } from './types';
 import ScanView from './views/ScanView';
@@ -16,8 +16,13 @@ import ConfirmationView from './views/ConfirmationView';
 const SESSION_KEY = 'dinesplit_active_session';
 
 const App: React.FC = () => {
-  // Logs iniciales para depuración en producción (Vercel)
-  console.log('[DineSplit] App inicializada');
+  // 1. DETECCIÓN INMEDIATA (Sincrona) de parámetros para evitar parpadeos y cámara accidental
+  const searchParams = useMemo(() => new URLSearchParams(window.location.search), []);
+  const resParam = searchParams.get('res');
+  const tableParam = searchParams.get('table');
+  
+  // Log de depuración prioritario para Vercel
+  console.log('[DineSplit] Render inicial. Parámetros detectados:', { res: resParam, table: tableParam });
 
   const [currentView, setCurrentView] = useState<AppView>('SCAN');
   const [loading, setLoading] = useState(true);
@@ -39,12 +44,12 @@ const App: React.FC = () => {
 
   /**
    * Carga los datos del restaurante, mesa y menú.
+   * Maneja errores de Supabase sin romper el renderizado.
    */
   const handleStartSession = useCallback(async (accessCode: string, tableNum: string, isFromStorage = false) => {
     console.log(`[DineSplit] Iniciando sesión: Res=${accessCode}, Mesa=${tableNum}, Storage=${isFromStorage}`);
     
     if (!accessCode || !tableNum) {
-      console.warn('[DineSplit] Parámetros insuficientes para iniciar sesión');
       setLoading(false);
       return false;
     }
@@ -54,13 +59,12 @@ const App: React.FC = () => {
     const cleanCode = accessCode.trim().toUpperCase();
 
     try {
-      // 1. Verificar conexión a Supabase
+      // Validación de cliente Supabase
       if (!supabase) {
-        throw new Error("Cliente de base de datos no inicializado correctamente.");
+        throw new Error("El cliente de Supabase no se pudo inicializar. Revisa las variables de entorno.");
       }
 
-      // 2. Validación del Restaurante
-      console.log('[DineSplit] Buscando restaurante...');
+      // 1. Datos del Restaurante
       const { data: resData, error: resError } = await supabase
         .from('restaurants')
         .select('*')
@@ -69,14 +73,13 @@ const App: React.FC = () => {
 
       if (resError) throw new Error(`Error Supabase (Restaurante): ${resError.message}`);
       if (!resData) {
-        setError(`El restaurante con código "${cleanCode}" no existe.`);
+        setError(`Restaurante "${cleanCode}" no encontrado.`);
         localStorage.removeItem(SESSION_KEY);
         setLoading(false);
         return false;
       }
 
-      // 3. Validación de la Mesa
-      console.log('[DineSplit] Buscando mesa...');
+      // 2. Datos de la Mesa
       const { data: tableData, error: tableError } = await supabase
         .from('tables')
         .select('*')
@@ -86,116 +89,95 @@ const App: React.FC = () => {
 
       if (tableError) throw new Error(`Error Supabase (Mesa): ${tableError.message}`);
       if (!tableData) {
-        setError(`La mesa ${tableNum} no está configurada en este restaurante.`);
+        setError(`Mesa ${tableNum} no registrada.`);
         localStorage.removeItem(SESSION_KEY);
         setLoading(false);
         return false;
       }
 
-      // 4. Cargar Mesero
-      console.log('[DineSplit] Cargando staff...');
+      // 3. Datos del Mesero (Staff)
       let waiterInfo = null;
       if (tableData.waiter_id) {
-        const { data: waiterData } = await supabase
-          .from('waiters')
-          .select('*')
-          .eq('id', tableData.waiter_id)
-          .maybeSingle();
+        const { data: waiterData } = await supabase.from('waiters').select('*').eq('id', tableData.waiter_id).maybeSingle();
         waiterInfo = waiterData;
       }
-      
       if (!waiterInfo) {
-        const { data: staffData } = await supabase
-          .from('waiters')
-          .select('*')
-          .eq('restaurant_id', resData.id)
-          .limit(1)
-          .maybeSingle();
+        const { data: staffData } = await supabase.from('waiters').select('*').eq('restaurant_id', resData.id).limit(1).maybeSingle();
         waiterInfo = staffData;
       }
 
-      // 5. Cargar Menú y Categorías
-      console.log('[DineSplit] Cargando menú y categorías...');
+      // 4. Datos del Menú
       const [catRes, itemRes] = await Promise.all([
         supabase.from('categories').select('*').eq('restaurant_id', resData.id).order('sort_order'),
         supabase.from('menu_items').select('*').eq('restaurant_id', resData.id).order('sort_order')
       ]);
 
-      if (catRes.error) console.error("Error cargando categorías:", catRes.error);
-      if (itemRes.error) console.error("Error cargando platos:", itemRes.error);
-
-      // Guardar estados globales
       setRestaurant(resData);
       setCurrentTable(tableData);
       setCurrentWaiter(waiterInfo);
       setCategories(catRes.data || []);
       setMenuItems(itemRes.data || []);
       
-      // 6. Persistencia Local
+      // Persistir para evitar re-escaneo al refrescar
       localStorage.setItem(SESSION_KEY, JSON.stringify({
         res: cleanCode,
         table: tableNum,
         timestamp: Date.now()
       }));
 
-      console.log('[DineSplit] Sesión establecida con éxito');
       setCurrentView('GUEST_INFO');
       setLoading(false);
       return true;
 
     } catch (err: any) {
-      console.error("[DineSplit] Error crítico en handleStartSession:", err);
-      setError(`Ocurrió un problema de conexión: ${err.message || 'Error desconocido'}`);
+      console.error("[DineSplit] Error crítico:", err);
+      setError(`Problema de conexión: ${err.message || 'Error desconocido'}`);
       setLoading(false);
       return false;
     }
   }, []);
 
   /**
-   * Efecto de Inicio: Maneja el Bypass de URL y Persistencia
+   * Efecto de inicialización: Prioriza Bypass de URL -> Storage -> Scan
    */
   useEffect(() => {
     const initApp = async () => {
-      const params = new URLSearchParams(window.location.search);
-      const resParam = params.get('res');
-      const tableParam = params.get('table');
-
-      console.log('[DineSplit] Detectando contexto inicial...', { res: resParam, table: tableParam });
-
-      // CASO 1: Entrada por URL (Prioridad Absoluta)
+      // 1. Prioridad: URL
       if (resParam && tableParam) {
+        console.log('[DineSplit] Aplicando Bypass de URL');
         const success = await handleStartSession(resParam, tableParam);
         if (success) {
-          // Limpiar parámetros de la URL para estética
+          // Limpiar parámetros para una URL limpia, pero el estado ya está cargado
           window.history.replaceState({}, '', window.location.pathname);
           return;
         }
       }
 
-      // CASO 2: Sesión Guardada (LocalStorage)
+      // 2. Prioridad: Storage
       const savedSession = localStorage.getItem(SESSION_KEY);
       if (savedSession) {
         try {
           const { res, table, timestamp } = JSON.parse(savedSession);
-          // Si la sesión tiene menos de 12 horas, restaurar
           if (Date.now() - timestamp < 12 * 60 * 60 * 1000) {
-            console.log('[DineSplit] Restaurando sesión previa...');
             const success = await handleStartSession(res, table, true);
             if (success) return;
           }
         } catch (e) {
-          console.error("Error al parsear sesión guardada", e);
+          console.error("Error leyendo storage");
         }
       }
 
-      // CASO 3: Nada detectado, ir al escáner manual
-      console.log('[DineSplit] No hay sesión activa ni parámetros, redirigiendo a SCAN');
+      // 3. Fallback: Escaneo Manual
       setLoading(false);
       setCurrentView('SCAN');
     };
 
     initApp();
-  }, [handleStartSession]);
+  }, [handleStartSession, resParam, tableParam]);
+
+  const navigate = useCallback((view: AppView) => {
+    setCurrentView(view);
+  }, []);
 
   const handleSendOrder = async () => {
     if (cart.length === 0) return;
@@ -250,10 +232,6 @@ const App: React.FC = () => {
     }
   };
 
-  const navigate = useCallback((view: AppView) => {
-    setCurrentView(view);
-  }, []);
-
   const handleAddToCart = useCallback((item: MenuItem, guestId: string, extras: string[], removedIngredients: string[]) => {
     const newItem: OrderItem = {
       id: Math.random().toString(36).substr(2, 9),
@@ -291,44 +269,35 @@ const App: React.FC = () => {
     setCurrentView('MENU');
   }, []);
 
-  // Pantalla de Error Crítico
+  // 1. Pantalla de Error (Previene blanco infinito)
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-background-dark p-8 text-center">
+      <div className="flex flex-col items-center justify-center min-h-screen bg-background-dark p-8 text-center animate-fade-in">
         <div className="size-20 bg-red-500/10 rounded-full flex items-center justify-center mb-6">
           <span className="material-symbols-outlined text-red-500 text-4xl">error</span>
         </div>
-        <h2 className="text-white text-2xl font-black mb-4">Ups, algo salió mal</h2>
-        <p className="text-text-secondary text-sm mb-8">{error}</p>
-        <button 
-          onClick={() => window.location.href = '/'} 
-          className="bg-primary text-background-dark px-8 py-3 rounded-xl font-bold active:scale-95 transition-transform"
-        >
-          Volver a Escanear
-        </button>
+        <h2 className="text-white text-2xl font-black mb-4">Error de Sincronización</h2>
+        <p className="text-text-secondary text-sm mb-8 leading-relaxed">{error}</p>
+        <button onClick={() => window.location.href = '/'} className="bg-primary text-background-dark px-8 py-3 rounded-xl font-bold active:scale-95 transition-transform">Reintentar</button>
       </div>
     );
   }
 
-  // Pantalla de Carga Sincronizada
+  // 2. Pantalla de Carga (Prioridad mientras se procesa Bypass)
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-background-dark">
-        <div className="flex flex-col items-center gap-6">
+        <div className="flex flex-col items-center gap-8">
           <div className="relative">
-            <div className="size-24 border-4 border-primary/10 rounded-full"></div>
-            <div className="absolute top-0 size-24 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+            <div className="size-28 border-4 border-primary/5 rounded-full"></div>
+            <div className="absolute top-0 size-28 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
             <div className="absolute inset-0 flex items-center justify-center">
               <span className="material-symbols-outlined text-primary text-4xl animate-pulse">restaurant</span>
             </div>
           </div>
-          <div className="text-center px-8">
-            <p className="text-primary text-xl font-black tracking-widest uppercase animate-pulse mb-2">
-              Sincronizando...
-            </p>
-            <p className="text-text-secondary text-xs font-medium max-w-[200px] mx-auto leading-relaxed">
-              Estamos validando tu acceso y cargando el menú del restaurante.
-            </p>
+          <div className="text-center px-10">
+            <h3 className="text-primary text-xl font-black tracking-[0.2em] uppercase mb-2 animate-pulse">DineSplit</h3>
+            <p className="text-text-secondary text-xs font-medium max-w-[220px] mx-auto leading-relaxed">Sincronizando mesa y cargando menú...</p>
           </div>
         </div>
       </div>
@@ -336,6 +305,19 @@ const App: React.FC = () => {
   }
 
   const renderView = () => {
+    // Si ya hay parámetros en la URL, NO permitimos que SCAN se renderice incluso si hay un fallo de lógica
+    // Esto es un renderizado de emergencia preventivo para la cámara
+    if ((resParam && tableParam) && currentView === 'SCAN') {
+      return (
+         <div className="flex-1 flex items-center justify-center p-8 text-center text-white">
+           <div className="flex flex-col items-center gap-4">
+             <div className="size-10 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+             <p className="text-sm font-bold opacity-60">Redirigiendo a tu mesa...</p>
+           </div>
+         </div>
+      );
+    }
+
     switch (currentView) {
       case 'SCAN':
         return <ScanView onNext={handleStartSession} restaurantName={restaurant?.name} />;
