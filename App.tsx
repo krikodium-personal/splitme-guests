@@ -16,8 +16,13 @@ import ConfirmationView from './views/ConfirmationView';
 const SESSION_KEY = 'dinesplit_active_session';
 
 const App: React.FC = () => {
+  // Logs iniciales para depuración en producción (Vercel)
+  console.log('[DineSplit] App inicializada');
+
   const [currentView, setCurrentView] = useState<AppView>('SCAN');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  
   const [restaurant, setRestaurant] = useState<any>(null);
   const [currentTable, setCurrentTable] = useState<any>(null);
   const [currentWaiter, setCurrentWaiter] = useState<any>(null);
@@ -33,35 +38,45 @@ const App: React.FC = () => {
   const [editingCartItem, setEditingCartItem] = useState<OrderItem | null>(null);
 
   /**
-   * Función central para iniciar sesión en una mesa.
-   * Realiza un bypass de autenticación de usuario y carga el contexto del restaurante/mesa.
+   * Carga los datos del restaurante, mesa y menú.
    */
   const handleStartSession = useCallback(async (accessCode: string, tableNum: string, isFromStorage = false) => {
+    console.log(`[DineSplit] Iniciando sesión: Res=${accessCode}, Mesa=${tableNum}, Storage=${isFromStorage}`);
+    
     if (!accessCode || !tableNum) {
+      console.warn('[DineSplit] Parámetros insuficientes para iniciar sesión');
       setLoading(false);
       return false;
     }
     
     setLoading(true);
+    setError(null);
     const cleanCode = accessCode.trim().toUpperCase();
 
     try {
-      // 1. Validación Silenciosa del Restaurante
+      // 1. Verificar conexión a Supabase
+      if (!supabase) {
+        throw new Error("Cliente de base de datos no inicializado correctamente.");
+      }
+
+      // 2. Validación del Restaurante
+      console.log('[DineSplit] Buscando restaurante...');
       const { data: resData, error: resError } = await supabase
         .from('restaurants')
         .select('*')
         .eq('access_code', cleanCode)
         .maybeSingle();
 
-      if (resError || !resData) {
-        console.error("Restaurante no encontrado");
-        if (!isFromStorage) alert("El código del restaurante no es válido.");
+      if (resError) throw new Error(`Error Supabase (Restaurante): ${resError.message}`);
+      if (!resData) {
+        setError(`El restaurante con código "${cleanCode}" no existe.`);
         localStorage.removeItem(SESSION_KEY);
         setLoading(false);
         return false;
       }
 
-      // 2. Validación Silenciosa de la Mesa
+      // 3. Validación de la Mesa
+      console.log('[DineSplit] Buscando mesa...');
       const { data: tableData, error: tableError } = await supabase
         .from('tables')
         .select('*')
@@ -69,15 +84,16 @@ const App: React.FC = () => {
         .eq('table_number', parseInt(tableNum))
         .maybeSingle();
 
-      if (tableError || !tableData) {
-        console.error("Mesa no encontrada");
-        if (!isFromStorage) alert(`La mesa ${tableNum} no está disponible.`);
+      if (tableError) throw new Error(`Error Supabase (Mesa): ${tableError.message}`);
+      if (!tableData) {
+        setError(`La mesa ${tableNum} no está configurada en este restaurante.`);
         localStorage.removeItem(SESSION_KEY);
         setLoading(false);
         return false;
       }
 
-      // 3. Cargar Staff / Mesero asignado
+      // 4. Cargar Mesero
+      console.log('[DineSplit] Cargando staff...');
       let waiterInfo = null;
       if (tableData.waiter_id) {
         const { data: waiterData } = await supabase
@@ -98,11 +114,15 @@ const App: React.FC = () => {
         waiterInfo = staffData;
       }
 
-      // 4. Cargar Menú y Categorías (Contexto de Aplicación)
+      // 5. Cargar Menú y Categorías
+      console.log('[DineSplit] Cargando menú y categorías...');
       const [catRes, itemRes] = await Promise.all([
         supabase.from('categories').select('*').eq('restaurant_id', resData.id).order('sort_order'),
         supabase.from('menu_items').select('*').eq('restaurant_id', resData.id).order('sort_order')
       ]);
+
+      if (catRes.error) console.error("Error cargando categorías:", catRes.error);
+      if (itemRes.error) console.error("Error cargando platos:", itemRes.error);
 
       // Guardar estados globales
       setRestaurant(resData);
@@ -111,68 +131,70 @@ const App: React.FC = () => {
       setCategories(catRes.data || []);
       setMenuItems(itemRes.data || []);
       
-      // 5. Persistencia: Guardar sesión para recargas
+      // 6. Persistencia Local
       localStorage.setItem(SESSION_KEY, JSON.stringify({
         res: cleanCode,
         table: tableNum,
         timestamp: Date.now()
       }));
 
-      // Redirección Forzada: Si es bypass, saltamos directamente a GUEST_INFO
+      console.log('[DineSplit] Sesión establecida con éxito');
       setCurrentView('GUEST_INFO');
       setLoading(false);
       return true;
 
-    } catch (err) {
-      console.error("Error en bypass de autenticación:", err);
-      localStorage.removeItem(SESSION_KEY);
+    } catch (err: any) {
+      console.error("[DineSplit] Error crítico en handleStartSession:", err);
+      setError(`Ocurrió un problema de conexión: ${err.message || 'Error desconocido'}`);
       setLoading(false);
       return false;
     }
   }, []);
 
   /**
-   * Efecto de Autenticación de Mesa (Prioridad Máxima)
+   * Efecto de Inicio: Maneja el Bypass de URL y Persistencia
    */
   useEffect(() => {
-    const initAutobypass = async () => {
+    const initApp = async () => {
       const params = new URLSearchParams(window.location.search);
       const resParam = params.get('res');
       const tableParam = params.get('table');
 
-      // PRIORIDAD 1: Parámetros en la URL (Escaneo fresco)
+      console.log('[DineSplit] Detectando contexto inicial...', { res: resParam, table: tableParam });
+
+      // CASO 1: Entrada por URL (Prioridad Absoluta)
       if (resParam && tableParam) {
-        console.log("Bypass detectado en URL:", resParam, tableParam);
         const success = await handleStartSession(resParam, tableParam);
         if (success) {
-          // Limpiar URL para evitar re-procesamiento pero mantener el estado
+          // Limpiar parámetros de la URL para estética
           window.history.replaceState({}, '', window.location.pathname);
           return;
         }
       }
 
-      // PRIORIDAD 2: Sesión persistente en LocalStorage
+      // CASO 2: Sesión Guardada (LocalStorage)
       const savedSession = localStorage.getItem(SESSION_KEY);
       if (savedSession) {
         try {
           const { res, table, timestamp } = JSON.parse(savedSession);
-          // La sesión expira en 8 horas para seguridad
-          if (Date.now() - timestamp < 8 * 60 * 60 * 1000) {
-            console.log("Restaurando sesión de mesa desde storage");
+          // Si la sesión tiene menos de 12 horas, restaurar
+          if (Date.now() - timestamp < 12 * 60 * 60 * 1000) {
+            console.log('[DineSplit] Restaurando sesión previa...');
             const success = await handleStartSession(res, table, true);
             if (success) return;
           }
         } catch (e) {
-          console.error("Error leyendo sesión guardada");
+          console.error("Error al parsear sesión guardada", e);
         }
       }
 
-      // Si no hay bypass ni sesión, mostrar pantalla inicial (Scan/Manual)
-      localStorage.removeItem(SESSION_KEY);
+      // CASO 3: Nada detectado, ir al escáner manual
+      console.log('[DineSplit] No hay sesión activa ni parámetros, redirigiendo a SCAN');
       setLoading(false);
+      setCurrentView('SCAN');
     };
 
-    initAutobypass();
+    initApp();
   }, [handleStartSession]);
 
   const handleSendOrder = async () => {
@@ -269,20 +291,44 @@ const App: React.FC = () => {
     setCurrentView('MENU');
   }, []);
 
+  // Pantalla de Error Crítico
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-background-dark p-8 text-center">
+        <div className="size-20 bg-red-500/10 rounded-full flex items-center justify-center mb-6">
+          <span className="material-symbols-outlined text-red-500 text-4xl">error</span>
+        </div>
+        <h2 className="text-white text-2xl font-black mb-4">Ups, algo salió mal</h2>
+        <p className="text-text-secondary text-sm mb-8">{error}</p>
+        <button 
+          onClick={() => window.location.href = '/'} 
+          className="bg-primary text-background-dark px-8 py-3 rounded-xl font-bold active:scale-95 transition-transform"
+        >
+          Volver a Escanear
+        </button>
+      </div>
+    );
+  }
+
+  // Pantalla de Carga Sincronizada
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-background-dark">
         <div className="flex flex-col items-center gap-6">
           <div className="relative">
-            <div className="size-20 border-4 border-primary/20 rounded-full"></div>
-            <div className="absolute top-0 size-20 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+            <div className="size-24 border-4 border-primary/10 rounded-full"></div>
+            <div className="absolute top-0 size-24 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
             <div className="absolute inset-0 flex items-center justify-center">
-              <span className="material-symbols-outlined text-primary text-3xl animate-pulse">restaurant</span>
+              <span className="material-symbols-outlined text-primary text-4xl animate-pulse">restaurant</span>
             </div>
           </div>
-          <div className="text-center">
-            <p className="text-primary text-xl font-black tracking-widest uppercase animate-pulse">Accediendo a Mesa...</p>
-            <p className="text-text-secondary text-xs mt-2 font-medium">Configurando tu experiencia digital</p>
+          <div className="text-center px-8">
+            <p className="text-primary text-xl font-black tracking-widest uppercase animate-pulse mb-2">
+              Sincronizando...
+            </p>
+            <p className="text-text-secondary text-xs font-medium max-w-[200px] mx-auto leading-relaxed">
+              Estamos validando tu acceso y cargando el menú del restaurante.
+            </p>
           </div>
         </div>
       </div>

@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect } from 'react';
 import { Guest, OrderItem, MenuItem } from '../types';
 import { getInitials, getGuestColor } from './GuestInfoView';
@@ -83,8 +84,8 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
         if (unit.assignedGuestIds.length > 0) {
           const portion = unit.unitPrice / unit.assignedGuestIds.length;
           unit.assignedGuestIds.forEach(gid => {
-            // Fix: Cast to number to resolve 'unknown' operator errors in strict compiler environments
-            const current = (shares[gid] as number) || 0;
+            // Fix: Use Number() to ensure type is number for calculations and avoid 'unknown' issues
+            const current = Number(shares[gid]) || 0;
             shares[gid] = current + portion;
           });
         }
@@ -94,8 +95,8 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
       cart.forEach(item => {
         const menuItem = menuItems.find(m => m.id === item.itemId);
         if (menuItem) {
-          // Fix: Cast to number to resolve 'unknown' operator errors in strict compiler environments
-          const current = (shares[item.guestId] as number) || 0;
+          // Fix: Use Number() to ensure type is number for calculations and avoid 'unknown' issues
+          const current = Number(shares[item.guestId]) || 0;
           shares[item.guestId] = current + Number(menuItem.price) * item.quantity;
         }
       });
@@ -109,8 +110,8 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
     }
 
     return guests.map(g => {
-      // Safely access calculated share with casting to bypass indexing limitations
-      const guestSubtotal = (shares[g.id] as number) ?? 0;
+      // Fix: Safely access calculated share with Number() to bypass indexing/unknown limitations
+      const guestSubtotal = Number(shares[g.id]) || 0;
       const guestTotal = guestSubtotal * (1 + taxRate + serviceRate);
       
       const items = cart
