@@ -64,7 +64,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
   const grandTotal = subtotal + taxesValue + serviceChargeValue;
 
   const guestShares = useMemo(() => {
-    // Explicitly initializing shares and ensuring keys exist to avoid 'unknown' or 'undefined' errors during addition.
+    // Explicitly initializing shares as number record
     const shares: Record<string, number> = {};
     guests.forEach(g => {
       shares[g.id] = 0;
@@ -83,8 +83,9 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
         if (unit.assignedGuestIds.length > 0) {
           const portion = unit.unitPrice / unit.assignedGuestIds.length;
           unit.assignedGuestIds.forEach(gid => {
-            // Fix: Using explicit addition and nullish coalescing to avoid 'unknown' or operator errors.
-            shares[gid] = (shares[gid] ?? 0) + portion;
+            // Fix: Cast to number to resolve 'unknown' operator errors in strict compiler environments
+            const current = (shares[gid] as number) || 0;
+            shares[gid] = current + portion;
           });
         }
       });
@@ -93,8 +94,9 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
       cart.forEach(item => {
         const menuItem = menuItems.find(m => m.id === item.itemId);
         if (menuItem) {
-          // Fix: Ensuring shares[id] is treated as number before addition.
-          shares[item.guestId] = (shares[item.guestId] ?? 0) + Number(menuItem.price) * item.quantity;
+          // Fix: Cast to number to resolve 'unknown' operator errors in strict compiler environments
+          const current = (shares[item.guestId] as number) || 0;
+          shares[item.guestId] = current + Number(menuItem.price) * item.quantity;
         }
       });
     } else if (method === 'custom') {
@@ -107,8 +109,8 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
     }
 
     return guests.map(g => {
-      // Safely access calculated share
-      const guestSubtotal = shares[g.id] ?? 0;
+      // Safely access calculated share with casting to bypass indexing limitations
+      const guestSubtotal = (shares[g.id] as number) ?? 0;
       const guestTotal = guestSubtotal * (1 + taxRate + serviceRate);
       
       const items = cart

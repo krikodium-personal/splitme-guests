@@ -17,7 +17,7 @@ const SESSION_KEY = 'dinesplit_active_session';
 
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<AppView>('SCAN');
-  const [loading, setLoading] = useState(true); // Iniciamos en true para el check de sesión
+  const [loading, setLoading] = useState(true);
   const [restaurant, setRestaurant] = useState<any>(null);
   const [currentTable, setCurrentTable] = useState<any>(null);
   const [currentWaiter, setCurrentWaiter] = useState<any>(null);
@@ -34,19 +34,19 @@ const App: React.FC = () => {
 
   /**
    * Función central para iniciar sesión en una mesa.
-   * Valida datos en Supabase, carga el menú y persiste la sesión localmente.
+   * Realiza un bypass de autenticación de usuario y carga el contexto del restaurante/mesa.
    */
   const handleStartSession = useCallback(async (accessCode: string, tableNum: string, isFromStorage = false) => {
     if (!accessCode || !tableNum) {
       setLoading(false);
-      return;
+      return false;
     }
     
     setLoading(true);
     const cleanCode = accessCode.trim().toUpperCase();
 
     try {
-      // 1. Validar Restaurante
+      // 1. Validación Silenciosa del Restaurante
       const { data: resData, error: resError } = await supabase
         .from('restaurants')
         .select('*')
@@ -54,13 +54,14 @@ const App: React.FC = () => {
         .maybeSingle();
 
       if (resError || !resData) {
-        if (!isFromStorage) alert("Código de restaurante no válido.");
+        console.error("Restaurante no encontrado");
+        if (!isFromStorage) alert("El código del restaurante no es válido.");
         localStorage.removeItem(SESSION_KEY);
         setLoading(false);
-        return;
+        return false;
       }
 
-      // 2. Validar Mesa
+      // 2. Validación Silenciosa de la Mesa
       const { data: tableData, error: tableError } = await supabase
         .from('tables')
         .select('*')
@@ -69,13 +70,14 @@ const App: React.FC = () => {
         .maybeSingle();
 
       if (tableError || !tableData) {
-        if (!isFromStorage) alert(`Mesa ${tableNum} no encontrada.`);
+        console.error("Mesa no encontrada");
+        if (!isFromStorage) alert(`La mesa ${tableNum} no está disponible.`);
         localStorage.removeItem(SESSION_KEY);
         setLoading(false);
-        return;
+        return false;
       }
 
-      // 3. Cargar Staff/Mesero
+      // 3. Cargar Staff / Mesero asignado
       let waiterInfo = null;
       if (tableData.waiter_id) {
         const { data: waiterData } = await supabase
@@ -96,77 +98,81 @@ const App: React.FC = () => {
         waiterInfo = staffData;
       }
 
-      // 4. Cargar Menú y Categorías
+      // 4. Cargar Menú y Categorías (Contexto de Aplicación)
       const [catRes, itemRes] = await Promise.all([
-        supabase.from('categories').select('*').eq('restaurant_id', resData.id),
-        supabase.from('menu_items').select('*').eq('restaurant_id', resData.id)
+        supabase.from('categories').select('*').eq('restaurant_id', resData.id).order('sort_order'),
+        supabase.from('menu_items').select('*').eq('restaurant_id', resData.id).order('sort_order')
       ]);
 
-      // Guardar en estado
+      // Guardar estados globales
       setRestaurant(resData);
       setCurrentTable(tableData);
       setCurrentWaiter(waiterInfo);
       setCategories(catRes.data || []);
       setMenuItems(itemRes.data || []);
       
-      // Persistir en LocalStorage para recargas de página
+      // 5. Persistencia: Guardar sesión para recargas
       localStorage.setItem(SESSION_KEY, JSON.stringify({
         res: cleanCode,
         table: tableNum,
         timestamp: Date.now()
       }));
 
-      // Si la sesión es nueva (no viene de storage), vamos a configurar invitados
-      // Si viene de storage, intentamos mantener la vista actual o ir al menú
-      setCurrentView(prev => prev === 'SCAN' ? 'GUEST_INFO' : prev);
+      // Redirección Forzada: Si es bypass, saltamos directamente a GUEST_INFO
+      setCurrentView('GUEST_INFO');
+      setLoading(false);
+      return true;
 
     } catch (err) {
-      console.error("Error crítico en auto-login:", err);
+      console.error("Error en bypass de autenticación:", err);
       localStorage.removeItem(SESSION_KEY);
-    } finally {
       setLoading(false);
+      return false;
     }
   }, []);
 
   /**
-   * Efecto Inicial: 
-   * 1. Revisa parámetros URL (Prioridad máxima)
-   * 2. Revisa LocalStorage (Persistencia)
+   * Efecto de Autenticación de Mesa (Prioridad Máxima)
    */
   useEffect(() => {
-    const initSession = async () => {
+    const initAutobypass = async () => {
       const params = new URLSearchParams(window.location.search);
       const resParam = params.get('res');
       const tableParam = params.get('table');
 
-      // Caso A: El usuario escaneó un QR o entró con link directo
+      // PRIORIDAD 1: Parámetros en la URL (Escaneo fresco)
       if (resParam && tableParam) {
-        await handleStartSession(resParam, tableParam);
-        // Limpiar URL para una estética limpia
-        const newUrl = window.location.pathname;
-        window.history.replaceState({}, '', newUrl);
-        return;
+        console.log("Bypass detectado en URL:", resParam, tableParam);
+        const success = await handleStartSession(resParam, tableParam);
+        if (success) {
+          // Limpiar URL para evitar re-procesamiento pero mantener el estado
+          window.history.replaceState({}, '', window.location.pathname);
+          return;
+        }
       }
 
-      // Caso B: El usuario refrescó la página (Buscar sesión guardada)
+      // PRIORIDAD 2: Sesión persistente en LocalStorage
       const savedSession = localStorage.getItem(SESSION_KEY);
       if (savedSession) {
-        const { res, table, timestamp } = JSON.parse(savedSession);
-        // Validar que la sesión no sea de hace más de 12 horas (opcional)
-        if (Date.now() - timestamp < 12 * 60 * 60 * 1000) {
-          await handleStartSession(res, table, true);
-          // Si ya teníamos datos de la sesión, podemos saltar a MENU si ya hay invitados
-          // Por simplicidad, lo dejamos en handleStartSession que setea GUEST_INFO si viene de SCAN
-        } else {
-          localStorage.removeItem(SESSION_KEY);
-          setLoading(false);
+        try {
+          const { res, table, timestamp } = JSON.parse(savedSession);
+          // La sesión expira en 8 horas para seguridad
+          if (Date.now() - timestamp < 8 * 60 * 60 * 1000) {
+            console.log("Restaurando sesión de mesa desde storage");
+            const success = await handleStartSession(res, table, true);
+            if (success) return;
+          }
+        } catch (e) {
+          console.error("Error leyendo sesión guardada");
         }
-      } else {
-        setLoading(false);
       }
+
+      // Si no hay bypass ni sesión, mostrar pantalla inicial (Scan/Manual)
+      localStorage.removeItem(SESSION_KEY);
+      setLoading(false);
     };
 
-    initSession();
+    initAutobypass();
   }, [handleStartSession]);
 
   const handleSendOrder = async () => {
@@ -275,8 +281,8 @@ const App: React.FC = () => {
             </div>
           </div>
           <div className="text-center">
-            <p className="text-primary text-xl font-black tracking-widest uppercase animate-pulse">Sincronizando Mesa...</p>
-            <p className="text-text-secondary text-xs mt-2 font-medium">Validando acceso y menú</p>
+            <p className="text-primary text-xl font-black tracking-widest uppercase animate-pulse">Accediendo a Mesa...</p>
+            <p className="text-text-secondary text-xs mt-2 font-medium">Configurando tu experiencia digital</p>
           </div>
         </div>
       </div>
