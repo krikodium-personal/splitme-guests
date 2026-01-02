@@ -13,18 +13,36 @@ import CheckoutView from './views/CheckoutView';
 import FeedbackView from './views/FeedbackView';
 import ConfirmationView from './views/ConfirmationView';
 
-// --- DIAGNÓSTICO CRÍTICO ---
-console.log("[DineSplit] JS Ejecutándose en producción - " + new Date().toISOString());
+// --- CRITICAL PRODUCTION LOGGING ---
+console.log("[DineSplit] Application Loaded at " + new Date().toISOString());
 
 const SESSION_KEY = 'dinesplit_active_session';
 
 const App: React.FC = () => {
+  // 1. IMMEDIATE DETECTION & PERSISTENCE
+  // We do this outside of any effect to ensure it's captured immediately
+  const searchParams = new URLSearchParams(window.location.search);
+  const resParam = searchParams.get('res');
+  const tableParam = searchParams.get('table');
+
+  if (resParam && tableParam) {
+    console.log(`[DineSplit] Capturing URL params: Res=${resParam}, Table=${tableParam}`);
+    localStorage.setItem(SESSION_KEY, JSON.stringify({
+      res: resParam.toUpperCase(),
+      table: tableParam,
+      timestamp: Date.now()
+    }));
+    // Clean URL without reloading
+    window.history.replaceState({}, '', window.location.pathname);
+  }
+
+  // App States
   const [currentView, setCurrentView] = useState<AppView>('INIT');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [diagnosticInfo, setDiagnosticInfo] = useState<string>('');
+  const [diagnosticMsg, setDiagnosticMsg] = useState('Iniciando sistema...');
 
-  // Estados de datos
+  // Data States
   const [restaurant, setRestaurant] = useState<any>(null);
   const [currentTable, setCurrentTable] = useState<any>(null);
   const [currentWaiter, setCurrentWaiter] = useState<any>(null);
@@ -36,36 +54,28 @@ const App: React.FC = () => {
   const [cart, setCart] = useState<OrderItem[]>([]);
   const [editingCartItem, setEditingCartItem] = useState<OrderItem | null>(null);
 
-  const searchParams = useMemo(() => new URLSearchParams(window.location.search), []);
-  const resParam = searchParams.get('res');
-  const tableParam = searchParams.get('table');
-
   const handleStartSession = useCallback(async (accessCode: string, tableNum: string) => {
-    console.log(`[DineSplit] Iniciando handleStartSession: ${accessCode}, Mesa ${tableNum}`);
+    console.log(`[DineSplit] Fetching session for: ${accessCode}, Mesa ${tableNum}`);
     setLoading(true);
     setError(null);
-    const cleanCode = accessCode.trim().toUpperCase();
+    setDiagnosticMsg(`Conectando con local: ${accessCode}...`);
 
     try {
-      if (!supabase) {
-        throw new Error("El cliente de Supabase no se inicializó correctamente.");
-      }
+      if (!supabase) throw new Error("Supabase client is null. Check your env variables.");
 
-      console.log("[DineSplit] Consultando restaurante...");
+      // Fetch Restaurant
       const { data: resData, error: resError } = await supabase
         .from('restaurants')
         .select('*')
-        .eq('access_code', cleanCode)
+        .eq('access_code', accessCode.toUpperCase())
         .maybeSingle();
 
-      if (resError) throw new Error(`Error Supabase (Restaurante): ${resError.message}`);
-      if (!resData) {
-        setError(`El local "${cleanCode}" no existe en nuestra base de datos.`);
-        setLoading(false);
-        return false;
-      }
+      if (resError) throw resError;
+      if (!resData) throw new Error(`El local "${accessCode}" no existe.`);
 
-      console.log("[DineSplit] Consultando mesa...");
+      setDiagnosticMsg(`Localizado: ${resData.name}. Cargando mesa ${tableNum}...`);
+
+      // Fetch Table
       const { data: tableData, error: tableError } = await supabase
         .from('tables')
         .select('*')
@@ -73,50 +83,31 @@ const App: React.FC = () => {
         .eq('table_number', parseInt(tableNum))
         .maybeSingle();
 
-      if (tableError) throw new Error(`Error Supabase (Mesa): ${tableError.message}`);
-      if (!tableData) {
-        setError(`La mesa ${tableNum} no está configurada para este local.`);
-        setLoading(false);
-        return false;
-      }
+      if (tableError) throw tableError;
+      if (!tableData) throw new Error(`Mesa ${tableNum} no encontrada en este local.`);
 
-      console.log("[DineSplit] Cargando staff y menú...");
-      // Cargar personal
-      let waiterInfo = null;
-      if (tableData.waiter_id) {
-        const { data: waiterData } = await supabase.from('waiters').select('*').eq('id', tableData.waiter_id).maybeSingle();
-        waiterInfo = waiterData;
-      }
-      if (!waiterInfo) {
-        const { data: staffData } = await supabase.from('waiters').select('*').eq('restaurant_id', resData.id).limit(1).maybeSingle();
-        waiterInfo = staffData;
-      }
-
-      const [catRes, itemRes] = await Promise.all([
+      // Fetch Waiter and Menu Data in parallel
+      setDiagnosticMsg("Cargando menú y personal...");
+      const [waiterRes, catRes, itemRes] = await Promise.all([
+        tableData.waiter_id 
+          ? supabase.from('waiters').select('*').eq('id', tableData.waiter_id).maybeSingle()
+          : supabase.from('waiters').select('*').eq('restaurant_id', resData.id).limit(1).maybeSingle(),
         supabase.from('categories').select('*').eq('restaurant_id', resData.id).order('sort_order'),
         supabase.from('menu_items').select('*').eq('restaurant_id', resData.id).order('sort_order')
       ]);
 
       setRestaurant(resData);
       setCurrentTable(tableData);
-      setCurrentWaiter(waiterInfo);
+      setCurrentWaiter(waiterRes.data);
       setCategories(catRes.data || []);
       setMenuItems(itemRes.data || []);
       
-      localStorage.setItem(SESSION_KEY, JSON.stringify({
-        res: cleanCode,
-        table: tableNum,
-        timestamp: Date.now()
-      }));
-
-      console.log("[DineSplit] Sesión establecida con éxito.");
       setCurrentView('GUEST_INFO');
       setLoading(false);
       return true;
-
     } catch (err: any) {
-      console.error("[DineSplit] Error fatal en sesión:", err);
-      setError(err.message || 'Error desconocido de conexión');
+      console.error("[DineSplit] Fatal Session Error:", err);
+      setError(err.message || 'Error de conexión');
       setLoading(false);
       return false;
     }
@@ -124,90 +115,63 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const initApp = async () => {
-      try {
-        setDiagnosticInfo("Analizando entorno...");
-        console.log("[DineSplit] Inicializando App...");
-
-        // Verificación de Supabase
-        if (!supabase) {
-          setDiagnosticInfo("FALLO: Cliente Supabase no disponible.");
-          throw new Error("Supabase URL o Anon Key faltantes en lib/supabase.ts");
-        }
-
-        // 1. Bypass por URL
-        if (resParam && tableParam) {
-          setDiagnosticInfo(`Detectado Bypass URL: ${resParam} / ${tableParam}`);
-          const success = await handleStartSession(resParam, tableParam);
-          if (success) {
-            window.history.replaceState({}, '', window.location.pathname);
-            return;
-          }
-        }
-
-        // 2. Recuperación de sesión
-        const savedSession = localStorage.getItem(SESSION_KEY);
-        if (savedSession) {
-          setDiagnosticInfo("Recuperando sesión previa...");
+      console.log("[DineSplit] Running initApp useEffect...");
+      const savedSession = localStorage.getItem(SESSION_KEY);
+      
+      if (savedSession) {
+        try {
           const { res, table, timestamp } = JSON.parse(savedSession);
+          // Only auto-restore if session is fresh (12h)
           if (Date.now() - timestamp < 12 * 60 * 60 * 1000) {
             const success = await handleStartSession(res, table);
             if (success) return;
           }
+        } catch (e) {
+          console.error("[DineSplit] Failed to parse saved session");
+          localStorage.removeItem(SESSION_KEY);
         }
-
-        // 3. Flujo normal
-        setDiagnosticInfo("Iniciando pantalla de escaneo.");
-        setCurrentView('SCAN');
-        setLoading(false);
-
-      } catch (err: any) {
-        console.error("[DineSplit] Error en initApp:", err);
-        setError(`Fallo de inicialización: ${err.message}`);
-        setLoading(false);
       }
+
+      setLoading(false);
+      setCurrentView('SCAN');
     };
 
     initApp();
-  }, [handleStartSession, resParam, tableParam]);
+  }, [handleStartSession]);
 
   const navigate = (view: AppView) => setCurrentView(view);
 
-  // --- RENDERS DE DIAGNÓSTICO ---
+  // --- RECOVERY RENDER ---
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-background-dark p-8 text-center">
+      <div className="flex flex-col items-center justify-center min-h-screen bg-background-dark p-8 text-center animate-fade-in">
         <div className="size-20 bg-red-500/20 rounded-full flex items-center justify-center mb-6">
-          <span className="material-symbols-outlined text-red-500 text-5xl">report</span>
+          <span className="material-symbols-outlined text-red-500 text-5xl">error</span>
         </div>
-        <h2 className="text-white text-2xl font-black mb-4 uppercase tracking-tighter">Error de Conexión</h2>
-        <div className="bg-white/5 border border-red-500/30 rounded-2xl p-4 mb-8 w-full">
-          <p className="text-red-400 text-sm font-mono break-words">{error}</p>
-        </div>
+        <h2 className="text-white text-2xl font-black mb-4 uppercase tracking-tighter">Fallo de Conexión</h2>
+        <p className="text-text-secondary text-sm mb-8 leading-relaxed px-4">{error}</p>
         <button 
-          onClick={() => { localStorage.clear(); window.location.href = window.location.pathname; }} 
-          className="bg-primary text-background-dark px-10 py-4 rounded-2xl font-black uppercase tracking-widest shadow-lg shadow-primary/20 active:scale-95 transition-all"
+          onClick={() => { localStorage.clear(); window.location.href = '/'; }} 
+          className="w-full max-w-xs bg-primary text-background-dark py-4 rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-primary/20 active:scale-95 transition-all"
         >
-          Limpiar y Reintentar
+          Reintentar Carga
         </button>
       </div>
     );
   }
 
+  // --- LOADING RENDER ---
   if (loading || currentView === 'INIT') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-background-dark text-center p-10">
-        <div className="relative mb-10">
-          <div className="size-24 border-4 border-primary/10 rounded-full"></div>
-          <div className="absolute top-0 size-24 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-          <div className="absolute inset-0 flex items-center justify-center">
-             <span className="material-symbols-outlined text-primary text-3xl animate-pulse">restaurant</span>
-          </div>
+        <div className="relative mb-8">
+          <div className="size-20 border-4 border-primary/10 rounded-full"></div>
+          <div className="absolute top-0 size-20 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
         </div>
-        <h2 className="text-primary text-xs font-black uppercase tracking-[0.4em] mb-4">DineSplit</h2>
-        <p className="text-white/40 text-[10px] font-bold uppercase tracking-widest mb-2">Cargando Mesa...</p>
-        {diagnosticInfo && (
-          <p className="text-primary/40 text-[9px] font-mono italic animate-pulse">{diagnosticInfo}</p>
-        )}
+        <div className="space-y-2">
+          <h2 className="text-primary text-xs font-black uppercase tracking-[0.4em]">CARGANDO MESA...</h2>
+          <p className="text-white/40 text-[10px] font-mono animate-pulse">{diagnosticMsg}</p>
+        </div>
       </div>
     );
   }
@@ -260,7 +224,7 @@ const App: React.FC = () => {
       case 'FEEDBACK':
         return <FeedbackView onNext={() => navigate('CONFIRMATION')} onSkip={() => navigate('CONFIRMATION')} cart={cart} menuItems={menuItems} waiter={currentWaiter} restaurant={restaurant} />;
       case 'CONFIRMATION':
-        return <ConfirmationView onRestart={() => { localStorage.removeItem(SESSION_KEY); window.location.href = window.location.pathname; }} guests={guests} tableNumber={currentTable?.table_number} />;
+        return <ConfirmationView onRestart={() => { localStorage.removeItem(SESSION_KEY); window.location.href = '/'; }} guests={guests} tableNumber={currentTable?.table_number} />;
       default:
         return null;
     }
@@ -268,6 +232,12 @@ const App: React.FC = () => {
 
   return (
     <div className="max-w-md mx-auto min-h-screen bg-background-dark shadow-2xl relative flex flex-col overflow-hidden">
+      {/* VISUAL PROOF TAG */}
+      {currentTable && (
+        <div className="absolute top-0 right-0 z-[100] px-2 py-1 bg-primary text-background-dark text-[8px] font-black uppercase tracking-widest rounded-bl-lg">
+          Conectado a Mesa: {currentTable.table_number}
+        </div>
+      )}
       {renderView()}
     </div>
   );
