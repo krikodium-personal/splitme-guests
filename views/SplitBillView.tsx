@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect } from 'react';
 import { Guest, OrderItem, MenuItem } from '../types';
 import { getInitials, getGuestColor } from './GuestInfoView';
@@ -52,7 +53,8 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
     return units;
   });
 
-  const subtotal = useMemo(() => assignments.reduce((sum, a) => sum + a.unitPrice, 0), [assignments]);
+  // Explicitly type the accumulator as number to avoid unknown type errors
+  const subtotal = useMemo(() => assignments.reduce((sum: number, a) => sum + a.unitPrice, 0), [assignments]);
   const taxRate = 0.08;
   const serviceRate = 0.0727;
   const taxesValue = subtotal * taxRate;
@@ -78,7 +80,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
         if (unit.assignedGuestIds.length > 0) {
           const portion = unit.unitPrice / unit.assignedGuestIds.length;
           unit.assignedGuestIds.forEach(gid => {
-            // FIX: Use Number() to ensure shares[gid] is treated as a number during addition to avoid unknown type error
+            // FIX: Ensure current is a number before addition
             const current: number = Number(shares[gid] || 0);
             shares[gid] = current + portion;
           });
@@ -88,7 +90,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
       cart.forEach(item => {
         const menuItem = menuItems.find(m => m.id === item.itemId);
         if (menuItem) {
-          // FIX: Use Number() to ensure shares[item.guestId] is treated as a number during addition to avoid unknown type error
+          // FIX: Ensure current is a number before addition
           const current: number = Number(shares[item.guestId] || 0);
           shares[item.guestId] = current + (Number(menuItem.price) * item.quantity);
         }
@@ -121,8 +123,9 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
   }, [method, selectedForEqual, assignments, customAmounts, cart, guests, menuItems, subtotal, taxRate, serviceRate]);
 
   const assignedSubtotal = useMemo(() => {
-    if (method === 'item') return assignments.filter(a => a.assignedGuestIds.length > 0).reduce((sum, a) => sum + a.unitPrice, 0);
-    if (method === 'custom') return Object.values(customAmounts).reduce((sum, val) => sum + (parseFloat(val as string) || 0), 0);
+    // Explicitly type the accumulator as number to avoid unknown type errors
+    if (method === 'item') return assignments.filter(a => a.assignedGuestIds.length > 0).reduce((sum: number, a) => sum + a.unitPrice, 0);
+    if (method === 'custom') return Object.values(customAmounts).reduce((sum: number, val) => sum + (parseFloat(val as string) || 0), 0);
     if (method === 'equal') return selectedForEqual.length > 0 ? subtotal : 0;
     return subtotal; 
   }, [method, assignments, customAmounts, selectedForEqual, subtotal]);
