@@ -1,5 +1,6 @@
 
 export type AppView = 
+  | 'INIT'
   | 'SCAN' 
   | 'GUEST_INFO' 
   | 'MENU' 

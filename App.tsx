@@ -16,13 +16,13 @@ import ConfirmationView from './views/ConfirmationView';
 const SESSION_KEY = 'dinesplit_active_session';
 
 const App: React.FC = () => {
-  // Detection of URL parameters to decide initial bypass
   const searchParams = useMemo(() => new URLSearchParams(window.location.search), []);
   const resParam = searchParams.get('res');
   const tableParam = searchParams.get('table');
   
-  const [currentView, setCurrentView] = useState<AppView>('SCAN');
-  const [loading, setLoading] = useState(true); // Start as true to check context first
+  // Iniciamos en vista INIT para que nada se renderice hasta validar URL
+  const [currentView, setCurrentView] = useState<AppView>('INIT');
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
   const [restaurant, setRestaurant] = useState<any>(null);
@@ -39,34 +39,29 @@ const App: React.FC = () => {
   const [cart, setCart] = useState<OrderItem[]>([]);
   const [editingCartItem, setEditingCartItem] = useState<OrderItem | null>(null);
 
-  /**
-   * Loads restaurant, table and menu data.
-   */
   const handleStartSession = useCallback(async (accessCode: string, tableNum: string) => {
-    console.log(`[DineSplit] Starting session logic for: Res=${accessCode}, Table=${tableNum}`);
+    console.log(`[DineSplit] Validando sesión: Res=${accessCode}, Mesa=${tableNum}`);
     setLoading(true);
     setError(null);
     const cleanCode = accessCode.trim().toUpperCase();
 
     try {
-      if (!supabase) throw new Error("Database connection unavailable.");
+      if (!supabase) throw new Error("Base de datos no disponible.");
 
-      // 1. Validate Restaurant
       const { data: resData, error: resError } = await supabase
         .from('restaurants')
         .select('*')
         .eq('access_code', cleanCode)
         .maybeSingle();
 
-      if (resError) throw new Error(`Error fetching restaurant: ${resError.message}`);
+      if (resError) throw resError;
       if (!resData) {
-        setError(`El restaurante "${cleanCode}" no existe.`);
+        setError(`El local "${cleanCode}" no existe.`);
         localStorage.removeItem(SESSION_KEY);
         setLoading(false);
         return false;
       }
 
-      // 2. Validate Table
       const { data: tableData, error: tableError } = await supabase
         .from('tables')
         .select('*')
@@ -74,15 +69,14 @@ const App: React.FC = () => {
         .eq('table_number', parseInt(tableNum))
         .maybeSingle();
 
-      if (tableError) throw new Error(`Error fetching table: ${tableError.message}`);
+      if (tableError) throw tableError;
       if (!tableData) {
-        setError(`La mesa ${tableNum} no está configurada.`);
+        setError(`Mesa ${tableNum} no encontrada.`);
         localStorage.removeItem(SESSION_KEY);
         setLoading(false);
         return false;
       }
 
-      // 3. Load Staff
       let waiterInfo = null;
       if (tableData.waiter_id) {
         const { data: waiterData } = await supabase.from('waiters').select('*').eq('id', tableData.waiter_id).maybeSingle();
@@ -93,7 +87,6 @@ const App: React.FC = () => {
         waiterInfo = staffData;
       }
 
-      // 4. Load Menu
       const [catRes, itemRes] = await Promise.all([
         supabase.from('categories').select('*').eq('restaurant_id', resData.id).order('sort_order'),
         supabase.from('menu_items').select('*').eq('restaurant_id', resData.id).order('sort_order')
@@ -116,21 +109,17 @@ const App: React.FC = () => {
       return true;
 
     } catch (err: any) {
-      console.error("[DineSplit] Init error:", err);
       setError(`Error: ${err.message || 'Error de conexión'}`);
       setLoading(false);
       return false;
     }
   }, []);
 
-  /**
-   * Effect to check URL bypass or storage on mount
-   */
   useEffect(() => {
     const initApp = async () => {
-      // Case 1: URL Parameters (Highest Priority)
+      // 1. Prioridad: Parámetros URL (Bypass total de cámara)
       if (resParam && tableParam) {
-        console.log('[DineSplit] Bypass URL parameters detected.');
+        console.log('[DineSplit] Bypass detectado por URL.');
         const success = await handleStartSession(resParam, tableParam);
         if (success) {
           window.history.replaceState({}, '', window.location.pathname);
@@ -138,7 +127,7 @@ const App: React.FC = () => {
         }
       }
 
-      // Case 2: Storage
+      // 2. Persistencia en Storage
       const savedSession = localStorage.getItem(SESSION_KEY);
       if (savedSession) {
         try {
@@ -148,12 +137,12 @@ const App: React.FC = () => {
             if (success) return;
           }
         } catch (e) {
-          console.error("Invalid session storage");
+          localStorage.removeItem(SESSION_KEY);
         }
       }
 
-      // Case 3: Manual Entrance (No automatic camera start)
-      console.log('[DineSplit] No valid context found. Directing to SCAN view.');
+      // 3. Fallback: Escáner Manual (Cámara desactivada por defecto)
+      console.log('[DineSplit] Mostrando pantalla de bienvenida.');
       setLoading(false);
       setCurrentView('SCAN');
     };
@@ -165,22 +154,23 @@ const App: React.FC = () => {
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-background-dark p-8 text-center">
-        <span className="material-symbols-outlined text-red-500 text-5xl mb-4">error</span>
-        <h2 className="text-white text-xl font-bold mb-4">No pudimos conectar con tu mesa</h2>
-        <p className="text-text-secondary text-sm mb-8">{error}</p>
-        <button onClick={() => window.location.href = '/'} className="bg-primary text-background-dark px-8 py-3 rounded-xl font-bold">Volver al inicio</button>
+      <div className="flex flex-col items-center justify-center min-h-screen bg-background-dark p-8 text-center animate-fade-in">
+        <span className="material-symbols-outlined text-red-500 text-6xl mb-4">error</span>
+        <h2 className="text-white text-2xl font-black mb-4 tracking-tight">Vínculo fallido</h2>
+        <p className="text-text-secondary text-sm mb-10 leading-relaxed">{error}</p>
+        <button onClick={() => window.location.href = '/'} className="bg-primary text-background-dark px-10 py-4 rounded-2xl font-black uppercase tracking-widest shadow-lg active:scale-95 transition-all">Reintentar</button>
       </div>
     );
   }
 
-  if (loading) {
+  if (loading || currentView === 'INIT') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-background-dark">
-        <div className="size-16 border-4 border-primary border-t-transparent rounded-full animate-spin mb-6"></div>
-        <div className="text-center px-10">
-          <p className="text-primary text-xs font-black uppercase tracking-[0.2em] animate-pulse">Sincronizando Mesa</p>
+        <div className="relative">
+          <div className="size-20 border-4 border-primary/20 rounded-full"></div>
+          <div className="absolute top-0 size-20 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
         </div>
+        <p className="mt-8 text-primary text-[10px] font-black uppercase tracking-[0.3em] animate-pulse">Sincronizando Mesa</p>
       </div>
     );
   }
@@ -235,7 +225,7 @@ const App: React.FC = () => {
       case 'CONFIRMATION':
         return <ConfirmationView onRestart={() => { localStorage.removeItem(SESSION_KEY); window.location.href = '/'; }} guests={guests} tableNumber={currentTable?.table_number} />;
       default:
-        return <ScanView onNext={handleStartSession} />;
+        return null;
     }
   };
 

@@ -12,7 +12,7 @@ interface SplitBillViewProps {
 }
 
 interface BillItemAssignment {
-  id: string; // unique per unit
+  id: string; // único por unidad
   cartItemId: string;
   itemId: string;
   name: string;
@@ -23,19 +23,15 @@ interface BillItemAssignment {
 
 const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onConfirm, menuItems }) => {
   const [method, setMethod] = useState<'equal' | 'item' | 'guest' | 'custom'>('item');
-  const [showFullBreakdown, setShowFullBreakdown] = useState(false);
   
-  // State for Equal Split
   const [selectedForEqual, setSelectedForEqual] = useState<string[]>(guests.map(g => g.id));
   
-  // State for Custom Split
   const [customAmounts, setCustomAmounts] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {};
     guests.forEach(g => initial[g.id] = '0');
     return initial;
   });
 
-  // State for By Item Assignment
   const [assignments, setAssignments] = useState<BillItemAssignment[]>(() => {
     const units: BillItemAssignment[] = [];
     cart.forEach(item => {
@@ -64,7 +60,6 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
   const grandTotal = subtotal + taxesValue + serviceChargeValue;
 
   const guestShares = useMemo(() => {
-    // Explicitly initializing shares as number record
     const shares: Record<string, number> = {};
     guests.forEach(g => {
       shares[g.id] = 0;
@@ -83,25 +78,23 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
         if (unit.assignedGuestIds.length > 0) {
           const portion = unit.unitPrice / unit.assignedGuestIds.length;
           unit.assignedGuestIds.forEach(gid => {
-            // Fix: Use Number() to resolve "Operator '+' cannot be applied to types 'unknown' and 'number'"
-            const current = Number(shares[gid] || 0);
+            // FIX: Use Number() to ensure shares[gid] is treated as a number during addition to avoid unknown type error
+            const current: number = Number(shares[gid] || 0);
             shares[gid] = current + portion;
           });
         }
       });
     } else if (method === 'guest') {
-      // Original cart order
       cart.forEach(item => {
         const menuItem = menuItems.find(m => m.id === item.itemId);
         if (menuItem) {
-          // Fix: Use Number() to resolve "Operator '+' cannot be applied to types 'unknown' and 'number'"
-          const current = Number(shares[item.guestId] || 0);
+          // FIX: Use Number() to ensure shares[item.guestId] is treated as a number during addition to avoid unknown type error
+          const current: number = Number(shares[item.guestId] || 0);
           shares[item.guestId] = current + (Number(menuItem.price) * item.quantity);
         }
       });
     } else if (method === 'custom') {
       guests.forEach(g => {
-        // Fix: Checking customAmounts value before passing to parseFloat to avoid 'unknown' or 'undefined' errors.
         const val = customAmounts[g.id];
         const valStr = typeof val === 'string' ? val : '0';
         shares[g.id] = parseFloat(valStr) || 0;
@@ -109,7 +102,6 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
     }
 
     return guests.map(g => {
-      // FIX: Access shares with explicit fallback to bypass indexing limitations in strict TS modes
       const guestSubtotal = Number(shares[g.id] || 0);
       const guestTotal = guestSubtotal * (1 + taxRate + serviceRate);
       
@@ -175,7 +167,6 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
           <span className="text-[10px] font-black text-primary uppercase tracking-[0.3em] mb-2">Total de la Mesa</span>
           <h2 className="text-5xl font-black tracking-tighter leading-none mb-4 text-white">${formatPrice(grandTotal)}</h2>
           
-          {/* Desglose de Cargos */}
           <div className="w-full max-w-xs bg-white/5 rounded-3xl p-5 border border-white/10 shadow-xl">
             <div className="space-y-2.5">
               <div className="flex justify-between items-center text-xs font-medium text-text-secondary">
@@ -198,14 +189,13 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
           </div>
         </div>
 
-        {/* Tabs de Selección de Método */}
         <div className="px-4 mb-6">
           <div className="grid grid-cols-4 bg-white/5 p-1 rounded-2xl border border-white/5">
             {[
               { id: 'equal', label: 'Equitativo', icon: 'balance' },
               { id: 'item', label: 'Por Item', icon: 'reorder' },
               { id: 'guest', label: 'Comensal', icon: 'person' },
-              { id: 'custom', label: 'Personalizado', icon: 'edit_note' }
+              { id: 'custom', label: 'Manual', icon: 'edit_note' }
             ].map((m) => (
               <button 
                 key={m.id} 
@@ -221,9 +211,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
           </div>
         </div>
 
-        {/* Contenido según método */}
         <div className="px-4 pb-8 space-y-6">
-          
           {method === 'equal' && (
             <div className="space-y-4 animate-fade-in-up">
               <p className="text-center text-sm text-text-secondary px-6">Selecciona quiénes participan en la división equitativa.</p>
@@ -323,7 +311,6 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
                     ) : (
                       <p className="text-[10px] text-text-secondary italic text-center py-1">Sin productos asignados</p>
                     )}
-                    
                     <div className="pt-2 mt-2 border-t border-white/5 flex justify-between items-center">
                       <span className="text-[9px] font-black uppercase text-text-secondary">Subtotal Personal</span>
                       <span className="text-[11px] font-bold text-white">${formatPrice(share.subtotal)}</span>
@@ -336,18 +323,6 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
 
           {method === 'custom' && (
             <div className="space-y-4 animate-fade-in-up">
-               <div className="bg-surface-dark border border-white/5 rounded-2xl p-4 mb-4">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-[10px] font-black text-text-secondary uppercase tracking-widest">Total Manual</span>
-                    <span className={`text-[10px] font-black ${isFullyAssigned ? 'text-primary' : 'text-amber-500'}`}>
-                      ${formatPrice(assignedSubtotal)} / ${formatPrice(subtotal)}
-                    </span>
-                  </div>
-                  <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
-                    <div className={`h-full transition-all duration-500 ${isFullyAssigned ? 'bg-primary' : 'bg-amber-500'}`} style={{ width: `${Math.min(100, (assignedSubtotal/subtotal)*100)}%` }}></div>
-                  </div>
-               </div>
-
                {guests.map(guest => (
                  <div key={guest.id} className="flex items-center gap-4 bg-surface-dark border border-white/5 p-4 rounded-2xl">
                     <div className={`size-12 rounded-full flex items-center justify-center font-black text-sm shrink-0 ${getGuestColor(guest.id)}`}>
@@ -383,7 +358,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
             <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 flex items-center gap-3 animate-pulse">
               <span className="material-symbols-outlined text-amber-500">warning</span>
               <p className="text-[10px] font-bold text-amber-500 uppercase tracking-widest leading-tight">
-                Faltan ${formatPrice(subtotal - assignedSubtotal)} por asignar del subtotal
+                Faltan ${formatPrice(subtotal - assignedSubtotal)} por asignar
               </p>
             </div>
           )}
