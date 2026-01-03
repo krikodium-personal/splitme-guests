@@ -1,65 +1,265 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { supabase } from '../lib/supabase';
 import { OrderItem } from '../types';
-import { formatPrice } from './MenuView';
 
 interface OrderProgressViewProps {
   cart: OrderItem[];
+  activeOrderId?: string | null;
   onNext: () => void;
   onBack: () => void;
+  onRedirectToFeedback?: () => void;
   tableNumber?: number;
   waiter?: any;
 }
 
-const OrderProgressView: React.FC<OrderProgressViewProps> = ({ onNext, onBack, tableNumber, waiter }) => {
+const ACTIVE_ORDER_KEY = 'dinesplit_active_order_id';
+
+/**
+ * Pantalla de seguimiento de pedido con suscripción Realtime de alta disponibilidad.
+ */
+const OrderProgressView: React.FC<OrderProgressViewProps> = ({ cart, activeOrderId, onNext, onBack, onRedirectToFeedback, tableNumber, waiter }) => {
   const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
-  const [message, setMessage] = useState('');
+  
+  // 1. RESOLUCIÓN DE ID: Garantizamos que sea un string válido antes de operar
+  const orderId = useMemo(() => {
+    const id = activeOrderId || cart.find(item => item.order_id)?.order_id || localStorage.getItem(ACTIVE_ORDER_KEY);
+    return id && typeof id === 'string' ? id : null;
+  }, [cart, activeOrderId]);
+  
+  const [dbStatus, setDbStatus] = useState<string>('PREPARANDO');
+  const [isFlickering, setIsFlickering] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
+  
+  const channelRef = useRef<any>(null);
+  const retryTimeoutRef = useRef<number | null>(null);
+
+  // NORMALIZACIÓN: Evita errores por diferencias de casing entre DB y UI
+  const normalizedStatus = useMemo(() => dbStatus ? dbStatus.toUpperCase() : 'PREPARANDO', [dbStatus]);
+
+  useEffect(() => {
+    if (!orderId) {
+      console.warn("[DineSplit] No se puede iniciar seguimiento: ID de orden no encontrado.");
+      return;
+    }
+
+    if (!supabase) {
+      console.error("[DineSplit] Cliente Supabase no disponible.");
+      return;
+    }
+
+    // LOG DE DIAGNÓSTICO
+    console.log(`[DineSplit] Intento de conexión para ID: ${orderId}`);
+
+    // SINCRO INICIAL: Asegura el punto de partida correcto
+    const fetchCurrentStatus = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('orders')
+          .select('status')
+          .eq('id', orderId)
+          .maybeSingle();
+        
+        if (error) throw error;
+
+        // VERIFICACIÓN DE EXISTENCIA: Si no existe, limpiar y salir
+        if (!data) {
+          console.error("[DineSplit] La orden ya no existe en la base de datos.");
+          localStorage.removeItem(ACTIVE_ORDER_KEY);
+          onBack(); // Redirigir al Menú
+          return;
+        }
+
+        const status = data.status.toUpperCase();
+        setDbStatus(status);
+        if (status === 'PAGADO' && onRedirectToFeedback) onRedirectToFeedback();
+      } catch (err) {
+        console.error("[DineSplit] Error en fetch inicial:", err);
+      }
+    };
+
+    // SUSCRIPCIÓN ROBUSTA
+    const setupRealtime = () => {
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+      }
+
+      setConnectionStatus('connecting');
+
+      const channel = supabase
+        .channel(`order-live-${orderId}`)
+        .on(
+          'postgres_changes',
+          { 
+            event: 'UPDATE', 
+            schema: 'public', 
+            table: 'orders', 
+            filter: `id=eq.${orderId}` 
+          },
+          (payload) => {
+            console.log(`[DineSplit] Evento recibido: ${payload.new.status}`);
+            
+            const nextStatus = payload.new.status.toUpperCase();
+            setDbStatus(nextStatus);
+            
+            setIsFlickering(true);
+            setTimeout(() => setIsFlickering(false), 600);
+
+            if (nextStatus === 'PAGADO' && onRedirectToFeedback) {
+              onRedirectToFeedback();
+            }
+          }
+        )
+        .subscribe((status) => {
+          if (status === 'SUBSCRIBED') {
+            console.log(`[DineSplit] Canal conectado: ${orderId}`);
+            setConnectionStatus('connected');
+            if (retryTimeoutRef.current) {
+              window.clearTimeout(retryTimeoutRef.current);
+              retryTimeoutRef.current = null;
+            }
+          } else {
+            setConnectionStatus('error');
+            if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+              if (!retryTimeoutRef.current) {
+                retryTimeoutRef.current = window.setTimeout(() => {
+                  retryTimeoutRef.current = null;
+                  setupRealtime();
+                }, 5000);
+              }
+            }
+          }
+        });
+
+      channelRef.current = channel;
+    };
+
+    fetchCurrentStatus();
+    setupRealtime();
+
+    return () => {
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+      if (retryTimeoutRef.current) window.clearTimeout(retryTimeoutRef.current);
+    };
+  }, [orderId, onRedirectToFeedback, onBack]);
+
+  // 2. CONFIGURACIÓN VISUAL SEGÚN DB
+  const statusConfig = useMemo(() => {
+    switch (normalizedStatus) {
+      case 'SERVIDO':
+        return {
+          icon: 'restaurant',
+          color: 'text-emerald-400',
+          bgColor: 'bg-emerald-400/20',
+          ringColor: 'border-emerald-400',
+          message: '🍽️ ¡Pedido servido!',
+          description: 'Disfruta de tu comida. ¡Buen provecho!'
+        };
+      case 'PAGADO':
+        return {
+          icon: 'check_circle',
+          color: 'text-blue-400',
+          bgColor: 'bg-blue-400/20',
+          ringColor: 'border-blue-400',
+          message: '¡Gracias por visitarnos!',
+          description: 'Cerrando sesión de mesa...'
+        };
+      case 'PREPARANDO':
+      default:
+        return {
+          icon: 'skillet',
+          color: 'text-primary',
+          bgColor: 'bg-primary/20',
+          ringColor: 'border-primary',
+          message: '👨‍🍳 En preparación...',
+          description: 'El chef está trabajando en tu orden.'
+        };
+    }
+  }, [normalizedStatus]);
+
+  // 3. MAPEO DE ESTADOS DE UI (TIMELINE)
+  const steps = useMemo(() => [
+    { 
+      label: 'Orden Enviada', 
+      desc: 'Recibido en cocina.', 
+      done: true, 
+      current: false 
+    },
+    { 
+      label: 'En Preparación', 
+      desc: 'Cocinando con amor.', 
+      done: normalizedStatus === 'SERVIDO' || normalizedStatus === 'PAGADO', 
+      current: normalizedStatus === 'PREPARANDO' 
+    },
+    { 
+      label: 'Servido', 
+      desc: '¡Listo en tu mesa!', 
+      done: normalizedStatus === 'PAGADO', 
+      current: normalizedStatus === 'SERVIDO' 
+    },
+  ], [normalizedStatus]);
 
   return (
-    <div className="flex flex-col flex-1 h-screen bg-background-dark text-white overflow-hidden relative">
+    <div className={`flex flex-col flex-1 h-screen bg-background-dark text-white overflow-hidden relative font-display transition-colors duration-500 ${isFlickering ? 'bg-primary/10' : ''}`}>
       <div className="sticky top-0 z-10 flex items-center bg-background-dark/95 backdrop-blur-md p-4 justify-between border-b border-white/10">
-        <h2 className="text-lg font-bold leading-tight flex-1">Mesa {tableNumber || '--'}</h2>
+        <div className="flex flex-col flex-1">
+          <h2 className="text-lg font-bold">Mesa {tableNumber || '--'}</h2>
+          <div className="flex items-center gap-1.5">
+            <div className={`size-1.5 rounded-full ${connectionStatus === 'connected' ? 'bg-primary animate-pulse' : 'bg-red-500'}`}></div>
+            <span className="text-[9px] font-black uppercase tracking-widest text-text-secondary opacity-60">
+              {connectionStatus === 'connected' ? 'Canal Estable' : 'Sincronizando...'}
+            </span>
+          </div>
+        </div>
         <div className="flex items-center justify-end bg-surface-dark/50 px-3 py-1 rounded-full border border-white/5">
-          <span className="text-[#9db9a8] text-xs font-bold uppercase tracking-wider mr-2">Orden</span>
-          <p className="text-primary text-base font-bold tracking-wider">#8821</p>
+          <span className="text-text-secondary text-[10px] font-black uppercase tracking-wider mr-2">ID</span>
+          <p className="text-primary text-sm font-black tabular-nums">#{orderId?.split('-')[0] || '----'}</p>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto pb-40 no-scrollbar">
-        <div className="px-4 py-10 flex flex-col items-center">
-          <div className="relative mb-6">
-            <div className="absolute inset-0 bg-primary/20 rounded-full blur-xl"></div>
-            <div className="relative bg-surface-dark w-24 h-24 rounded-full flex items-center justify-center border-2 border-primary animate-pulse-ring">
-              <span className="material-symbols-outlined text-primary text-5xl">skillet</span>
+      <div className="flex-1 overflow-y-auto pb-44 no-scrollbar">
+        <div className="px-4 py-12 flex flex-col items-center animate-fade-in">
+          <div className="relative mb-8">
+            <div className={`absolute inset-0 ${statusConfig.bgColor} rounded-full blur-2xl opacity-40 ${normalizedStatus === 'PREPARANDO' ? 'animate-pulse' : ''}`}></div>
+            <div className={`relative bg-surface-dark w-28 h-28 rounded-full flex items-center justify-center border-2 ${statusConfig.ringColor} transition-all duration-700 shadow-2xl ${isFlickering ? 'scale-110 border-primary shadow-primary/30' : ''}`}>
+              <span className={`material-symbols-outlined ${statusConfig.color} text-6xl transition-all duration-500`}>
+                {statusConfig.icon}
+              </span>
             </div>
           </div>
-          <h2 className="tracking-tight text-[28px] font-black leading-tight text-center mb-2 px-4 italic">¡Los chefs están preparando tu comida!</h2>
+          <h2 className="tracking-tight text-[28px] font-black leading-tight text-center mb-2 px-6 italic">
+            {statusConfig.message}
+          </h2>
+          <p className="text-text-secondary text-sm font-medium opacity-80 text-center px-10">
+            {statusConfig.description}
+          </p>
         </div>
 
-        <div className="px-4 pb-6">
-          <div className="bg-surface-dark rounded-xl p-5 shadow-sm border border-white/5">
-            <h3 className="text-sm font-bold uppercase tracking-wider mb-6 opacity-80">Estado de la Orden</h3>
-            <div className="grid grid-cols-[40px_1fr] gap-x-3">
-              {[
-                { label: 'Orden Enviada', desc: 'La cocina ha recibido tu pedido.', time: '12:30 PM', done: true, current: false },
-                { label: 'En Preparación', desc: 'Estamos trabajando duro en tus platillos.', status: 'ACTUAL', done: false, current: true },
-                { label: 'Listo para ser servido', desc: 'Tus platillos están listos y en camino a tu mesa.', done: false, current: false },
-                { label: 'Servido', desc: '¡Disfruta tu comida!', done: false, current: false },
-              ].map((step, idx, arr) => (
+        <div className="px-6 pb-6">
+          <div className="bg-surface-dark rounded-3xl p-6 shadow-xl border border-white/5 relative overflow-hidden">
+            <h3 className="text-[10px] font-black uppercase tracking-[0.3em] mb-8 text-primary/60 text-center">Progreso de la Orden</h3>
+            <div className="grid grid-cols-[40px_1fr] gap-x-4">
+              {steps.map((step, idx, arr) => (
                 <React.Fragment key={idx}>
-                  <div className="flex flex-col items-center gap-1 pt-1">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-background-dark shadow-lg ${step.done ? 'bg-primary' : step.current ? 'border-2 border-primary animate-pulse' : 'bg-white/10'}`}>
-                      <span className="material-symbols-outlined text-sm font-bold">{step.done ? 'check' : step.current ? 'local_fire_department' : 'circle'}</span>
+                  <div className="flex flex-col items-center gap-1">
+                    <div className={`w-9 h-9 rounded-full flex items-center justify-center text-background-dark shadow-lg transition-all duration-500 ${step.done ? 'bg-primary' : step.current ? 'border-2 border-primary bg-primary/10 animate-pulse' : 'bg-white/10'}`}>
+                      <span className="material-symbols-outlined text-base font-bold">
+                        {step.done ? 'check' : step.current ? 'local_fire_department' : 'circle'}
+                      </span>
                     </div>
-                    {idx < arr.length - 1 && <div className={`w-[2px] h-full min-h-[40px] grow rounded-full my-1 ${step.done ? 'bg-primary' : 'bg-white/10'}`}></div>}
+                    {idx < arr.length - 1 && (
+                      <div className={`w-[2px] h-full min-h-[44px] grow rounded-full my-1 transition-all duration-700 ${step.done ? 'bg-primary' : 'bg-white/10'}`}></div>
+                    )}
                   </div>
-                  <div className={`flex flex-1 flex-col pb-8 pt-1 ${!step.done && !step.current ? 'opacity-40' : ''}`}>
+                  <div className={`flex flex-1 flex-col pb-10 transition-all duration-500 ${!step.done && !step.current ? 'opacity-30' : 'opacity-100'}`}>
                     <div className="flex justify-between items-center">
-                      <p className={`text-base font-bold ${step.current ? 'text-primary' : 'text-white'}`}>{step.label}</p>
-                      {step.time && <span className="text-xs font-medium text-gray-500">{step.time}</span>}
-                      {step.status && <span className="bg-primary/20 text-primary text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">{step.status}</span>}
+                      <p className={`text-base font-black ${step.current ? 'text-primary scale-105 origin-left' : 'text-white'}`}>{step.label}</p>
+                      {step.current && <span className="bg-primary/20 text-primary text-[9px] font-black px-2.5 py-1 rounded-full uppercase tracking-widest border border-primary/20">Actual</span>}
                     </div>
-                    <p className="text-[#9db9a8] text-sm leading-normal mt-1">{step.desc}</p>
+                    <p className="text-text-secondary text-xs leading-relaxed mt-1 font-medium">{step.desc}</p>
                   </div>
                 </React.Fragment>
               ))}
@@ -68,51 +268,46 @@ const OrderProgressView: React.FC<OrderProgressViewProps> = ({ onNext, onBack, t
         </div>
       </div>
 
-      <div className="absolute bottom-0 left-0 w-full px-4 pt-12 pb-6 bg-gradient-to-t from-background-dark via-background-dark to-transparent z-20">
-        <div className="flex flex-col gap-3 max-w-md mx-auto w-full">
-          <div className="flex gap-3 w-full">
-            <button onClick={onBack} className="flex-1 bg-surface-dark border border-white/10 text-white font-bold h-12 rounded-xl flex items-center justify-center gap-2 hover:bg-white/5 active:scale-95 text-sm transition-all"><span className="material-symbols-outlined text-lg">restaurant_menu</span> Menú</button>
-            <button onClick={() => setIsWaiterModalOpen(true)} className="flex-1 bg-surface-dark border border-primary text-primary font-bold h-12 rounded-xl flex items-center justify-center gap-2 hover:bg-primary/10 active:scale-95 text-sm transition-all shadow-[0_0_15px_rgba(19,236,106,0.1)]"><span className="material-symbols-outlined filled text-lg">notifications_active</span> Llamar Mesero</button>
+      <div className="absolute bottom-0 left-0 w-full px-4 pt-16 pb-8 bg-gradient-to-t from-background-dark via-background-dark to-transparent z-20 pointer-events-none">
+        <div className="max-w-md mx-auto flex flex-col gap-3 pointer-events-auto">
+          <div className="flex gap-3">
+            <button onClick={onBack} className="flex-1 bg-surface-dark border border-white/10 text-white h-14 rounded-2xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-transform shadow-lg">
+              <span className="material-symbols-outlined text-xl">restaurant_menu</span> Menú
+            </button>
+            <button onClick={() => setIsWaiterModalOpen(true)} className="flex-1 bg-surface-dark border border-primary/30 text-primary h-14 rounded-2xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-transform shadow-lg">
+              <span className="material-symbols-outlined text-xl filled">hail</span> Mesero
+            </button>
           </div>
-          <button onClick={onNext} className="w-full bg-primary text-background-dark font-bold text-lg h-14 rounded-xl flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(19,236,106,0.3)] hover:shadow-[0_0_30px_rgba(19,236,106,0.5)] active:scale-95 transition-all"><span className="material-symbols-outlined">payments</span> Dividir y Pagar</button>
+          <button onClick={onNext} className="w-full bg-primary text-background-dark h-16 rounded-2xl font-black text-xl flex items-center justify-center gap-3 shadow-[0_4px_30px_rgba(19,236,106,0.3)] hover:brightness-110 active:scale-[0.98] transition-all">
+            <span>Pagar Cuenta</span>
+            <span className="material-symbols-outlined font-black">payments</span>
+          </button>
         </div>
       </div>
 
       {isWaiterModalOpen && (
         <div className="fixed inset-0 z-[100] flex flex-col justify-end animate-fade-in">
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setIsWaiterModalOpen(false)}></div>
-          <div className="bg-[#102217] w-full max-w-md mx-auto rounded-t-[40px] overflow-hidden flex flex-col relative z-10 animate-fade-in-up border-t border-white/10 shadow-[0_-15px_50px_rgba(0,0,0,0.6)]">
-            <div className="flex justify-center pt-4 pb-2 shrink-0"><div className="w-16 h-1.5 bg-white/20 rounded-full"></div></div>
-            <div className="px-6 py-4 flex items-center justify-between border-b border-white/5 shrink-0"><h2 className="text-xl font-black text-white uppercase tracking-widest">Servicio de Mesa</h2><button onClick={() => setIsWaiterModalOpen(false)} className="size-10 rounded-full bg-white/5 flex items-center justify-center text-text-secondary hover:text-white transition-colors"><span className="material-symbols-outlined">close</span></button></div>
-            <div className="flex-1 overflow-y-auto no-scrollbar p-6 space-y-10">
-              <div className="flex flex-col items-center text-center">
-                <div className="relative mb-6">
-                  <div className="absolute inset-0 bg-primary/20 rounded-full blur-2xl animate-pulse"></div>
-                  <div className="relative size-40 rounded-full border-4 border-primary/40 p-1.5 bg-background-dark">
-                    <img src={waiter?.profile_photo_url || 'https://lh3.googleusercontent.com/aida-public/AB6AXuBOj4G4K7JiO9Fr2dqoMH7u51lTeBsQVu9MQcJg2SNGx30jGixPsLGz94TMLN2rTXMDD5EqYz2PzA-0KW9GqmIcoHb_MB09HaY-pnCe-Knms41UjBduUhsAY6qafUDF1tBkOPqibFufhjiZb_eLWsop4zpwRRwjoDXV3D8ziD3h4qh9cDMzMTOOLYNHhPgXlwAJ9Huy-yOp_tTJavU1tQCvKy9cGmq3wbna0f6oVMXsj-bC9rNln-73bheDxHJmscx3V7f_riJ6irJn'} alt={waiter?.nickname || 'Mesero'} className="size-full rounded-full object-cover shadow-2xl" />
-                  </div>
-                  <div className="absolute bottom-2 right-2 size-10 bg-primary rounded-full flex items-center justify-center border-4 border-[#102217] shadow-lg"><span className="material-symbols-outlined text-[22px] text-background-dark font-black filled">verified</span></div>
-                </div>
-                <div className="space-y-1">
-                  <h3 className="text-3xl font-black text-white tracking-tight">{waiter?.full_name || 'Sarah Jenkins'}</h3>
-                  <div className="flex items-center justify-center gap-2">
-                    <div className="flex text-primary">
-                      {[1, 2, 3, 4, 5].map(i => (
-                        <span key={i} className={`material-symbols-outlined text-[20px] ${(waiter?.average_rating || 4.9) >= i ? 'filled' : 'opacity-40'}`}>star</span>
-                      ))}
-                    </div>
-                    <span className="text-sm font-black text-white/50 tracking-wide uppercase">{waiter?.average_rating || '4.9'} Calificación</span>
-                  </div>
-                </div>
-                <div className="mt-4 inline-flex items-center gap-2 px-4 py-1.5 bg-primary/10 rounded-full border border-primary/20"><span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span><span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span></span><span className="text-[11px] font-black text-primary uppercase tracking-[0.2em]">Disponible Ahora</span></div>
+          <div className="bg-[#102217] w-full max-w-md mx-auto rounded-t-[40px] p-8 border-t border-white/10 relative z-10 animate-fade-in-up">
+            <div className="flex justify-center mb-6"><div className="w-12 h-1.5 bg-white/20 rounded-full"></div></div>
+            <div className="flex items-center gap-5 mb-8">
+              <img src={waiter?.profile_photo_url || 'https://images.unsplash.com/photo-1581092795360-fd1ca04f0952?q=80&w=200&auto=format&fit=crop'} alt="Staff" className="size-16 rounded-full object-cover border-2 border-primary" />
+              <div>
+                <h3 className="text-2xl font-black text-white">{waiter?.nickname || 'Tu Mesero'}</h3>
+                <p className="text-text-secondary text-sm">¿Cómo podemos ayudarte?</p>
               </div>
-              <div className="space-y-4">
-                <button className="w-full h-20 bg-primary hover:bg-[#0fd65f] text-background-dark font-black text-xl rounded-[24px] flex items-center justify-center gap-4 shadow-2xl shadow-primary/30 transition-all active:scale-[0.97] group"><span className="material-symbols-outlined text-3xl font-black">hail</span><span>Llamar a la mesa</span></button>
-                <div className="relative group"><div className="absolute left-5 top-1/2 -translate-y-1/2 text-primary group-focus-within:scale-110 transition-transform"><span className="material-symbols-outlined filled">chat</span></div><input type="text" placeholder="Envía un mensaje rápido..." value={message} onChange={(e) => setMessage(e.target.value)} className="w-full h-16 bg-white/5 border border-white/10 rounded-[20px] pl-14 pr-16 text-white font-bold text-lg focus:ring-2 focus:ring-primary focus:bg-white/10 outline-none transition-all placeholder-white/20" /><button disabled={!message.trim()} className={`absolute right-3 top-1/2 -translate-y-1/2 size-12 rounded-2xl flex items-center justify-center transition-all ${message.trim() ? 'bg-primary text-background-dark scale-100' : 'bg-white/5 text-white/20 scale-90'}`}><span className="material-symbols-outlined font-black">send</span></button></div>
-              </div>
-              <div className="flex flex-wrap gap-2 justify-center">{['Agua 💧', 'Servilletas 🧻', 'La cuenta 🧾', 'Ketchup 🍅'].map((opt) => (<button key={opt} onClick={() => setMessage(opt.split(' ')[0])} className="h-11 bg-white/5 border border-white/5 rounded-full text-[13px] font-black text-white/60 hover:bg-white/10 hover:text-primary transition-all px-6">{opt}</button>))}</div>
             </div>
-            <div className="p-8 pt-0"><div className="bg-white/5 rounded-2xl p-4 flex items-center justify-between"><div className="flex flex-col"><span className="text-[10px] font-black text-text-secondary uppercase tracking-widest opacity-60">Espera estimada</span><span className="text-sm font-black text-white">~ 2 Minutos</span></div><div className="flex flex-col items-end"><span className="text-[10px] font-black text-text-secondary uppercase tracking-widest opacity-60">Estado</span><span className="text-sm font-black text-primary">En Servicio</span></div></div></div>
+            <div className="grid grid-cols-2 gap-4">
+              <button className="h-20 bg-primary/10 border border-primary/30 rounded-2xl flex flex-col items-center justify-center gap-1 active:bg-primary/20 transition-colors">
+                <span className="material-symbols-outlined text-primary text-3xl">local_drink</span>
+                <span className="text-[10px] font-black uppercase text-primary">Traer Agua</span>
+              </button>
+              <button className="h-20 bg-primary/10 border border-primary/30 rounded-2xl flex flex-col items-center justify-center gap-1 active:bg-primary/20 transition-colors">
+                <span className="material-symbols-outlined text-primary text-3xl">receipt_long</span>
+                <span className="text-[10px] font-black uppercase text-primary">La Cuenta</span>
+              </button>
+            </div>
+            <button onClick={() => setIsWaiterModalOpen(false)} className="w-full h-16 bg-white/5 border border-white/10 rounded-2xl mt-6 text-white font-bold">Cerrar</button>
           </div>
         </div>
       )}

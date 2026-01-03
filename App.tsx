@@ -13,36 +13,31 @@ import CheckoutView from './views/CheckoutView';
 import FeedbackView from './views/FeedbackView';
 import ConfirmationView from './views/ConfirmationView';
 
-// --- CRITICAL PRODUCTION LOGGING ---
 console.log("[DineSplit] Application Loaded at " + new Date().toISOString());
 
 const SESSION_KEY = 'dinesplit_active_session';
+const ACTIVE_ORDER_KEY = 'dinesplit_active_order_id';
 
 const App: React.FC = () => {
-  // 1. IMMEDIATE DETECTION & PERSISTENCE
-  // We do this outside of any effect to ensure it's captured immediately
   const searchParams = new URLSearchParams(window.location.search);
   const resParam = searchParams.get('res');
   const tableParam = searchParams.get('table');
 
   if (resParam && tableParam) {
-    console.log(`[DineSplit] Capturing URL params: Res=${resParam}, Table=${tableParam}`);
     localStorage.setItem(SESSION_KEY, JSON.stringify({
       res: resParam.toUpperCase(),
       table: tableParam,
       timestamp: Date.now()
     }));
-    // Clean URL without reloading
     window.history.replaceState({}, '', window.location.pathname);
   }
 
-  // App States
   const [currentView, setCurrentView] = useState<AppView>('INIT');
   const [loading, setLoading] = useState(true);
+  const [isSendingOrder, setIsSendingOrder] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [diagnosticMsg, setDiagnosticMsg] = useState('Iniciando sistema...');
 
-  // Data States
   const [restaurant, setRestaurant] = useState<any>(null);
   const [currentTable, setCurrentTable] = useState<any>(null);
   const [currentWaiter, setCurrentWaiter] = useState<any>(null);
@@ -53,45 +48,65 @@ const App: React.FC = () => {
   const [activeCategory, setActiveCategory] = useState<string>('Destacados');
   const [cart, setCart] = useState<OrderItem[]>([]);
   const [editingCartItem, setEditingCartItem] = useState<OrderItem | null>(null);
+  const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
+  const [splitData, setSplitData] = useState<any[] | null>(null);
+
+  // Función para cargar los platos reales desde la DB
+  const fetchOrderItemsFromDB = useCallback(async (orderId: string) => {
+    if (!supabase) return;
+    console.log("[DineSplit] Cargando platos existentes de la orden:", orderId);
+    const { data, error } = await supabase
+      .from('order_items')
+      .select('*')
+      .eq('order_id', orderId);
+
+    if (error) {
+      console.error("[DineSplit] Error cargando platos:", error);
+      return;
+    }
+
+    if (data) {
+      const itemsFromDB: OrderItem[] = data.map(item => ({
+        id: item.id,
+        itemId: item.menu_item_id,
+        guest_id: item.guest_id, // Fix for consistency
+        guestId: item.guest_id,
+        quantity: item.quantity,
+        order_id: item.order_id,
+        isConfirmed: true,
+        // Notas parseadas opcionalmente si se guardaron extras
+        extras: item.notes?.includes('EXTRAS:') ? item.notes.split('|')[0].replace('EXTRAS:', '').split(',').map((s:string) => s.trim()) : [],
+        removedIngredients: item.notes?.includes('SIN:') ? item.notes.split('|')[1]?.replace('SIN:', '').split(',').map((s:string) => s.trim()) : []
+      }));
+      setCart(itemsFromDB);
+    }
+  }, []);
 
   const handleStartSession = useCallback(async (accessCode: string, tableNum: string) => {
-    console.log(`[DineSplit] Fetching session for: ${accessCode}, Mesa ${tableNum}`);
     setLoading(true);
     setError(null);
-    setDiagnosticMsg(`Conectando con local: ${accessCode}...`);
-
     try {
-      if (!supabase) throw new Error("Supabase client is null. Check your env variables.");
+      if (!supabase) throw new Error("Supabase client is null.");
 
-      // Fetch Restaurant
-      const { data: resData, error: resError } = await supabase
+      const { data: resData } = await supabase
         .from('restaurants')
         .select('*')
         .eq('access_code', accessCode.toUpperCase())
         .maybeSingle();
 
-      if (resError) throw resError;
       if (!resData) throw new Error(`El local "${accessCode}" no existe.`);
 
-      setDiagnosticMsg(`Localizado: ${resData.name}. Cargando mesa ${tableNum}...`);
-
-      // Fetch Table
-      const { data: tableData, error: tableError } = await supabase
+      const { data: tableData } = await supabase
         .from('tables')
         .select('*')
         .eq('restaurant_id', resData.id)
         .eq('table_number', parseInt(tableNum))
         .maybeSingle();
 
-      if (tableError) throw tableError;
-      if (!tableData) throw new Error(`Mesa ${tableNum} no encontrada en este local.`);
+      if (!tableData) throw new Error(`Mesa ${tableNum} no encontrada.`);
 
-      // Fetch Waiter and Menu Data in parallel
-      setDiagnosticMsg("Cargando menú y personal...");
       const [waiterRes, catRes, itemRes] = await Promise.all([
-        tableData.waiter_id 
-          ? supabase.from('waiters').select('*').eq('id', tableData.waiter_id).maybeSingle()
-          : supabase.from('waiters').select('*').eq('restaurant_id', resData.id).limit(1).maybeSingle(),
+        supabase.from('waiters').select('*').eq('restaurant_id', resData.id).limit(1).maybeSingle(),
         supabase.from('categories').select('*').eq('restaurant_id', resData.id).order('sort_order'),
         supabase.from('menu_items').select('*').eq('restaurant_id', resData.id).order('sort_order')
       ]);
@@ -102,143 +117,164 @@ const App: React.FC = () => {
       setCategories(catRes.data || []);
       setMenuItems(itemRes.data || []);
       
+      const savedOrderId = localStorage.getItem(ACTIVE_ORDER_KEY);
+      if (savedOrderId) {
+        const { data: orderData } = await supabase.from('orders').select('status').eq('id', savedOrderId).maybeSingle();
+        if (orderData && orderData.status !== 'PAGADO') {
+          setActiveOrderId(savedOrderId);
+          await fetchOrderItemsFromDB(savedOrderId);
+          setCurrentView('MENU'); // Al recuperar sesión, vamos al menú directamente
+          setLoading(false);
+          return true;
+        }
+      }
+
       setCurrentView('GUEST_INFO');
       setLoading(false);
       return true;
     } catch (err: any) {
-      console.error("[DineSplit] Fatal Session Error:", err);
       setError(err.message || 'Error de conexión');
       setLoading(false);
       return false;
     }
-  }, []);
+  }, [fetchOrderItemsFromDB]);
 
-  useEffect(() => {
-    const initApp = async () => {
-      console.log("[DineSplit] Running initApp useEffect...");
-      const savedSession = localStorage.getItem(SESSION_KEY);
-      
-      if (savedSession) {
-        try {
-          const { res, table, timestamp } = JSON.parse(savedSession);
-          // Only auto-restore if session is fresh (12h)
-          if (Date.now() - timestamp < 12 * 60 * 60 * 1000) {
-            const success = await handleStartSession(res, table);
-            if (success) return;
-          }
-        } catch (e) {
-          console.error("[DineSplit] Failed to parse saved session");
-          localStorage.removeItem(SESSION_KEY);
-        }
+  const handleSendOrder = async () => {
+    if (!restaurant || !currentTable) return;
+    
+    // Solo enviamos los platos que NO están confirmados
+    const pendingItems = cart.filter(item => !item.isConfirmed);
+    if (pendingItems.length === 0) {
+      alert("No hay platos nuevos para enviar.");
+      return;
+    }
+
+    setIsSendingOrder(true);
+    try {
+      let orderId = activeOrderId;
+      let currentTotal = 0;
+
+      // 1. Resolver Orden Activa
+      if (orderId) {
+        const { data: order } = await supabase.from('orders').select('total_amount').eq('id', orderId).maybeSingle();
+        currentTotal = Number(order?.total_amount || 0);
+      } else {
+        const { data: newOrder, error: orderErr } = await supabase.from('orders').insert({
+          restaurant_id: restaurant.id,
+          table_id: currentTable.id,
+          status: 'PREPARANDO',
+          total_amount: 0,
+          guest_count: guests.length,
+          guest_name: guests[0].name
+        }).select().single();
+        if (orderErr) throw orderErr;
+        orderId = newOrder.id;
       }
 
-      setLoading(false);
-      setCurrentView('SCAN');
-    };
+      // 2. Insertar Items nuevos
+      const itemsToInsert = pendingItems.map(item => {
+        const menuItem = menuItems.find(m => m.id === item.itemId);
+        const notes = [
+          item.extras?.length ? `EXTRAS: ${item.extras.join(',')}` : '',
+          item.removedIngredients?.length ? `SIN: ${item.removedIngredients.join(',')}` : ''
+        ].filter(Boolean).join(' | ');
 
-    initApp();
+        return {
+          order_id: orderId,
+          menu_item_id: item.itemId,
+          guest_id: item.guestId,
+          quantity: item.quantity,
+          unit_price: Number(menuItem?.price || 0),
+          notes
+        };
+      });
+
+      const { error: itemsErr } = await supabase.from('order_items').insert(itemsToInsert);
+      if (itemsErr) throw itemsErr;
+
+      // 3. Actualizar Total de Orden
+      const newItemsTotal = pendingItems.reduce((sum, item) => {
+        const menuItem = menuItems.find(m => m.id === item.itemId);
+        return sum + (Number(menuItem?.price || 0) * item.quantity);
+      }, 0);
+
+      await supabase.from('orders').update({
+        total_amount: currentTotal + newItemsTotal,
+        status: 'PREPARANDO'
+      }).eq('id', orderId);
+
+      // 4. Sincronizar estado local
+      localStorage.setItem(ACTIVE_ORDER_KEY, orderId!);
+      setActiveOrderId(orderId);
+      await fetchOrderItemsFromDB(orderId!);
+      
+      setCurrentView('PROGRESS');
+    } catch (err: any) {
+      alert("Error al enviar pedido: " + err.message);
+    } finally {
+      setIsSendingOrder(false);
+    }
+  };
+
+  const handleSplitConfirm = (shares: any[]) => {
+    setSplitData(shares);
+    setCurrentView('CHECKOUT');
+  };
+
+  useEffect(() => {
+    const init = async () => {
+      const saved = localStorage.getItem(SESSION_KEY);
+      if (saved) {
+        const { res, table } = JSON.parse(saved);
+        await handleStartSession(res, table);
+      } else {
+        setLoading(false);
+        setCurrentView('SCAN');
+      }
+    };
+    init();
   }, [handleStartSession]);
 
   const navigate = (view: AppView) => setCurrentView(view);
 
-  // --- RECOVERY RENDER ---
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-background-dark p-8 text-center animate-fade-in">
-        <div className="size-20 bg-red-500/20 rounded-full flex items-center justify-center mb-6">
-          <span className="material-symbols-outlined text-red-500 text-5xl">error</span>
-        </div>
-        <h2 className="text-white text-2xl font-black mb-4 uppercase tracking-tighter">Fallo de Conexión</h2>
-        <p className="text-text-secondary text-sm mb-8 leading-relaxed px-4">{error}</p>
-        <button 
-          onClick={() => { localStorage.clear(); window.location.href = '/'; }} 
-          className="w-full max-w-xs bg-primary text-background-dark py-4 rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-primary/20 active:scale-95 transition-all"
-        >
-          Reintentar Carga
-        </button>
-      </div>
-    );
-  }
-
-  // --- LOADING RENDER ---
-  if (loading || currentView === 'INIT') {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-background-dark text-center p-10">
-        <div className="relative mb-8">
-          <div className="size-20 border-4 border-primary/10 rounded-full"></div>
-          <div className="absolute top-0 size-20 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-        </div>
-        <div className="space-y-2">
-          <h2 className="text-primary text-xs font-black uppercase tracking-[0.4em]">CARGANDO MESA...</h2>
-          <p className="text-white/40 text-[10px] font-mono animate-pulse">{diagnosticMsg}</p>
-        </div>
-      </div>
-    );
-  }
-
-  const renderView = () => {
-    switch (currentView) {
-      case 'SCAN':
-        return <ScanView onNext={handleStartSession} restaurantName={restaurant?.name} />;
-      case 'GUEST_INFO':
-        return (
-          <GuestInfoView 
-            onBack={() => { localStorage.removeItem(SESSION_KEY); navigate('SCAN'); }} 
-            onNext={() => navigate('MENU')} 
-            guests={guests} setGuests={setGuests} table={currentTable} waiter={currentWaiter} restaurant={restaurant}
-          />
-        );
-      case 'MENU':
-        return (
-          <MenuView 
-            onNext={() => navigate('ORDER_SUMMARY')} guests={guests} setGuests={setGuests} cart={cart} 
-            onAddToCart={(item, gId, ext, rem) => {
-              const newItem = { id: Math.random().toString(36).substr(2, 9), itemId: item.id, guestId: gId, quantity: 1, extras: ext, removedIngredients: rem };
-              setCart(prev => [...prev, newItem]);
-            }} 
-            onUpdateCartItem={(id, upd) => setCart(prev => prev.map(it => it.id === id ? {...it, ...upd} : it))}
-            onIndividualShare={() => navigate('INDIVIDUAL_SHARE')}
-            selectedGuestId={activeGuestId} onSelectGuest={setActiveGuestId}
-            initialCategory={activeCategory} onCategoryChange={setActiveCategory}
-            editingCartItem={editingCartItem} onCancelEdit={() => setEditingCartItem(null)}
-            menuItems={menuItems} categories={categories} restaurantName={restaurant?.name} tableNumber={currentTable?.table_number}
-          />
-        );
-      case 'ORDER_SUMMARY':
-        return (
-          <OrderSummaryView 
-            guests={guests} cart={cart} onBack={() => navigate('MENU')}
-            onNavigateToCategory={(gId, cat) => { setActiveGuestId(gId); setActiveCategory(cat); navigate('MENU'); }}
-            onEditItem={(item) => { setEditingCartItem(item); navigate('MENU'); }}
-            onSend={() => navigate('PROGRESS')}
-            onUpdateQuantity={(id, d) => setCart(prev => prev.map(it => it.id === id ? {...it, quantity: Math.max(1, it.quantity + d)} : it))}
-            menuItems={menuItems} categories={categories} tableNumber={currentTable?.table_number} waiter={currentWaiter}
-          />
-        );
-      case 'PROGRESS':
-        return <OrderProgressView cart={cart} onNext={() => navigate('SPLIT_BILL')} onBack={() => navigate('MENU')} tableNumber={currentTable?.table_number} waiter={currentWaiter} />;
-      case 'SPLIT_BILL':
-        return <SplitBillView guests={guests} cart={cart} onBack={() => navigate('PROGRESS')} onConfirm={() => navigate('CHECKOUT')} menuItems={menuItems} />;
-      case 'CHECKOUT':
-        return <CheckoutView onBack={() => navigate('SPLIT_BILL')} onConfirm={() => navigate('FEEDBACK')} cart={cart} guests={guests} menuItems={menuItems} tableNumber={currentTable?.table_number} />;
-      case 'FEEDBACK':
-        return <FeedbackView onNext={() => navigate('CONFIRMATION')} onSkip={() => navigate('CONFIRMATION')} cart={cart} menuItems={menuItems} waiter={currentWaiter} restaurant={restaurant} />;
-      case 'CONFIRMATION':
-        return <ConfirmationView onRestart={() => { localStorage.removeItem(SESSION_KEY); window.location.href = '/'; }} guests={guests} tableNumber={currentTable?.table_number} />;
-      default:
-        return null;
-    }
+  const handleUpdateCartItem = (id: string, updates: Partial<OrderItem>) => {
+    setCart(prev => {
+      const newCart = prev.map(item => {
+        if (item.id === id) {
+          const updated = { ...item, ...updates };
+          return updated;
+        }
+        return item;
+      });
+      // Filtrar items que tengan cantidad 0 (solo si no están confirmados)
+      return newCart.filter(item => item.isConfirmed || item.quantity > 0);
+    });
   };
+
+  if (loading) return <div className="h-screen flex items-center justify-center bg-background-dark text-primary">Cargando...</div>;
 
   return (
     <div className="max-w-md mx-auto min-h-screen bg-background-dark shadow-2xl relative flex flex-col overflow-hidden">
-      {/* VISUAL PROOF TAG */}
       {currentTable && (
         <div className="absolute top-0 right-0 z-[100] px-2 py-1 bg-primary text-background-dark text-[8px] font-black uppercase tracking-widest rounded-bl-lg">
-          Conectado a Mesa: {currentTable.table_number}
+          Mesa: {currentTable.table_number}
         </div>
       )}
-      {renderView()}
+      {(() => {
+        switch (currentView) {
+          case 'SCAN': return <ScanView onNext={handleStartSession} restaurantName={restaurant?.name} />;
+          case 'GUEST_INFO': return <GuestInfoView onBack={() => navigate('SCAN')} onNext={() => navigate('MENU')} guests={guests} setGuests={setGuests} table={currentTable} waiter={currentWaiter} restaurant={restaurant} />;
+          case 'MENU': return <MenuView onNext={() => navigate('ORDER_SUMMARY')} guests={guests} setGuests={setGuests} cart={cart} onAddToCart={(item, gId, ext, rem) => setCart(prev => [...prev, { id: Math.random().toString(), itemId: item.id, guestId: gId, quantity: 1, extras: ext, removedIngredients: rem, isConfirmed: false }])} onUpdateCartItem={handleUpdateCartItem} onIndividualShare={() => navigate('INDIVIDUAL_SHARE')} selectedGuestId={activeGuestId} onSelectGuest={setActiveGuestId} initialCategory={activeCategory} onCategoryChange={setActiveCategory} editingCartItem={editingCartItem} onCancelEdit={() => setEditingCartItem(null)} menuItems={menuItems} categories={categories} restaurant={restaurant} table={currentTable} />;
+          case 'ORDER_SUMMARY': return <OrderSummaryView guests={guests} cart={cart} onBack={() => navigate('MENU')} onNavigateToCategory={(gId, cat) => { setActiveGuestId(gId); setActiveCategory(cat); navigate('MENU'); }} onEditItem={(item) => { setEditingCartItem(item); navigate('MENU'); }} onSend={handleSendOrder} isSending={isSendingOrder} onUpdateQuantity={(id, d) => handleUpdateCartItem(id, { quantity: Math.max(0, (cart.find(it => it.id === id)?.quantity || 1) + d) })} menuItems={menuItems} categories={categories} tableNumber={currentTable?.table_number} waiter={currentWaiter} />;
+          case 'PROGRESS': return <OrderProgressView cart={cart} activeOrderId={activeOrderId} onNext={() => navigate('SPLIT_BILL')} onBack={() => navigate('MENU')} onRedirectToFeedback={() => { localStorage.clear(); navigate('FEEDBACK'); }} tableNumber={currentTable?.table_number} waiter={currentWaiter} />;
+          case 'SPLIT_BILL': return <SplitBillView guests={guests} cart={cart} onBack={() => navigate('PROGRESS')} onConfirm={handleSplitConfirm} menuItems={menuItems} />;
+          case 'CHECKOUT': return <CheckoutView onBack={() => navigate('SPLIT_BILL')} onConfirm={() => navigate('INDIVIDUAL_SHARE')} cart={cart} guests={guests} menuItems={menuItems} tableNumber={currentTable?.table_number} splitData={splitData} />;
+          case 'INDIVIDUAL_SHARE': return <IndividualShareView onBack={() => navigate('CHECKOUT')} onPay={() => navigate('FEEDBACK')} cart={cart} menuItems={menuItems} splitData={splitData} />;
+          case 'FEEDBACK': return <FeedbackView onNext={() => navigate('CONFIRMATION')} onSkip={() => navigate('CONFIRMATION')} cart={cart} menuItems={menuItems} waiter={currentWaiter} restaurant={restaurant} />;
+          case 'CONFIRMATION': return <ConfirmationView onRestart={() => { localStorage.clear(); window.location.href = '/'; }} guests={guests} tableNumber={currentTable?.table_number} />;
+          default: return null;
+        }
+      })()}
     </div>
   );
 };

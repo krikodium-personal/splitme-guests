@@ -38,10 +38,11 @@ export interface MenuItem {
   total_fat_g?: number;
   sat_fat_g?: number;
   carbs_g?: number;
-  sugar_g?: number;
+  sugars_g?: number;
   fiber_g?: number;
   sodium_mg?: number;
   sort_order?: number;
+  // Mapeo exacto a la columna customer_customization de la DB
   customer_customization?: {
     ingredientsToAdd?: string[];
     ingredientsToRemove?: string[];
@@ -55,6 +56,8 @@ export interface OrderItem {
   quantity: number;
   extras?: string[];
   removedIngredients?: string[];
+  order_id?: string;
+  isConfirmed?: boolean;
 }
 
 export interface BillSplit {

@@ -8,7 +8,7 @@ interface SplitBillViewProps {
   guests: Guest[];
   cart: OrderItem[];
   onBack: () => void;
-  onConfirm: () => void;
+  onConfirm: (shares: any[]) => void;
   menuItems: MenuItem[];
 }
 
@@ -53,13 +53,9 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
     return units;
   });
 
-  // Explicitly type the accumulator as number to avoid unknown type errors
+  // Los precios ya incluyen impuestos según el requerimiento.
   const subtotal = useMemo(() => assignments.reduce((sum: number, a) => sum + a.unitPrice, 0), [assignments]);
-  const taxRate = 0.08;
-  const serviceRate = 0.0727;
-  const taxesValue = subtotal * taxRate;
-  const serviceChargeValue = subtotal * serviceRate;
-  const grandTotal = subtotal + taxesValue + serviceChargeValue;
+  const grandTotal = subtotal;
 
   const guestShares = useMemo(() => {
     const shares: Record<string, number> = {};
@@ -80,7 +76,6 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
         if (unit.assignedGuestIds.length > 0) {
           const portion = unit.unitPrice / unit.assignedGuestIds.length;
           unit.assignedGuestIds.forEach(gid => {
-            // FIX: Ensure current is a number before addition
             const current: number = Number(shares[gid] || 0);
             shares[gid] = current + portion;
           });
@@ -90,7 +85,6 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
       cart.forEach(item => {
         const menuItem = menuItems.find(m => m.id === item.itemId);
         if (menuItem) {
-          // FIX: Ensure current is a number before addition
           const current: number = Number(shares[item.guestId] || 0);
           shares[item.guestId] = current + (Number(menuItem.price) * item.quantity);
         }
@@ -105,7 +99,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
 
     return guests.map(g => {
       const guestSubtotal = Number(shares[g.id] || 0);
-      const guestTotal = guestSubtotal * (1 + taxRate + serviceRate);
+      const guestTotal = guestSubtotal; // Sin tasas adicionales
       
       const items = cart
         .filter(item => item.guestId === g.id)
@@ -120,10 +114,9 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
 
       return { ...g, subtotal: guestSubtotal, total: guestTotal, items };
     });
-  }, [method, selectedForEqual, assignments, customAmounts, cart, guests, menuItems, subtotal, taxRate, serviceRate]);
+  }, [method, selectedForEqual, assignments, customAmounts, cart, guests, menuItems, subtotal]);
 
   const assignedSubtotal = useMemo(() => {
-    // Explicitly type the accumulator as number to avoid unknown type errors
     if (method === 'item') return assignments.filter(a => a.assignedGuestIds.length > 0).reduce((sum: number, a) => sum + a.unitPrice, 0);
     if (method === 'custom') return Object.values(customAmounts).reduce((sum: number, val) => sum + (parseFloat(val as string) || 0), 0);
     if (method === 'equal') return selectedForEqual.length > 0 ? subtotal : 0;
@@ -155,6 +148,12 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
     setCustomAmounts(prev => ({ ...prev, [id]: value }));
   };
 
+  const handleConfirm = () => {
+    if (isFullyAssigned || method === 'equal' || method === 'guest') {
+      onConfirm(guestShares);
+    }
+  };
+
   return (
     <div className="flex flex-col flex-1 h-screen bg-background-dark text-white overflow-hidden font-display">
       <header className="sticky top-0 z-50 flex items-center justify-between p-4 bg-background-dark/95 backdrop-blur-md border-b border-white/5">
@@ -166,30 +165,10 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
       </header>
 
       <main className="flex-1 overflow-y-auto no-scrollbar pb-40">
-        <div className="flex flex-col items-center justify-center py-8 px-6 text-center animate-fade-in">
+        <div className="flex flex-col items-center justify-center py-10 px-6 text-center animate-fade-in">
           <span className="text-[10px] font-black text-primary uppercase tracking-[0.3em] mb-2">Total de la Mesa</span>
-          <h2 className="text-5xl font-black tracking-tighter leading-none mb-4 text-white">${formatPrice(grandTotal)}</h2>
-          
-          <div className="w-full max-w-xs bg-white/5 rounded-3xl p-5 border border-white/10 shadow-xl">
-            <div className="space-y-2.5">
-              <div className="flex justify-between items-center text-xs font-medium text-text-secondary">
-                <span>Subtotal</span>
-                <span className="text-white">${formatPrice(subtotal)}</span>
-              </div>
-              <div className="flex justify-between items-center text-xs font-medium text-text-secondary">
-                <span>Impuestos (8%)</span>
-                <span className="text-white">${formatPrice(taxesValue)}</span>
-              </div>
-              <div className="flex justify-between items-center text-xs font-medium text-text-secondary">
-                <span>Servicio (7.27%)</span>
-                <span className="text-white">${formatPrice(serviceChargeValue)}</span>
-              </div>
-              <div className="pt-2 mt-2 border-t border-white/10 flex justify-between items-center">
-                <span className="text-[10px] font-black uppercase text-primary tracking-widest">Total Final</span>
-                <span className="text-lg font-black text-primary">${formatPrice(grandTotal)}</span>
-              </div>
-            </div>
-          </div>
+          <h2 className="text-5xl font-black tracking-tighter leading-none text-white">${formatPrice(grandTotal)}</h2>
+          <p className="text-text-secondary text-[10px] font-black uppercase tracking-widest mt-4 opacity-40">Precios finales con impuestos incluidos</p>
         </div>
 
         <div className="px-4 mb-6">
@@ -367,10 +346,10 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
           )}
 
           <button 
-            onClick={onConfirm} 
+            onClick={handleConfirm} 
             disabled={!isFullyAssigned && (method === 'item' || method === 'custom')}
             className={`w-full h-16 rounded-2xl font-black text-lg flex items-center justify-center gap-3 transition-all ${
-              isFullyAssigned ? 'bg-primary text-background-dark shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-[0.98]' : 'bg-white/5 text-white/20 cursor-not-allowed grayscale'
+              (isFullyAssigned || method === 'equal' || method === 'guest') ? 'bg-primary text-background-dark shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-[0.98]' : 'bg-white/5 text-white/20 cursor-not-allowed grayscale'
             }`}
           >
             <span>Confirmar División</span>
