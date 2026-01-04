@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 
 // Librería externa Html5Qrcode
@@ -97,7 +96,7 @@ const ScanView: React.FC<ScanViewProps> = ({ onNext, restaurantName }) => {
 
       if (resCode && tableNum) {
         stopScanner();
-        onNext(resCode, tableNum);
+        onNext(resCode, tableNum.toString());
       }
     } catch (e) {
       console.error("Error de parseo QR:", e);
@@ -109,7 +108,7 @@ const ScanView: React.FC<ScanViewProps> = ({ onNext, restaurantName }) => {
   const handleManualConfirm = (e: React.FormEvent) => {
     e.preventDefault();
     if (restaurantCode && tableNumber) {
-      onNext(restaurantCode, tableNumber);
+      onNext(restaurantCode.toUpperCase().trim(), tableNumber.toString().trim());
     }
   };
 
@@ -205,7 +204,7 @@ const ScanView: React.FC<ScanViewProps> = ({ onNext, restaurantName }) => {
               <div>
                 <label className="text-[10px] font-black text-text-secondary uppercase tracking-widest block mb-2 ml-1">Número de Mesa</label>
                 <input 
-                  type="number" value={tableNumber} onChange={e => setTableNumber(e.target.value)}
+                  type="text" value={tableNumber} onChange={e => setTableNumber(e.target.value)}
                   placeholder="Ej: 1" className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-5 text-white text-xl font-bold outline-none focus:ring-2 focus:ring-primary transition-all"
                 />
               </div>

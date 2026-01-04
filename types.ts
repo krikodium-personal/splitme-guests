@@ -42,11 +42,18 @@ export interface MenuItem {
   fiber_g?: number;
   sodium_mg?: number;
   sort_order?: number;
-  // Mapeo exacto a la columna customer_customization de la DB
   customer_customization?: {
     ingredientsToAdd?: string[];
     ingredientsToRemove?: string[];
   };
+}
+
+export interface OrderBatch {
+  id: string;
+  order_id: string;
+  batch_number: number;
+  status: string;
+  created_at?: string;
 }
 
 export interface OrderItem {
@@ -57,6 +64,7 @@ export interface OrderItem {
   extras?: string[];
   removedIngredients?: string[];
   order_id?: string;
+  batch_id?: string;
   isConfirmed?: boolean;
 }
 

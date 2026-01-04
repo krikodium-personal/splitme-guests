@@ -1,316 +1,232 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { OrderItem } from '../types';
+import { OrderItem, OrderBatch, MenuItem } from '../types';
+import { formatPrice } from './MenuView';
 
 interface OrderProgressViewProps {
   cart: OrderItem[];
+  batches: OrderBatch[]; // Recibidos como prop inicial
   activeOrderId?: string | null;
   onNext: () => void;
   onBack: () => void;
   onRedirectToFeedback?: () => void;
   tableNumber?: number;
-  waiter?: any;
+  menuItems: MenuItem[];
 }
 
-const ACTIVE_ORDER_KEY = 'dinesplit_active_order_id';
-
-/**
- * Pantalla de seguimiento de pedido con suscripción Realtime de alta disponibilidad.
- */
-const OrderProgressView: React.FC<OrderProgressViewProps> = ({ cart, activeOrderId, onNext, onBack, onRedirectToFeedback, tableNumber, waiter }) => {
-  const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
-  
-  // 1. RESOLUCIÓN DE ID: Garantizamos que sea un string válido antes de operar
-  const orderId = useMemo(() => {
-    const id = activeOrderId || cart.find(item => item.order_id)?.order_id || localStorage.getItem(ACTIVE_ORDER_KEY);
-    return id && typeof id === 'string' ? id : null;
-  }, [cart, activeOrderId]);
-  
-  const [dbStatus, setDbStatus] = useState<string>('PREPARANDO');
+const OrderProgressView: React.FC<OrderProgressViewProps> = ({ 
+  cart, batches: initialBatches, activeOrderId, onNext, onBack, onRedirectToFeedback, tableNumber, menuItems 
+}) => {
+  const [localBatches, setLocalBatches] = useState<OrderBatch[]>(initialBatches);
+  const [orderStatus, setOrderStatus] = useState<string>('ABIERTO');
   const [isFlickering, setIsFlickering] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
   
-  const channelRef = useRef<any>(null);
-  const retryTimeoutRef = useRef<number | null>(null);
+  const orderId = activeOrderId;
+  const orderChannelRef = useRef<any>(null);
+  const batchesChannelRef = useRef<any>(null);
 
-  // NORMALIZACIÓN: Evita errores por diferencias de casing entre DB y UI
-  const normalizedStatus = useMemo(() => dbStatus ? dbStatus.toUpperCase() : 'PREPARANDO', [dbStatus]);
-
+  // 1. Fetch Inicial de Batches al montar
   useEffect(() => {
-    if (!orderId) {
-      console.warn("[DineSplit] No se puede iniciar seguimiento: ID de orden no encontrado.");
-      return;
-    }
+    if (!orderId || !supabase) return;
 
-    if (!supabase) {
-      console.error("[DineSplit] Cliente Supabase no disponible.");
-      return;
-    }
+    const fetchInitialData = async () => {
+      // Traer estado de la orden
+      const { data: orderData } = await supabase.from('orders').select('status').eq('id', orderId).maybeSingle();
+      if (orderData) setOrderStatus(orderData.status.toUpperCase());
 
-    // LOG DE DIAGNÓSTICO
-    console.log(`[DineSplit] Intento de conexión para ID: ${orderId}`);
-
-    // SINCRO INICIAL: Asegura el punto de partida correcto
-    const fetchCurrentStatus = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('orders')
-          .select('status')
-          .eq('id', orderId)
-          .maybeSingle();
-        
-        if (error) throw error;
-
-        // VERIFICACIÓN DE EXISTENCIA: Si no existe, limpiar y salir
-        if (!data) {
-          console.error("[DineSplit] La orden ya no existe en la base de datos.");
-          localStorage.removeItem(ACTIVE_ORDER_KEY);
-          onBack(); // Redirigir al Menú
-          return;
-        }
-
-        const status = data.status.toUpperCase();
-        setDbStatus(status);
-        if (status === 'PAGADO' && onRedirectToFeedback) onRedirectToFeedback();
-      } catch (err) {
-        console.error("[DineSplit] Error en fetch inicial:", err);
+      // Traer estados actuales de todos los lotes (Fuente de Verdad Directa)
+      const { data: batchesData } = await supabase
+        .from('order_batches')
+        .select('*')
+        .eq('order_id', orderId)
+        .order('batch_number', { ascending: true });
+      
+      if (batchesData) {
+        setLocalBatches(batchesData);
       }
     };
 
-    // SUSCRIPCIÓN ROBUSTA
-    const setupRealtime = () => {
-      if (channelRef.current) {
-        supabase.removeChannel(channelRef.current);
-      }
+    fetchInitialData();
+  }, [orderId]);
 
-      setConnectionStatus('connecting');
+  // 2. Suscripción Realtime (Orders + Batches)
+  useEffect(() => {
+    if (!orderId || !supabase) return;
 
+    // Canal para la Orden (Cambio a PAGADO)
+    const setupOrderChannel = () => {
+      if (orderChannelRef.current) supabase.removeChannel(orderChannelRef.current);
       const channel = supabase
-        .channel(`order-live-${orderId}`)
-        .on(
-          'postgres_changes',
-          { 
-            event: 'UPDATE', 
-            schema: 'public', 
-            table: 'orders', 
-            filter: `id=eq.${orderId}` 
-          },
-          (payload) => {
-            console.log(`[DineSplit] Evento recibido: ${payload.new.status}`);
-            
-            const nextStatus = payload.new.status.toUpperCase();
-            setDbStatus(nextStatus);
-            
-            setIsFlickering(true);
-            setTimeout(() => setIsFlickering(false), 600);
-
-            if (nextStatus === 'PAGADO' && onRedirectToFeedback) {
-              onRedirectToFeedback();
-            }
-          }
-        )
-        .subscribe((status) => {
-          if (status === 'SUBSCRIBED') {
-            console.log(`[DineSplit] Canal conectado: ${orderId}`);
-            setConnectionStatus('connected');
-            if (retryTimeoutRef.current) {
-              window.clearTimeout(retryTimeoutRef.current);
-              retryTimeoutRef.current = null;
-            }
-          } else {
-            setConnectionStatus('error');
-            if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-              if (!retryTimeoutRef.current) {
-                retryTimeoutRef.current = window.setTimeout(() => {
-                  retryTimeoutRef.current = null;
-                  setupRealtime();
-                }, 5000);
-              }
-            }
-          }
-        });
-
-      channelRef.current = channel;
+        .channel(`order-status-view-${orderId}`)
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders', filter: `id=eq.${orderId}` }, (payload) => {
+          const nextStatus = payload.new.status.toUpperCase();
+          setOrderStatus(nextStatus);
+          setIsFlickering(true);
+          setTimeout(() => setIsFlickering(false), 600);
+          if (nextStatus === 'PAGADO' && onRedirectToFeedback) onRedirectToFeedback();
+        })
+        .subscribe((status) => setConnectionStatus(prev => status === 'SUBSCRIBED' ? 'connected' : prev));
+      orderChannelRef.current = channel;
     };
 
-    fetchCurrentStatus();
-    setupRealtime();
-
-    return () => {
-      if (channelRef.current) {
-        supabase.removeChannel(channelRef.current);
-        channelRef.current = null;
-      }
-      if (retryTimeoutRef.current) window.clearTimeout(retryTimeoutRef.current);
+    // Canal para los Lotes (Cambios de Cocina)
+    const setupBatchesChannel = () => {
+      if (batchesChannelRef.current) supabase.removeChannel(batchesChannelRef.current);
+      const channel = supabase
+        .channel(`batches-status-view-${orderId}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'order_batches', filter: `order_id=eq.${orderId}` }, (payload) => {
+          if (payload.eventType === 'INSERT') {
+            setLocalBatches(prev => [...prev, payload.new as OrderBatch]);
+          } else if (payload.eventType === 'UPDATE') {
+            setLocalBatches(prev => prev.map(b => b.id === payload.new.id ? { ...b, ...payload.new } : b));
+          }
+        })
+        .subscribe();
+      batchesChannelRef.current = channel;
     };
-  }, [orderId, onRedirectToFeedback, onBack]);
 
-  // 2. CONFIGURACIÓN VISUAL SEGÚN DB
-  const statusConfig = useMemo(() => {
-    switch (normalizedStatus) {
-      case 'SERVIDO':
-        return {
-          icon: 'restaurant',
-          color: 'text-emerald-400',
-          bgColor: 'bg-emerald-400/20',
-          ringColor: 'border-emerald-400',
-          message: '🍽️ ¡Pedido servido!',
-          description: 'Disfruta de tu comida. ¡Buen provecho!'
-        };
-      case 'PAGADO':
-        return {
-          icon: 'check_circle',
-          color: 'text-blue-400',
-          bgColor: 'bg-blue-400/20',
-          ringColor: 'border-blue-400',
-          message: '¡Gracias por visitarnos!',
-          description: 'Cerrando sesión de mesa...'
-        };
+    setupOrderChannel();
+    setupBatchesChannel();
+
+    return () => { 
+      if (orderChannelRef.current) supabase.removeChannel(orderChannelRef.current);
+      if (batchesChannelRef.current) supabase.removeChannel(batchesChannelRef.current);
+    };
+  }, [orderId, onRedirectToFeedback]);
+
+  const getStatusConfig = (status: string) => {
+    const s = status.toUpperCase();
+    switch (s) {
+      case 'SERVIDO': 
+        return { icon: 'check_circle', color: 'text-primary', bg: 'bg-primary/10', label: 'Servido' };
+      case 'LISTO': 
+        return { icon: 'notifications_active', color: 'text-primary', bg: 'bg-primary/20', label: '¡Llegando!' };
+      case 'EN PREPARACIÓN': 
       case 'PREPARANDO':
-      default:
-        return {
-          icon: 'skillet',
-          color: 'text-primary',
-          bgColor: 'bg-primary/20',
-          ringColor: 'border-primary',
-          message: '👨‍🍳 En preparación...',
-          description: 'El chef está trabajando en tu orden.'
-        };
+        return { icon: 'skillet', color: 'text-orange-500', bg: 'bg-orange-500/10', label: 'En cocina' };
+      default: 
+        return { icon: 'schedule', color: 'text-white/40', bg: 'bg-white/5', label: 'En espera' };
     }
-  }, [normalizedStatus]);
+  };
 
-  // 3. MAPEO DE ESTADOS DE UI (TIMELINE)
-  const steps = useMemo(() => [
-    { 
-      label: 'Orden Enviada', 
-      desc: 'Recibido en cocina.', 
-      done: true, 
-      current: false 
-    },
-    { 
-      label: 'En Preparación', 
-      desc: 'Cocinando con amor.', 
-      done: normalizedStatus === 'SERVIDO' || normalizedStatus === 'PAGADO', 
-      current: normalizedStatus === 'PREPARANDO' 
-    },
-    { 
-      label: 'Servido', 
-      desc: '¡Listo en tu mesa!', 
-      done: normalizedStatus === 'PAGADO', 
-      current: normalizedStatus === 'SERVIDO' 
-    },
-  ], [normalizedStatus]);
+  // Agrupar items por batch usando el cart (que ya contiene los items de la DB)
+  const groupedItems = useMemo(() => {
+    const confirmedItems = cart.filter(i => i.isConfirmed);
+    const groups: Record<string, OrderItem[]> = {};
+    
+    confirmedItems.forEach(item => {
+      const bId = item.batch_id || 'unbatched';
+      if (!groups[bId]) groups[bId] = [];
+      groups[bId].push(item);
+    });
+    
+    return groups;
+  }, [cart]);
 
   return (
-    <div className={`flex flex-col flex-1 h-screen bg-background-dark text-white overflow-hidden relative font-display transition-colors duration-500 ${isFlickering ? 'bg-primary/10' : ''}`}>
-      <div className="sticky top-0 z-10 flex items-center bg-background-dark/95 backdrop-blur-md p-4 justify-between border-b border-white/10">
-        <div className="flex flex-col flex-1">
-          <h2 className="text-lg font-bold">Mesa {tableNumber || '--'}</h2>
-          <div className="flex items-center gap-1.5">
-            <div className={`size-1.5 rounded-full ${connectionStatus === 'connected' ? 'bg-primary animate-pulse' : 'bg-red-500'}`}></div>
-            <span className="text-[9px] font-black uppercase tracking-widest text-text-secondary opacity-60">
-              {connectionStatus === 'connected' ? 'Canal Estable' : 'Sincronizando...'}
-            </span>
-          </div>
-        </div>
-        <div className="flex items-center justify-end bg-surface-dark/50 px-3 py-1 rounded-full border border-white/5">
-          <span className="text-text-secondary text-[10px] font-black uppercase tracking-wider mr-2">ID</span>
-          <p className="text-primary text-sm font-black tabular-nums">#{orderId?.split('-')[0] || '----'}</p>
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto pb-44 no-scrollbar">
-        <div className="px-4 py-12 flex flex-col items-center animate-fade-in">
-          <div className="relative mb-8">
-            <div className={`absolute inset-0 ${statusConfig.bgColor} rounded-full blur-2xl opacity-40 ${normalizedStatus === 'PREPARANDO' ? 'animate-pulse' : ''}`}></div>
-            <div className={`relative bg-surface-dark w-28 h-28 rounded-full flex items-center justify-center border-2 ${statusConfig.ringColor} transition-all duration-700 shadow-2xl ${isFlickering ? 'scale-110 border-primary shadow-primary/30' : ''}`}>
-              <span className={`material-symbols-outlined ${statusConfig.color} text-6xl transition-all duration-500`}>
-                {statusConfig.icon}
-              </span>
-            </div>
-          </div>
-          <h2 className="tracking-tight text-[28px] font-black leading-tight text-center mb-2 px-6 italic">
-            {statusConfig.message}
-          </h2>
-          <p className="text-text-secondary text-sm font-medium opacity-80 text-center px-10">
-            {statusConfig.description}
-          </p>
-        </div>
-
-        <div className="px-6 pb-6">
-          <div className="bg-surface-dark rounded-3xl p-6 shadow-xl border border-white/5 relative overflow-hidden">
-            <h3 className="text-[10px] font-black uppercase tracking-[0.3em] mb-8 text-primary/60 text-center">Progreso de la Orden</h3>
-            <div className="grid grid-cols-[40px_1fr] gap-x-4">
-              {steps.map((step, idx, arr) => (
-                <React.Fragment key={idx}>
-                  <div className="flex flex-col items-center gap-1">
-                    <div className={`w-9 h-9 rounded-full flex items-center justify-center text-background-dark shadow-lg transition-all duration-500 ${step.done ? 'bg-primary' : step.current ? 'border-2 border-primary bg-primary/10 animate-pulse' : 'bg-white/10'}`}>
-                      <span className="material-symbols-outlined text-base font-bold">
-                        {step.done ? 'check' : step.current ? 'local_fire_department' : 'circle'}
-                      </span>
-                    </div>
-                    {idx < arr.length - 1 && (
-                      <div className={`w-[2px] h-full min-h-[44px] grow rounded-full my-1 transition-all duration-700 ${step.done ? 'bg-primary' : 'bg-white/10'}`}></div>
-                    )}
-                  </div>
-                  <div className={`flex flex-1 flex-col pb-10 transition-all duration-500 ${!step.done && !step.current ? 'opacity-30' : 'opacity-100'}`}>
-                    <div className="flex justify-between items-center">
-                      <p className={`text-base font-black ${step.current ? 'text-primary scale-105 origin-left' : 'text-white'}`}>{step.label}</p>
-                      {step.current && <span className="bg-primary/20 text-primary text-[9px] font-black px-2.5 py-1 rounded-full uppercase tracking-widest border border-primary/20">Actual</span>}
-                    </div>
-                    <p className="text-text-secondary text-xs leading-relaxed mt-1 font-medium">{step.desc}</p>
-                  </div>
-                </React.Fragment>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="absolute bottom-0 left-0 w-full px-4 pt-16 pb-8 bg-gradient-to-t from-background-dark via-background-dark to-transparent z-20 pointer-events-none">
-        <div className="max-w-md mx-auto flex flex-col gap-3 pointer-events-auto">
-          <div className="flex gap-3">
-            <button onClick={onBack} className="flex-1 bg-surface-dark border border-white/10 text-white h-14 rounded-2xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-transform shadow-lg">
-              <span className="material-symbols-outlined text-xl">restaurant_menu</span> Menú
-            </button>
-            <button onClick={() => setIsWaiterModalOpen(true)} className="flex-1 bg-surface-dark border border-primary/30 text-primary h-14 rounded-2xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-transform shadow-lg">
-              <span className="material-symbols-outlined text-xl filled">hail</span> Mesero
-            </button>
-          </div>
-          <button onClick={onNext} className="w-full bg-primary text-background-dark h-16 rounded-2xl font-black text-xl flex items-center justify-center gap-3 shadow-[0_4px_30px_rgba(19,236,106,0.3)] hover:brightness-110 active:scale-[0.98] transition-all">
-            <span>Pagar Cuenta</span>
-            <span className="material-symbols-outlined font-black">payments</span>
+    <div className={`flex flex-col flex-1 h-screen bg-background-dark text-white overflow-hidden relative font-display transition-colors duration-500 ${isFlickering ? 'bg-primary/5' : ''}`}>
+      {/* Header */}
+      <div className="sticky top-0 z-50 flex items-center bg-background-dark/95 backdrop-blur-md p-4 justify-between border-b border-white/5">
+        <div className="flex items-center gap-3">
+          <button onClick={onBack} className="size-10 flex items-center justify-center rounded-full hover:bg-white/5">
+            <span className="material-symbols-outlined">arrow_back</span>
           </button>
+          <div className="flex flex-col">
+            <span className="text-[10px] font-black text-primary uppercase tracking-widest">Estado del Pedido</span>
+            <h2 className="text-sm font-bold">Mesa {tableNumber || '--'}</h2>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-white/5 rounded-full border border-white/5">
+           <div className={`size-2 rounded-full ${connectionStatus === 'connected' ? 'bg-primary animate-pulse' : 'bg-red-500'}`}></div>
+           <span className="text-[9px] font-black uppercase tracking-widest text-white/40">{connectionStatus === 'connected' ? 'En Vivo' : 'Reconectando'}</span>
         </div>
       </div>
 
-      {isWaiterModalOpen && (
-        <div className="fixed inset-0 z-[100] flex flex-col justify-end animate-fade-in">
-          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setIsWaiterModalOpen(false)}></div>
-          <div className="bg-[#102217] w-full max-w-md mx-auto rounded-t-[40px] p-8 border-t border-white/10 relative z-10 animate-fade-in-up">
-            <div className="flex justify-center mb-6"><div className="w-12 h-1.5 bg-white/20 rounded-full"></div></div>
-            <div className="flex items-center gap-5 mb-8">
-              <img src={waiter?.profile_photo_url || 'https://images.unsplash.com/photo-1581092795360-fd1ca04f0952?q=80&w=200&auto=format&fit=crop'} alt="Staff" className="size-16 rounded-full object-cover border-2 border-primary" />
-              <div>
-                <h3 className="text-2xl font-black text-white">{waiter?.nickname || 'Tu Mesero'}</h3>
-                <p className="text-text-secondary text-sm">¿Cómo podemos ayudarte?</p>
-              </div>
+      <div className="flex-1 overflow-y-auto p-4 pb-40 no-scrollbar">
+        {localBatches.length === 0 ? (
+          <div className="h-full flex flex-col items-center justify-center text-center p-8">
+            <div className="size-20 bg-white/5 rounded-full flex items-center justify-center mb-6">
+              <span className="material-symbols-outlined text-white/20 text-4xl">receipt_long</span>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <button className="h-20 bg-primary/10 border border-primary/30 rounded-2xl flex flex-col items-center justify-center gap-1 active:bg-primary/20 transition-colors">
-                <span className="material-symbols-outlined text-primary text-3xl">local_drink</span>
-                <span className="text-[10px] font-black uppercase text-primary">Traer Agua</span>
-              </button>
-              <button className="h-20 bg-primary/10 border border-primary/30 rounded-2xl flex flex-col items-center justify-center gap-1 active:bg-primary/20 transition-colors">
-                <span className="material-symbols-outlined text-primary text-3xl">receipt_long</span>
-                <span className="text-[10px] font-black uppercase text-primary">La Cuenta</span>
-              </button>
-            </div>
-            <button onClick={() => setIsWaiterModalOpen(false)} className="w-full h-16 bg-white/5 border border-white/10 rounded-2xl mt-6 text-white font-bold">Cerrar</button>
+            <h3 className="text-xl font-bold mb-2">Sincronizando pedido...</h3>
+            <p className="text-text-secondary text-sm">Estamos conectando con el sistema del local.</p>
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="space-y-8">
+            {localBatches.map((batch, index) => {
+              const status = getStatusConfig(batch.status);
+              const items = groupedItems[batch.id] || [];
+              const isReady = batch.status.toUpperCase() === 'LISTO';
+              
+              return (
+                <div key={batch.id} className="animate-fade-in-up" style={{ animationDelay: `${index * 0.1}s` }}>
+                  <div className="flex items-center justify-between mb-4 px-2">
+                    <div className="flex items-center gap-3">
+                      <div className={`size-8 rounded-lg ${status.bg} flex items-center justify-center`}>
+                        <span className={`material-symbols-outlined text-sm ${status.color}`}>{status.icon}</span>
+                      </div>
+                      <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/60">Envío #{batch.batch_number}</span>
+                    </div>
+                    <span className={`text-[10px] font-black uppercase px-2 py-1 rounded-md border ${status.color} ${status.bg} border-current`}>
+                      {status.label}
+                    </span>
+                  </div>
+
+                  {isReady && (
+                    <div className="mb-4 bg-primary text-background-dark p-3 rounded-2xl flex items-center gap-3 animate-pulse shadow-lg shadow-primary/20">
+                      <span className="material-symbols-outlined font-black">celebration</span>
+                      <span className="text-xs font-black uppercase tracking-widest">¡Tu pedido está llegando a la mesa!</span>
+                    </div>
+                  )}
+
+                  <div className={`bg-surface-dark border rounded-[2rem] overflow-hidden transition-all ${isReady ? 'border-primary shadow-lg shadow-primary/10' : 'border-white/5'}`}>
+                    <div className="divide-y divide-white/5">
+                      {items.map(item => {
+                        const dish = menuItems.find(m => m.id === item.itemId);
+                        return (
+                          <div key={item.id} className="p-4 flex items-center gap-4">
+                            <div className="size-14 rounded-xl bg-center bg-cover border border-white/5 shrink-0" style={{ backgroundImage: `url('${dish?.image_url}')` }}></div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-bold truncate">{dish?.name}</p>
+                              <p className="text-text-secondary text-[10px] font-medium">Cantidad: {item.quantity}</p>
+                            </div>
+                            <span className="text-xs font-black tabular-nums text-white/40">${formatPrice((dish?.price || 0) * item.quantity)}</span>
+                          </div>
+                        );
+                      })}
+                      {items.length === 0 && (
+                        <div className="p-6 text-center text-white/20 italic text-[10px] uppercase font-black">
+                          Cargando platos de este envío...
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Footer Actions */}
+      <div className="fixed bottom-0 left-0 w-full p-6 bg-gradient-to-t from-background-dark via-background-dark to-transparent pt-12 pb-10 z-50 space-y-4">
+        <button 
+          onClick={onNext} 
+          className="w-full h-16 bg-primary text-background-dark rounded-2xl font-black text-xl shadow-xl shadow-primary/20 active:scale-[0.98] transition-all flex items-center justify-center gap-3"
+        >
+          <span className="material-symbols-outlined font-black">payments</span>
+          <span>Pagar Cuenta</span>
+        </button>
+        <button 
+          onClick={onBack} 
+          className="w-full h-14 bg-white/5 text-white/60 border border-white/10 rounded-2xl font-bold flex items-center justify-center gap-2"
+        >
+          <span className="material-symbols-outlined text-sm">add</span>
+          <span>Pedir algo más</span>
+        </button>
+      </div>
     </div>
   );
 };
