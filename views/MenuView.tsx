@@ -318,7 +318,6 @@ const MenuView: React.FC<MenuViewProps> = ({
 
             // Encontrar todos los items de la mesa para este plato (para visibilidad global)
             const tableItemsForDish = cart.filter(i => i.itemId === item.id);
-            const tableTotalQty = tableItemsForDish.reduce((sum, i) => sum + i.quantity, 0);
 
             return (
               <div 
@@ -329,12 +328,7 @@ const MenuView: React.FC<MenuViewProps> = ({
                 <div className="flex gap-4">
                   <div className="size-24 rounded-2xl bg-center bg-cover border border-white/5 shrink-0 shadow-lg" style={{ backgroundImage: `url('${item.image_url}')` }}></div>
                   <div className="flex-1 flex flex-col justify-center min-w-0 pr-10">
-                    <div className="flex items-center gap-2 mb-1">
-                      <h3 className="font-bold text-base truncate">{item.name}</h3>
-                      {tableTotalQty > totalQty && (
-                        <span className="bg-white/10 text-[9px] font-black px-1.5 py-0.5 rounded-md text-text-secondary uppercase">Mesa: {tableTotalQty}</span>
-                      )}
-                    </div>
+                    <h3 className="font-bold text-base truncate mb-1">{item.name}</h3>
                     <p className="text-text-secondary text-xs line-clamp-2 mb-2">{item.description}</p>
                     <div className="flex items-center justify-between">
                       <span className="text-primary font-black">${formatPrice(Number(item.price))}</span>

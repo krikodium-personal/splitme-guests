@@ -317,6 +317,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
                         <input 
                           type="number" 
                           value={customAmounts[guest.id]}
+                          onFocus={() => handleCustomAmountChange(guest.id, '')}
                           onChange={(e) => handleCustomAmountChange(guest.id, e.target.value)}
                           className="w-full bg-white/5 border border-white/10 rounded-xl pl-7 pr-4 py-2 text-white font-bold outline-none focus:ring-2 focus:ring-primary"
                           placeholder="0.00"
