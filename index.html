@@ -12,6 +12,8 @@
   <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
   <!-- Librería de Escaneo QR -->
   <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+  <!-- SDK Mercado Pago -->
+  <script src="https://sdk.mercadopago.com/js/v2"></script>
   <script>
     tailwind.config = {
       darkMode: "class",
@@ -68,8 +70,6 @@
     body { min-height: 100dvh; }
     .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
     .material-symbols-outlined.filled { font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
-    
-    /* Estilos para el video del scanner para que llene el contenedor */
     #qr-reader video {
       object-fit: cover !important;
       width: 100% !important;

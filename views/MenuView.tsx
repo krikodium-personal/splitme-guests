@@ -69,24 +69,20 @@ const MenuView: React.FC<MenuViewProps> = ({
 
   const tableCapacity = table?.capacity || 10;
 
-  // Filtrar el carrito específico del comensal activo
+  // Filtrar el carrito específico del comensal activo (incluye pendientes y confirmados de la DB)
   const guestSpecificCart = useMemo(() => cart.filter(item => item.guestId === selectedGuestId), [cart, selectedGuestId]);
 
-  // Encontrar si el producto ya existe en el pedido del comensal (para mostrar Actualizar)
+  // Encontrar si el producto ya existe en el pedido del comensal actual
   const existingInCart = useMemo(() => {
     if (!showDetail) return null;
-    // Si estamos editando un item específico desde el resumen, usamos ese
     if (editingCartItem && editingCartItem.itemId === showDetail.id) return editingCartItem;
-    // Si no, buscamos el primero que no esté confirmado
     return guestSpecificCart.find(i => i.itemId === showDetail.id && !i.isConfirmed);
   }, [showDetail, guestSpecificCart, editingCartItem]);
 
   useEffect(() => {
     if (editingCartItem) {
       const item = menuItems.find(m => m.id === editingCartItem.itemId);
-      if (item) {
-        handleOpenPdp(item);
-      }
+      if (item) handleOpenPdp(item);
     }
   }, [editingCartItem, menuItems]);
 
@@ -98,13 +94,17 @@ const MenuView: React.FC<MenuViewProps> = ({
     return ['Destacados', ...filteredDbCats];
   }, [supabaseCategories]);
 
+  // Cantidad total acumulada por categoría ESPECÍFICA del comensal seleccionado
   const categoryCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     categoriesList.forEach(catName => {
       const catObj = supabaseCategories.find(c => c.name === catName);
       if (!catObj && catName !== 'Destacados') return;
+      
       const subIds = catObj ? supabaseCategories.filter(c => c.parent_id === catObj.id).map(c => c.id) : [];
       const validIds = catObj ? [catObj.id, ...subIds] : [];
+      
+      // Filtramos por guestSpecificCart para reflejar solo lo que ese invitado pidió en todos sus lotes
       counts[catName] = guestSpecificCart.reduce((sum, cartItem) => {
         const menuItem = menuItems.find(m => m.id === cartItem.itemId);
         if (catName === 'Destacados') return menuItem?.is_featured ? sum + cartItem.quantity : sum;
@@ -150,7 +150,6 @@ const MenuView: React.FC<MenuViewProps> = ({
 
   const handleOpenPdp = (item: MenuItem) => {
     setShowDetail(item);
-    // Verificar si ya existe este item para pre-cargar personalizaciones
     const existing = guestSpecificCart.find(i => i.itemId === item.id && !i.isConfirmed);
     setSelectedExtras(existing?.extras || []);
     setSelectedIngredientsToRemove(existing?.removedIngredients || []);
@@ -181,7 +180,6 @@ const MenuView: React.FC<MenuViewProps> = ({
     }
   };
 
-  // Acción 1: Actualizar el item existente
   const handleUpdateCurrent = () => {
     if (!showDetail || !existingInCart) return;
     onUpdateCartItem(existingInCart.id, { 
@@ -191,7 +189,6 @@ const MenuView: React.FC<MenuViewProps> = ({
     handleClosePdp();
   };
 
-  // Acción 2: Agregar una nueva unidad (otro plato)
   const handleAddNew = () => {
     if (!showDetail) return;
     onAddToCart(showDetail, selectedGuestId, [...selectedExtras], [...selectedIngredientsToRemove]);
@@ -317,8 +314,11 @@ const MenuView: React.FC<MenuViewProps> = ({
           {filteredItems.map(item => {
             const totalQty = getDishQuantityForGuest(item.id);
             const simpleItem = getSimpleCartItemForGuest(item.id);
-            // El icono de papelera se muestra cuando la cantidad total es 1.
             const showTrash = totalQty === 1;
+
+            // Encontrar todos los items de la mesa para este plato (para visibilidad global)
+            const tableItemsForDish = cart.filter(i => i.itemId === item.id);
+            const tableTotalQty = tableItemsForDish.reduce((sum, i) => sum + i.quantity, 0);
 
             return (
               <div 
@@ -329,14 +329,18 @@ const MenuView: React.FC<MenuViewProps> = ({
                 <div className="flex gap-4">
                   <div className="size-24 rounded-2xl bg-center bg-cover border border-white/5 shrink-0 shadow-lg" style={{ backgroundImage: `url('${item.image_url}')` }}></div>
                   <div className="flex-1 flex flex-col justify-center min-w-0 pr-10">
-                    <h3 className="font-bold text-base truncate mb-1">{item.name}</h3>
+                    <div className="flex items-center gap-2 mb-1">
+                      <h3 className="font-bold text-base truncate">{item.name}</h3>
+                      {tableTotalQty > totalQty && (
+                        <span className="bg-white/10 text-[9px] font-black px-1.5 py-0.5 rounded-md text-text-secondary uppercase">Mesa: {tableTotalQty}</span>
+                      )}
+                    </div>
                     <p className="text-text-secondary text-xs line-clamp-2 mb-2">{item.description}</p>
                     <div className="flex items-center justify-between">
                       <span className="text-primary font-black">${formatPrice(Number(item.price))}</span>
                     </div>
                   </div>
 
-                  {/* Number Picker Stepper */}
                   <div className="absolute right-4 top-4 flex flex-col items-center z-10">
                     {totalQty > 0 ? (
                       <div 
@@ -359,7 +363,6 @@ const MenuView: React.FC<MenuViewProps> = ({
                             if (simpleItem) {
                               handleDecrement(e, item.id);
                             } else {
-                              // Si no hay item simple (personalizado), decrementamos el primero que encontremos
                               const anyItem = guestSpecificCart.find(i => i.itemId === item.id && !i.isConfirmed);
                               if (anyItem) onUpdateCartItem(anyItem.id, { quantity: anyItem.quantity - 1 });
                             }
@@ -382,19 +385,24 @@ const MenuView: React.FC<MenuViewProps> = ({
                   </div>
                 </div>
 
-                {/* Visualización de personalizaciones dentro de la card */}
-                {guestSpecificCart.filter(i => i.itemId === item.id && (i.extras?.length || i.removedIngredients?.length)).map(i => (
-                  <div key={i.id} className="mt-4 flex flex-wrap items-center gap-1.5 border-t border-white/5 pt-3 animate-fade-in">
-                    <span className="text-[9px] font-black text-white/30 uppercase tracking-tighter mr-1">Personalizado:</span>
-                    {i.extras?.map(ex => (
-                      <span key={ex} className="text-[9px] font-black uppercase bg-primary/10 text-primary px-2 py-0.5 rounded-md border border-primary/20">+{ex}</span>
-                    ))}
-                    {i.removedIngredients?.map(rem => (
-                      <span key={rem} className="text-[9px] font-black uppercase bg-red-500/10 text-red-400 px-2 py-0.5 rounded-md border border-red-500/20">-{rem}</span>
-                    ))}
-                    {i.quantity > 1 && <span className="text-[9px] font-black text-white/50 ml-1">x{i.quantity}</span>}
-                  </div>
-                ))}
+                {/* Visualización GLOBAL de personalizaciones (Todos ven lo que todos piden) */}
+                {tableItemsForDish.filter(i => (i.extras?.length || i.removedIngredients?.length)).map(i => {
+                   const guest = guests.find(g => g.id === i.guestId);
+                   return (
+                    <div key={i.id} className="mt-4 flex flex-wrap items-center gap-1.5 border-t border-white/5 pt-3 animate-fade-in">
+                      <div className={`size-5 rounded-full flex items-center justify-center text-[7px] font-black text-white ${getGuestColor(i.guestId)}`}>
+                        {getInitials(guest?.name || '?')}
+                      </div>
+                      {i.extras?.map(ex => (
+                        <span key={ex} className="text-[9px] font-black uppercase bg-primary/10 text-primary px-2 py-0.5 rounded-md border border-primary/20">+{ex}</span>
+                      ))}
+                      {i.removedIngredients?.map(rem => (
+                        <span key={rem} className="text-[9px] font-black uppercase bg-red-500/10 text-red-400 px-2 py-0.5 rounded-md border border-red-500/20">-{rem}</span>
+                      ))}
+                      {i.quantity > 1 && <span className="text-[9px] font-black text-white/50 ml-1">x{i.quantity}</span>}
+                    </div>
+                  );
+                })}
               </div>
             );
           })}
@@ -480,7 +488,6 @@ const MenuView: React.FC<MenuViewProps> = ({
               </div>
             </div>
             
-            {/* FOOTER DEL PDP CON CTAS DINÁMICOS */}
             <div className="p-4 bg-surface-dark border-t border-white/5">
               {existingInCart ? (
                 <div className="flex flex-col gap-3">
