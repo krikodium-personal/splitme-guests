@@ -223,11 +223,34 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const init = async () => {
-      const saved = localStorage.getItem(SESSION_KEY);
-      if (saved) {
-        const { res, table } = JSON.parse(saved);
-        await handleStartSession(res, table);
-      } else {
+      try {
+        // Verificar que Supabase esté disponible
+        if (!supabase) {
+          setError("Error de configuración: Cliente de Supabase no disponible. Verifica las credenciales.");
+          setLoading(false);
+          setCurrentView('SCAN');
+          return;
+        }
+
+        const saved = localStorage.getItem(SESSION_KEY);
+        if (saved) {
+          try {
+            const { res, table } = JSON.parse(saved);
+            await handleStartSession(res, table);
+          } catch (err: any) {
+            console.error("[DineSplit] Error al recuperar sesión:", err);
+            localStorage.removeItem(SESSION_KEY);
+            localStorage.removeItem(ACTIVE_ORDER_KEY);
+            setLoading(false);
+            setCurrentView('SCAN');
+          }
+        } else {
+          setLoading(false);
+          setCurrentView('SCAN');
+        }
+      } catch (err: any) {
+        console.error("[DineSplit] Error en inicialización:", err);
+        setError(err.message || "Error al inicializar la aplicación");
         setLoading(false);
         setCurrentView('SCAN');
       }
@@ -251,7 +274,36 @@ const App: React.FC = () => {
     });
   };
 
-  if (loading) return <div className="h-screen flex items-center justify-center bg-background-dark text-primary">Cargando...</div>;
+  if (loading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-background-dark text-primary">
+        <div className="text-center">
+          <div className="text-2xl mb-4">Cargando...</div>
+          {diagnosticMsg && <div className="text-sm text-text-secondary">{diagnosticMsg}</div>}
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-background-dark text-white p-4">
+        <div className="text-center max-w-md">
+          <div className="text-red-500 text-xl mb-4">Error</div>
+          <div className="text-text-secondary mb-6">{error}</div>
+          <button
+            onClick={() => {
+              setError(null);
+              setCurrentView('SCAN');
+            }}
+            className="px-6 py-3 bg-primary text-background-dark rounded-lg font-bold"
+          >
+            Volver a intentar
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-md mx-auto min-h-screen bg-background-dark shadow-2xl relative flex flex-col overflow-hidden">
@@ -262,17 +314,32 @@ const App: React.FC = () => {
       )}
       {(() => {
         switch (currentView) {
-          case 'SCAN': return <ScanView onNext={handleStartSession} restaurantName={restaurant?.name} />;
-          case 'GUEST_INFO': return <GuestInfoView onBack={() => navigate('SCAN')} onNext={() => navigate('MENU')} guests={guests} setGuests={setGuests} table={currentTable} waiter={currentWaiter} restaurant={restaurant} />;
-          case 'MENU': return <MenuView onNext={() => navigate('ORDER_SUMMARY')} guests={guests} setGuests={setGuests} cart={cart} onAddToCart={(item, gId, ext, rem) => setCart(prev => [...prev, { id: Math.random().toString(), itemId: item.id, guestId: gId, quantity: 1, extras: ext, removedIngredients: rem, isConfirmed: false }])} onUpdateCartItem={handleUpdateCartItem} onIndividualShare={() => navigate('INDIVIDUAL_SHARE')} selectedGuestId={activeGuestId} onSelectGuest={setActiveGuestId} initialCategory={activeCategory} onCategoryChange={setActiveCategory} editingCartItem={editingCartItem} onCancelEdit={() => setEditingCartItem(null)} menuItems={menuItems} categories={categories} restaurant={restaurant} table={currentTable} />;
-          case 'ORDER_SUMMARY': return <OrderSummaryView guests={guests} cart={cart} onBack={() => navigate('MENU')} onNavigateToCategory={(gId, cat) => { setActiveGuestId(gId); setActiveCategory(cat); navigate('MENU'); }} onEditItem={(item) => { setEditingCartItem(item); navigate('MENU'); }} onSend={handleSendOrder} isSending={isSendingOrder} onUpdateQuantity={(id, d) => handleUpdateCartItem(id, { quantity: Math.max(0, (cart.find(it => it.id === id)?.quantity || 1) + d) })} menuItems={menuItems} categories={categories} tableNumber={currentTable?.table_number} waiter={currentWaiter} />;
-          case 'PROGRESS': return <OrderProgressView cart={cart} activeOrderId={activeOrderId} onNext={() => navigate('SPLIT_BILL')} onBack={() => navigate('MENU')} onRedirectToFeedback={() => { localStorage.clear(); navigate('FEEDBACK'); }} tableNumber={currentTable?.table_number} waiter={currentWaiter} />;
-          case 'SPLIT_BILL': return <SplitBillView guests={guests} cart={cart} onBack={() => navigate('PROGRESS')} onConfirm={handleSplitConfirm} menuItems={menuItems} />;
-          case 'CHECKOUT': return <CheckoutView onBack={() => navigate('SPLIT_BILL')} onConfirm={() => navigate('INDIVIDUAL_SHARE')} cart={cart} guests={guests} menuItems={menuItems} tableNumber={currentTable?.table_number} splitData={splitData} />;
-          case 'INDIVIDUAL_SHARE': return <IndividualShareView onBack={() => navigate('CHECKOUT')} onPay={() => navigate('FEEDBACK')} cart={cart} menuItems={menuItems} splitData={splitData} />;
-          case 'FEEDBACK': return <FeedbackView onNext={() => navigate('CONFIRMATION')} onSkip={() => navigate('CONFIRMATION')} cart={cart} menuItems={menuItems} waiter={currentWaiter} restaurant={restaurant} />;
-          case 'CONFIRMATION': return <ConfirmationView onRestart={() => { localStorage.clear(); window.location.href = '/'; }} guests={guests} tableNumber={currentTable?.table_number} />;
-          default: return null;
+          case 'INIT':
+            // Mientras se inicializa, mostrar la vista de escaneo
+            return <ScanView onNext={handleStartSession} restaurantName={restaurant?.name} />;
+          case 'SCAN': 
+            return <ScanView onNext={handleStartSession} restaurantName={restaurant?.name} />;
+          case 'GUEST_INFO': 
+            return <GuestInfoView onBack={() => navigate('SCAN')} onNext={() => navigate('MENU')} guests={guests} setGuests={setGuests} table={currentTable} waiter={currentWaiter} restaurant={restaurant} />;
+          case 'MENU': 
+            return <MenuView onNext={() => navigate('ORDER_SUMMARY')} guests={guests} setGuests={setGuests} cart={cart} onAddToCart={(item, gId, ext, rem) => setCart(prev => [...prev, { id: Math.random().toString(), itemId: item.id, guestId: gId, quantity: 1, extras: ext, removedIngredients: rem, isConfirmed: false }])} onUpdateCartItem={handleUpdateCartItem} onIndividualShare={() => navigate('INDIVIDUAL_SHARE')} selectedGuestId={activeGuestId} onSelectGuest={setActiveGuestId} initialCategory={activeCategory} onCategoryChange={setActiveCategory} editingCartItem={editingCartItem} onCancelEdit={() => setEditingCartItem(null)} menuItems={menuItems} categories={categories} restaurant={restaurant} table={currentTable} />;
+          case 'ORDER_SUMMARY': 
+            return <OrderSummaryView guests={guests} cart={cart} onBack={() => navigate('MENU')} onNavigateToCategory={(gId, cat) => { setActiveGuestId(gId); setActiveCategory(cat); navigate('MENU'); }} onEditItem={(item) => { setEditingCartItem(item); navigate('MENU'); }} onSend={handleSendOrder} isSending={isSendingOrder} onUpdateQuantity={(id, d) => handleUpdateCartItem(id, { quantity: Math.max(0, (cart.find(it => it.id === id)?.quantity || 1) + d) })} menuItems={menuItems} categories={categories} tableNumber={currentTable?.table_number} waiter={currentWaiter} />;
+          case 'PROGRESS': 
+            return <OrderProgressView cart={cart} activeOrderId={activeOrderId} onNext={() => navigate('SPLIT_BILL')} onBack={() => navigate('MENU')} onRedirectToFeedback={() => { localStorage.clear(); navigate('FEEDBACK'); }} tableNumber={currentTable?.table_number} waiter={currentWaiter} />;
+          case 'SPLIT_BILL': 
+            return <SplitBillView guests={guests} cart={cart} onBack={() => navigate('PROGRESS')} onConfirm={handleSplitConfirm} menuItems={menuItems} />;
+          case 'CHECKOUT': 
+            return <CheckoutView onBack={() => navigate('SPLIT_BILL')} onConfirm={() => navigate('INDIVIDUAL_SHARE')} cart={cart} guests={guests} menuItems={menuItems} tableNumber={currentTable?.table_number} splitData={splitData} />;
+          case 'INDIVIDUAL_SHARE': 
+            return <IndividualShareView onBack={() => navigate('CHECKOUT')} onPay={() => navigate('FEEDBACK')} cart={cart} menuItems={menuItems} splitData={splitData} />;
+          case 'FEEDBACK': 
+            return <FeedbackView onNext={() => navigate('CONFIRMATION')} onSkip={() => navigate('CONFIRMATION')} cart={cart} menuItems={menuItems} waiter={currentWaiter} restaurant={restaurant} />;
+          case 'CONFIRMATION': 
+            return <ConfirmationView onRestart={() => { localStorage.clear(); window.location.href = '/'; }} guests={guests} tableNumber={currentTable?.table_number} />;
+          default: 
+            // Fallback: si no hay vista válida, mostrar la vista de escaneo
+            return <ScanView onNext={handleStartSession} restaurantName={restaurant?.name} />;
         }
       })()}
     </div>
