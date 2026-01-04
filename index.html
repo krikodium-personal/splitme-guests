@@ -77,11 +77,31 @@
       border-radius: 2.5rem !important;
     }
   </style>
-<!-- Vite will automatically inject the script in production -->
-<!-- For development, Vite handles module resolution automatically -->
-<script type="module" src="/index.tsx"></script>
 </head>
 <body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-white font-display antialiased">
   <div id="root"></div>
+  <script>
+    // Verificación inicial de que el DOM está listo
+    console.log("[DineSplit] HTML loaded at", new Date().toISOString());
+    console.log("[DineSplit] Root element exists:", !!document.getElementById('root'));
+    
+    // Fallback si hay errores de carga
+    window.addEventListener('error', (e) => {
+      console.error("[DineSplit] Global error:", e);
+      const root = document.getElementById('root');
+      if (root && !root.hasChildNodes()) {
+        root.innerHTML = `
+          <div style="padding: 2rem; color: white; background: #102217; min-height: 100vh; display: flex; align-items: center; justify-content: center; flex-direction: column;">
+            <h1 style="color: #13ec6a; margin-bottom: 1rem;">Error al cargar</h1>
+            <p style="color: #9db9a8; margin-bottom: 1rem;">${e.message || 'Error desconocido'}</p>
+            <button onclick="window.location.reload()" style="padding: 0.75rem 1.5rem; background: #13ec6a; color: #102217; border: none; border-radius: 0.5rem; font-weight: bold; cursor: pointer;">
+              Recargar
+            </button>
+          </div>
+        `;
+      }
+    });
+  </script>
+  <script type="module" src="/index.tsx"></script>
 </body>
 </html>
