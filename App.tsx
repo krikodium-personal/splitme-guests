@@ -21,6 +21,7 @@ const App: React.FC = () => {
   const resParam = searchParams.get('res');
   const tableParam = searchParams.get('table');
   const paymentStatus = searchParams.get('status');
+  const guestIdParam = searchParams.get('guestId');
 
   const [currentView, setCurrentView] = useState<AppView>('INIT');
   const [loading, setLoading] = useState(true);
@@ -53,17 +54,52 @@ const App: React.FC = () => {
     ]);
 
     if (itemsRes.data) {
-      const itemsFromDB: OrderItem[] = itemsRes.data.map(item => ({
-        id: item.id,
-        itemId: item.menu_item_id,
-        guestId: item.guest_id || '1',
-        quantity: item.quantity,
-        order_id: item.order_id,
-        batch_id: item.batch_id,
-        isConfirmed: true,
-        extras: item.notes?.includes('EXTRAS:') ? item.notes.split('|')[0].replace('EXTRAS:', '').split(',').map((s:string) => s.trim()) : [],
-        removedIngredients: item.notes?.includes('SIN:') ? item.notes.split('|')[1]?.replace('SIN:', '').split(',').map((s:string) => s.trim()) : []
-      }));
+      const itemsFromDB: OrderItem[] = itemsRes.data.map(item => {
+        let extras: string[] = [];
+        let removedIngredients: string[] = [];
+        
+        if (item.notes) {
+          // Parsear EXTRAS
+          if (item.notes.includes('EXTRAS:')) {
+            const extrasPart = item.notes.split('|')[0];
+            const extrasStr = extrasPart.replace('EXTRAS:', '').trim();
+            if (extrasStr) {
+              extras = extrasStr.split(',').map((s: string) => s.trim()).filter(Boolean);
+            }
+          }
+          
+          // Parsear SIN (puede estar antes o después del pipe)
+          if (item.notes.includes('SIN:')) {
+            const parts = item.notes.split('|');
+            let sinPart = '';
+            if (parts.length > 1) {
+              // SIN está después del pipe
+              sinPart = parts[1];
+            } else if (item.notes.startsWith('SIN:')) {
+              // SIN está al inicio (sin EXTRAS antes)
+              sinPart = parts[0];
+            }
+            if (sinPart) {
+              const sinStr = sinPart.replace('SIN:', '').trim();
+              if (sinStr) {
+                removedIngredients = sinStr.split(',').map((s: string) => s.trim()).filter(Boolean);
+              }
+            }
+          }
+        }
+        
+        return {
+          id: item.id,
+          itemId: item.menu_item_id,
+          guestId: item.guest_id || '1',
+          quantity: item.quantity,
+          order_id: item.order_id,
+          batch_id: item.batch_id,
+          isConfirmed: true,
+          extras,
+          removedIngredients
+        };
+      });
       setCart(itemsFromDB);
     }
     if (batchesRes.data) {
@@ -142,15 +178,18 @@ const App: React.FC = () => {
       localStorage.setItem(SESSION_KEY, JSON.stringify({ res: accessCode.toUpperCase(), table: tableNum.toString() }));
 
       // Cargar datos complementarios
+      // Buscar el mesero asignado a la mesa usando waiter_id
       const [waiterRes, catRes, itemRes] = await Promise.all([
-        supabase.from('waiters').select('*').eq('restaurant_id', resData.id).limit(1).maybeSingle(),
+        tableData.waiter_id 
+          ? supabase.from('waiters').select('*').eq('id', tableData.waiter_id).maybeSingle()
+          : Promise.resolve({ data: null, error: null }),
         supabase.from('categories').select('*').eq('restaurant_id', resData.id).order('sort_order'),
         supabase.from('menu_items').select('*').eq('restaurant_id', resData.id).order('sort_order')
       ]);
 
       setRestaurant(resData);
       setCurrentTable(tableData);
-      setCurrentWaiter(waiterRes.data);
+      setCurrentWaiter(waiterRes.data || null);
       setCategories(catRes.data || []);
       setMenuItems(itemRes.data || []);
       
@@ -211,6 +250,13 @@ const App: React.FC = () => {
     };
     initApp();
   }, [resParam, tableParam, handleStartSession]);
+
+  // Efecto separado para manejar la navegación a INDIVIDUAL_SHARE cuando hay guestId en URL
+  useEffect(() => {
+    if (guestIdParam && activeOrderId && splitData && currentView !== 'INDIVIDUAL_SHARE') {
+      setCurrentView('INDIVIDUAL_SHARE');
+    }
+  }, [guestIdParam, activeOrderId, splitData, currentView]);
 
   useEffect(() => {
     if (paymentStatus === 'success' && activeOrderId) {

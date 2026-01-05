@@ -93,17 +93,30 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                       {guestPending.map(item => {
                         const dish = menuItems.find(m => m.id === item.itemId);
                         return (
-                          <div key={item.id} className="flex items-center gap-4">
-                            <div className="size-12 rounded-xl bg-cover bg-center shrink-0 border border-white/5" style={{ backgroundImage: `url("${dish?.image_url}")` }}></div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-bold truncate">{dish?.name}</p>
-                              <p className="text-primary text-xs font-bold">${formatPrice(Number(dish?.price || 0))}</p>
+                          <div key={item.id} className="flex flex-col gap-2">
+                            <div className="flex items-center gap-4">
+                              <div className="size-12 rounded-xl bg-cover bg-center shrink-0 border border-white/5" style={{ backgroundImage: `url("${dish?.image_url}")` }}></div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-bold truncate">{dish?.name}</p>
+                                <p className="text-primary text-xs font-bold">${formatPrice(Number(dish?.price || 0))}</p>
+                              </div>
+                              <div className="flex items-center gap-3 bg-background-dark/50 rounded-full px-2 py-1 shrink-0 border border-white/5">
+                                <button onClick={() => onUpdateQuantity(item.id, -1)} className="size-6 rounded-full hover:bg-white/10 flex items-center justify-center"><span className="material-symbols-outlined text-xs">remove</span></button>
+                                <span className="text-xs font-black w-4 text-center">{item.quantity}</span>
+                                <button onClick={() => onUpdateQuantity(item.id, 1)} className="size-6 rounded-full bg-white/10 flex items-center justify-center"><span className="material-symbols-outlined text-xs">add</span></button>
+                              </div>
                             </div>
-                            <div className="flex items-center gap-3 bg-background-dark/50 rounded-full px-2 py-1 shrink-0 border border-white/5">
-                              <button onClick={() => onUpdateQuantity(item.id, -1)} className="size-6 rounded-full hover:bg-white/10 flex items-center justify-center"><span className="material-symbols-outlined text-xs">remove</span></button>
-                              <span className="text-xs font-black w-4 text-center">{item.quantity}</span>
-                              <button onClick={() => onUpdateQuantity(item.id, 1)} className="size-6 rounded-full bg-white/10 flex items-center justify-center"><span className="material-symbols-outlined text-xs">add</span></button>
-                            </div>
+                            {/* Personalizaciones */}
+                            {(item.extras?.length > 0 || item.removedIngredients?.length > 0) && (
+                              <div className="flex flex-wrap items-center gap-1.5 ml-16">
+                                {item.extras?.filter(ex => ex && ex.trim()).map(ex => (
+                                  <span key={ex} className="text-[9px] font-black uppercase bg-primary/10 text-primary px-2 py-0.5 rounded-md border border-primary/20">+{ex}</span>
+                                ))}
+                                {item.removedIngredients?.filter(rem => rem && rem.trim()).map(rem => (
+                                  <span key={rem} className="text-[9px] font-black uppercase bg-red-500/10 text-red-400 px-2 py-0.5 rounded-md border border-red-500/20">-{rem}</span>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -137,18 +150,31 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                         const dish = menuItems.find(m => m.id === item.itemId);
                         const guest = guests.find(g => g.id === item.guestId);
                         return (
-                          <div key={item.id} className="p-4 flex items-center gap-4">
-                            <div className="size-11 rounded-xl bg-cover bg-center shrink-0 grayscale opacity-40 border border-white/5" style={{ backgroundImage: `url("${dish?.image_url}")` }}></div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 mb-0.5">
-                                <div className={`size-4 rounded-full ${getGuestColor(item.guestId)} flex items-center justify-center shrink-0`}>
-                                  <span className="text-[6px] font-black text-white">{getInitials(guest?.name || '?')}</span>
+                          <div key={item.id} className="p-4 flex flex-col gap-2">
+                            <div className="flex items-center gap-4">
+                              <div className="size-11 rounded-xl bg-cover bg-center shrink-0 grayscale opacity-40 border border-white/5" style={{ backgroundImage: `url("${dish?.image_url}")` }}></div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-0.5">
+                                  <div className={`size-4 rounded-full ${getGuestColor(item.guestId)} flex items-center justify-center shrink-0`}>
+                                    <span className="text-[6px] font-black text-white">{getInitials(guest?.name || '?')}</span>
+                                  </div>
+                                  <p className="text-sm font-bold text-white/80 truncate">{dish?.name}</p>
                                 </div>
-                                <p className="text-sm font-bold text-white/80 truncate">{dish?.name}</p>
+                                <p className="text-white/30 text-[10px] font-black uppercase tracking-widest">Cantidad: {item.quantity}</p>
                               </div>
-                              <p className="text-white/30 text-[10px] font-black uppercase tracking-widest">Cantidad: {item.quantity}</p>
+                              <span className="text-xs font-black text-white/40 tabular-nums">${formatPrice((dish?.price || 0) * item.quantity)}</span>
                             </div>
-                            <span className="text-xs font-black text-white/40 tabular-nums">${formatPrice((dish?.price || 0) * item.quantity)}</span>
+                            {/* Personalizaciones */}
+                            {(item.extras?.length > 0 || item.removedIngredients?.length > 0) && (
+                              <div className="flex flex-wrap items-center gap-1.5 ml-[60px]">
+                                {item.extras?.filter(ex => ex && ex.trim()).map(ex => (
+                                  <span key={ex} className="text-[9px] font-black uppercase bg-primary/10 text-primary px-2 py-0.5 rounded-md border border-primary/20">+{ex}</span>
+                                ))}
+                                {item.removedIngredients?.filter(rem => rem && rem.trim()).map(rem => (
+                                  <span key={rem} className="text-[9px] font-black uppercase bg-red-500/10 text-red-400 px-2 py-0.5 rounded-md border border-red-500/20">-{rem}</span>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         );
                       })}

@@ -86,6 +86,20 @@ const MenuView: React.FC<MenuViewProps> = ({
     }
   }, [editingCartItem, menuItems]);
 
+  // Limpiar personalizaciones cuando cambia el comensal seleccionado
+  useEffect(() => {
+    // Si hay un item abierto, recargar sus personalizaciones para el nuevo comensal
+    if (showDetail) {
+      const existing = guestSpecificCart.find(i => i.itemId === showDetail.id && !i.isConfirmed);
+      setSelectedExtras(existing?.extras || []);
+      setSelectedIngredientsToRemove(existing?.removedIngredients || []);
+    } else {
+      // Si no hay item abierto, limpiar las selecciones
+      setSelectedExtras([]);
+      setSelectedIngredientsToRemove([]);
+    }
+  }, [selectedGuestId, showDetail, guestSpecificCart]);
+
   const categoriesList = useMemo(() => {
     const dbCategories = (supabaseCategories || [])
       .filter(c => c.parent_id === null)
@@ -150,6 +164,7 @@ const MenuView: React.FC<MenuViewProps> = ({
 
   const handleOpenPdp = (item: MenuItem) => {
     setShowDetail(item);
+    // Solo cargar personalizaciones del comensal actual para este item específico
     const existing = guestSpecificCart.find(i => i.itemId === item.id && !i.isConfirmed);
     setSelectedExtras(existing?.extras || []);
     setSelectedIngredientsToRemove(existing?.removedIngredients || []);
@@ -379,14 +394,11 @@ const MenuView: React.FC<MenuViewProps> = ({
                   </div>
                 </div>
 
-                {/* Visualización GLOBAL de personalizaciones (Todos ven lo que todos piden) */}
-                {tableItemsForDish.filter(i => (i.extras?.length || i.removedIngredients?.length)).map(i => {
-                   const guest = guests.find(g => g.id === i.guestId);
-                   return (
+                {/* Visualización de personalizaciones del comensal seleccionado */}
+                {tableItemsForDish
+                  .filter(i => i.guestId === selectedGuestId && (i.extras?.length || i.removedIngredients?.length))
+                  .map(i => (
                     <div key={i.id} className="mt-4 flex flex-wrap items-center gap-1.5 border-t border-white/5 pt-3 animate-fade-in">
-                      <div className={`size-5 rounded-full flex items-center justify-center text-[7px] font-black text-white ${getGuestColor(i.guestId)}`}>
-                        {getInitials(guest?.name || '?')}
-                      </div>
                       {i.extras?.map(ex => (
                         <span key={ex} className="text-[9px] font-black uppercase bg-primary/10 text-primary px-2 py-0.5 rounded-md border border-primary/20">+{ex}</span>
                       ))}
@@ -395,8 +407,7 @@ const MenuView: React.FC<MenuViewProps> = ({
                       ))}
                       {i.quantity > 1 && <span className="text-[9px] font-black text-white/50 ml-1">x{i.quantity}</span>}
                     </div>
-                  );
-                })}
+                  ))}
               </div>
             );
           })}

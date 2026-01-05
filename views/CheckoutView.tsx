@@ -87,15 +87,17 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, gu
     document.body.removeChild(textArea);
   };
 
-  const handleSharePayment = async (guestName: string, amount: number) => {
-    const text = `¡Hola ${guestName}! Esta es tu parte de la cuenta en DineSplit: $${formatPrice(amount)}. Puedes pagar aquí: ${shareUrl}`;
+  const handleSharePayment = async (guestName: string, amount: number, guestId: string) => {
+    // Crear URL con parámetros para identificar el comensal
+    const shareUrlWithGuest = `${shareUrl.split('?')[0]}?guestId=${guestId}`;
+    const text = `¡Hola ${guestName}! Esta es tu parte de la cuenta en SplitMe: $${formatPrice(amount)}. Puedes pagar aquí: ${shareUrlWithGuest}`;
     
     if (navigator.share) {
       try {
         await navigator.share({
-          title: 'DineSplit - Pagar mi parte',
+          title: 'SplitMe - Pagar mi parte',
           text: text,
-          url: shareUrl,
+          url: shareUrlWithGuest,
         });
       } catch (err: any) {
         if (err.name !== 'AbortError') {
@@ -197,7 +199,7 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, gu
               
               {!isMe && (
                 <button 
-                  onClick={() => handleSharePayment(diner.name, diner.amount)}
+                  onClick={() => handleSharePayment(diner.name, diner.amount, diner.id)}
                   className="size-10 rounded-xl bg-white/5 flex items-center justify-center text-text-secondary active:scale-90 transition-all hover:bg-primary/20 hover:text-primary border border-white/5"
                 >
                   <span className="material-symbols-outlined text-[20px]">ios_share</span>

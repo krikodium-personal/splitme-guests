@@ -17,14 +17,20 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
   const [paymentMethod, setPaymentMethod] = useState<'mercadopago' | 'transfer' | 'cash'>('mercadopago');
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // El comensal actual suele ser el ID '1' en nuestra lógica simplificada de frontend
+  // Obtener guestId de la URL si existe, sino usar '1' como default
+  const targetGuestId = useMemo(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get('guestId') || '1';
+  }, []);
+
+  // El comensal actual puede venir de la URL o ser el default '1'
   const myDataFromSplit = useMemo(() => {
-    return splitData?.find(s => s.id === '1');
-  }, [splitData]);
+    return splitData?.find(s => s.id === targetGuestId);
+  }, [splitData, targetGuestId]);
 
   const myCartItems = useMemo(() => {
-    return cart.filter(item => item.guestId === '1');
-  }, [cart]);
+    return cart.filter(item => item.guestId === targetGuestId);
+  }, [cart, targetGuestId]);
 
   const subtotal = useMemo(() => {
     return myDataFromSplit?.total || 0;
