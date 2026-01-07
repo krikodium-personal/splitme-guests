@@ -7,7 +7,7 @@ interface MenuViewProps {
   guests: Guest[];
   setGuests: React.Dispatch<React.SetStateAction<Guest[]>>;
   cart: OrderItem[];
-  onAddToCart: (item: MenuItem, guestId: string, extras: string[], removedIngredients: string[]) => void;
+  onAddToCart: (item: MenuItem, guestId: string, extras: string[], removedIngredients: string[]) => Promise<void>;
   onUpdateCartItem: (cartItemId: string, updates: Partial<OrderItem>) => void;
   onNext: () => void;
   onIndividualShare: () => void;
@@ -21,6 +21,7 @@ interface MenuViewProps {
   categories: any[];
   table?: any;
   restaurant?: any;
+  onSaveGuestChanges?: (updatedGuests: Guest[], newGuests: Guest[]) => Promise<boolean>;
 }
 
 export const formatPrice = (price: number) => {
@@ -49,10 +50,10 @@ const NutritionalItem = ({ label, value, unit, isPrimary = false }: { label: str
 );
 
 const MenuView: React.FC<MenuViewProps> = ({ 
-  guests, setGuests, cart, onAddToCart, onUpdateCartItem, onNext, 
+  guests, setGuests, cart, onAddToCart, onUpdateCartItem, onNext,
   selectedGuestId, onSelectGuest, initialCategory, onCategoryChange, 
   editingCartItem, onCancelEdit, menuItems, categories: supabaseCategories,
-  table, restaurant
+  table, restaurant, onSaveGuestChanges
 }) => {
   const [showDetail, setShowDetail] = useState<MenuItem | null>(null);
   const [isManageGuestsOpen, setIsManageGuestsOpen] = useState(false);
@@ -66,17 +67,29 @@ const MenuView: React.FC<MenuViewProps> = ({
 
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const [backupNames, setBackupNames] = useState<Record<string, string>>({});
+  const [originalGuests, setOriginalGuests] = useState<Guest[]>([]);
+  const [pendingNewGuests, setPendingNewGuests] = useState<Guest[]>([]);
+  const [addingItems, setAddingItems] = useState<Set<string>>(new Set()); // Track items being added
 
   const tableCapacity = table?.capacity || 10;
 
   // Filtrar el carrito específico del comensal activo (incluye pendientes y confirmados de la DB)
-  const guestSpecificCart = useMemo(() => cart.filter(item => item.guestId === selectedGuestId), [cart, selectedGuestId]);
+  const guestSpecificCart = useMemo(() => {
+    const filtered = cart.filter(item => item.guestId === selectedGuestId);
+    if (filtered.length > 0 || cart.length > 0) {
+      console.log("[MenuView] selectedGuestId:", selectedGuestId);
+      console.log("[MenuView] Total items en cart:", cart.length);
+      console.log("[MenuView] Items filtrados para guest:", filtered.length);
+      console.log("[MenuView] Guest IDs en cart:", [...new Set(cart.map(i => i.guestId))]);
+    }
+    return filtered;
+  }, [cart, selectedGuestId]);
 
   // Encontrar si el producto ya existe en el pedido del comensal actual
   const existingInCart = useMemo(() => {
     if (!showDetail) return null;
     if (editingCartItem && editingCartItem.itemId === showDetail.id) return editingCartItem;
-    return guestSpecificCart.find(i => i.itemId === showDetail.id && !i.isConfirmed);
+    return guestSpecificCart.find(i => i.itemId === showDetail.id && (i.status === 'elegido' || (!i.status && !i.isConfirmed)));
   }, [showDetail, guestSpecificCart, editingCartItem]);
 
   useEffect(() => {
@@ -90,7 +103,7 @@ const MenuView: React.FC<MenuViewProps> = ({
   useEffect(() => {
     // Si hay un item abierto, recargar sus personalizaciones para el nuevo comensal
     if (showDetail) {
-      const existing = guestSpecificCart.find(i => i.itemId === showDetail.id && !i.isConfirmed);
+      const existing = guestSpecificCart.find(i => i.itemId === showDetail.id && (i.status === 'elegido' || (!i.status && !i.isConfirmed)));
       setSelectedExtras(existing?.extras || []);
       setSelectedIngredientsToRemove(existing?.removedIngredients || []);
     } else {
@@ -133,13 +146,13 @@ const MenuView: React.FC<MenuViewProps> = ({
   const getSimpleCartItemForGuest = (itemId: string) => {
     return guestSpecificCart.find(item => 
       item.itemId === itemId && 
-      !item.isConfirmed &&
+      (item.status === 'elegido' || (!item.status && !item.isConfirmed)) &&
       (!item.extras || item.extras.length === 0) && 
       (!item.removedIngredients || item.removedIngredients.length === 0)
     );
   };
 
-  const pendingCount = cart.filter(item => !item.isConfirmed).reduce((sum, item) => sum + item.quantity, 0);
+  const pendingCount = cart.filter(item => item.status === 'elegido' || (!item.status && !item.isConfirmed)).reduce((sum, item) => sum + item.quantity, 0);
   const totalSessionPrice = cart.reduce((sum, item) => {
     const menuItem = menuItems.find(m => m.id === item.itemId);
     return sum + (menuItem ? Number(menuItem.price) * item.quantity : 0);
@@ -165,7 +178,7 @@ const MenuView: React.FC<MenuViewProps> = ({
   const handleOpenPdp = (item: MenuItem) => {
     setShowDetail(item);
     // Solo cargar personalizaciones del comensal actual para este item específico
-    const existing = guestSpecificCart.find(i => i.itemId === item.id && !i.isConfirmed);
+    const existing = guestSpecificCart.find(i => i.itemId === item.id && (i.status === 'elegido' || (!i.status && !i.isConfirmed)));
     setSelectedExtras(existing?.extras || []);
     setSelectedIngredientsToRemove(existing?.removedIngredients || []);
     setDragY(0);
@@ -177,13 +190,30 @@ const MenuView: React.FC<MenuViewProps> = ({
     if (editingCartItem) onCancelEdit();
   };
 
-  const handleIncrement = (e: React.MouseEvent, item: MenuItem) => {
+  const handleIncrement = async (e: React.MouseEvent, item: MenuItem) => {
     e.stopPropagation();
+    
+    // Si ya está agregando este item, no hacer nada
+    if (addingItems.has(item.id)) return;
+    
     const simpleItem = getSimpleCartItemForGuest(item.id);
     if (simpleItem) {
       onUpdateCartItem(simpleItem.id, { quantity: simpleItem.quantity + 1 });
     } else {
-      onAddToCart(item, selectedGuestId, [], []);
+      // Marcar como agregando
+      setAddingItems(prev => new Set(prev).add(item.id));
+      try {
+        await onAddToCart(item, selectedGuestId, [], []);
+      } catch (error) {
+        console.error("Error al agregar item:", error);
+      } finally {
+        // Remover del set de items agregando
+        setAddingItems(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(item.id);
+          return newSet;
+        });
+      }
     }
   };
 
@@ -204,44 +234,109 @@ const MenuView: React.FC<MenuViewProps> = ({
     handleClosePdp();
   };
 
-  const handleAddNew = () => {
+  const handleAddNew = async () => {
     if (!showDetail) return;
-    onAddToCart(showDetail, selectedGuestId, [...selectedExtras], [...selectedIngredientsToRemove]);
-    handleClosePdp();
+    
+    // Si ya está agregando este item, no hacer nada
+    if (addingItems.has(showDetail.id)) return;
+    
+    // Marcar como agregando
+    setAddingItems(prev => new Set(prev).add(showDetail.id));
+    try {
+      await onAddToCart(showDetail, selectedGuestId, [...selectedExtras], [...selectedIngredientsToRemove]);
+      handleClosePdp();
+    } catch (error) {
+      console.error("Error al agregar item:", error);
+    } finally {
+      // Remover del set de items agregando
+      setAddingItems(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(showDetail.id);
+        return newSet;
+      });
+    }
   };
 
+  // Inicializar guests originales cuando se abre el bottom sheet
+  useEffect(() => {
+    if (isManageGuestsOpen) {
+      setOriginalGuests(guests.map(g => ({ ...g })));
+      setPendingNewGuests([]);
+    }
+  }, [isManageGuestsOpen]);
+
   const handleUpdateGuestName = (id: string, newName: string) => {
+    // Solo actualizar estado local, no persistir aún
     setGuests(prev => prev.map(g => g.id === id ? { ...g, name: newName } : g));
   };
 
-  const handleStartEditing = (id: string, currentName: string) => {
-    setBackupNames(prev => ({ ...prev, [id]: currentName }));
-    handleUpdateGuestName(id, '');
+  const handleNameClick = (id: string) => {
+    // Al hacer click en el nombre, hacer foco en el input
     setTimeout(() => {
       inputRefs.current[id]?.focus();
+      inputRefs.current[id]?.select();
     }, 10);
   };
 
   const handleBlurName = (id: string, currentName: string) => {
+    // Si no hay texto, mantener el nombre original
     if (!currentName.trim()) {
-      handleUpdateGuestName(id, backupNames[id] || `Invitado ${id}`);
+      const originalGuest = originalGuests.find(g => g.id === id);
+      if (originalGuest) {
+        handleUpdateGuestName(id, originalGuest.name);
+      }
     }
   };
 
   const handleAddGuest = () => {
     if (!newGuestName.trim()) return;
-    if (guests.length >= tableCapacity) {
+    if (guests.length + pendingNewGuests.length >= tableCapacity) {
       alert(`La mesa tiene una capacidad máxima de ${tableCapacity} personas.`);
       return;
     }
     const newGuest: Guest = {
-      id: (guests.length + 1).toString(),
+      id: `temp-${Date.now()}`, // ID temporal para nuevos guests
       name: newGuestName.trim(),
       isHost: false
     };
     setGuests([...guests, newGuest]);
+    setPendingNewGuests([...pendingNewGuests, newGuest]);
     setNewGuestName('');
     onSelectGuest(newGuest.id);
+  };
+
+  // Detectar si hay cambios
+  const hasChanges = useMemo(() => {
+    // Verificar cambios en nombres
+    const nameChanged = guests.some(guest => {
+      const original = originalGuests.find(g => g.id === guest.id);
+      return original && original.name !== guest.name;
+    });
+    
+    // Verificar si hay nuevos guests
+    const hasNewGuests = pendingNewGuests.length > 0;
+    
+    return nameChanged || hasNewGuests;
+  }, [guests, originalGuests, pendingNewGuests]);
+
+  const handleSaveChanges = async () => {
+    if (!onSaveGuestChanges) return;
+    
+    // Separar guests existentes modificados y nuevos
+    const updatedGuests = guests.filter(g => {
+      const original = originalGuests.find(og => og.id === g.id);
+      return original && original.name !== g.name;
+    });
+    
+    const success = await onSaveGuestChanges(updatedGuests, pendingNewGuests);
+    
+    if (success) {
+      // Los guests ya están actualizados en App.tsx, simplemente cerrar
+      setPendingNewGuests([]);
+      setIsManageGuestsOpen(false);
+    } else {
+      alert('Error al guardar los cambios. Intenta nuevamente.');
+    }
   };
 
   const filteredItems = useMemo(() => {
@@ -313,15 +408,26 @@ const MenuView: React.FC<MenuViewProps> = ({
       </header>
 
       <nav className="flex gap-4 overflow-x-auto no-scrollbar p-4 bg-background-dark border-b border-white/5">
-        {categoriesList.map(cat => (
-          <button
-            key={cat}
-            onClick={() => onCategoryChange(cat)}
-            className={`px-4 py-2 rounded-full whitespace-nowrap text-sm font-bold transition-colors ${initialCategory === cat ? 'bg-primary text-background-dark' : 'bg-white/5 text-text-secondary'}`}
-          >
-            {cat} {categoryCounts[cat] > 0 && <span className="ml-1 opacity-60">({categoryCounts[cat]})</span>}
-          </button>
-        ))}
+        {categoriesList.map(cat => {
+          const isDestacados = cat === 'Destacados';
+          const isSelected = initialCategory === cat;
+          
+          return (
+            <button
+              key={cat}
+              onClick={() => onCategoryChange(cat)}
+              className={`px-4 py-2 rounded-full whitespace-nowrap text-sm font-bold transition-colors ${
+                isSelected 
+                  ? 'bg-primary text-background-dark' 
+                  : isDestacados 
+                    ? 'bg-primary/20 text-primary border border-primary/30' 
+                    : 'bg-white/5 text-text-secondary'
+              }`}
+            >
+              {cat} {categoryCounts[cat] > 0 && <span className="ml-1 opacity-60">({categoryCounts[cat]})</span>}
+            </button>
+          );
+        })}
       </nav>
 
       <main className="flex-1 overflow-y-auto p-4 pb-32 no-scrollbar">
@@ -351,7 +457,12 @@ const MenuView: React.FC<MenuViewProps> = ({
                   </div>
 
                   <div className="absolute right-4 top-4 flex flex-col items-center z-10">
-                    {totalQty > 0 ? (
+                    {addingItems.has(item.id) ? (
+                      // Mostrar spinner mientras se guarda
+                      <div className="size-12 rounded-2xl bg-primary/20 border border-primary/30 flex items-center justify-center">
+                        <div className="size-5 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                      </div>
+                    ) : totalQty > 0 ? (
                       <div 
                         className="flex flex-col items-center bg-background-dark/80 backdrop-blur-md border border-white/10 rounded-2xl overflow-hidden shadow-2xl"
                         onClick={(e) => e.stopPropagation()}
@@ -372,7 +483,7 @@ const MenuView: React.FC<MenuViewProps> = ({
                             if (simpleItem) {
                               handleDecrement(e, item.id);
                             } else {
-                              const anyItem = guestSpecificCart.find(i => i.itemId === item.id && !i.isConfirmed);
+                              const anyItem = guestSpecificCart.find(i => i.itemId === item.id && (i.status === 'elegido' || (!i.status && !i.isConfirmed)));
                               if (anyItem) onUpdateCartItem(anyItem.id, { quantity: anyItem.quantity - 1 });
                             }
                           }}
@@ -503,18 +614,34 @@ const MenuView: React.FC<MenuViewProps> = ({
                     Actualizar Plato
                   </button>
                   <button 
-                    onClick={handleAddNew} 
-                    className="w-full h-14 bg-white/5 border border-white/10 text-white rounded-2xl font-bold text-sm active:scale-[0.98] transition-all"
+                    onClick={handleAddNew}
+                    disabled={addingItems.has(showDetail.id)}
+                    className="w-full h-14 bg-white/5 border border-white/10 text-white rounded-2xl font-bold text-sm active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
-                    Agregar otro (+1)
+                    {addingItems.has(showDetail.id) ? (
+                      <>
+                        <div className="size-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        <span>Agregando...</span>
+                      </>
+                    ) : (
+                      'Agregar otro (+1)'
+                    )}
                   </button>
                 </div>
               ) : (
                 <button 
-                  onClick={handleAddNew} 
-                  className="w-full h-16 bg-primary text-background-dark rounded-2xl font-black text-lg shadow-xl shadow-primary/20 active:scale-[0.98] transition-all"
+                  onClick={handleAddNew}
+                  disabled={addingItems.has(showDetail.id)}
+                  className="w-full h-16 bg-primary text-background-dark rounded-2xl font-black text-lg shadow-xl shadow-primary/20 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
-                  Agregar al Pedido
+                  {addingItems.has(showDetail.id) ? (
+                    <>
+                      <div className="size-5 border-2 border-background-dark border-t-transparent rounded-full animate-spin"></div>
+                      <span>Agregando...</span>
+                    </>
+                  ) : (
+                    'Agregar al Pedido'
+                  )}
                 </button>
               )}
             </div>
@@ -548,15 +675,10 @@ const MenuView: React.FC<MenuViewProps> = ({
                          value={g.name} 
                          onChange={(e) => handleUpdateGuestName(g.id, e.target.value)}
                          onBlur={() => handleBlurName(g.id, g.name)}
-                         className="flex-1 bg-transparent border-none p-0 font-bold text-white focus:ring-0 focus:outline-none placeholder:opacity-30"
+                         onClick={(e) => e.stopPropagation()}
+                         className="flex-1 bg-transparent border-none p-0 font-bold text-white focus:ring-0 focus:outline-none placeholder:opacity-30 cursor-text"
                          placeholder="Nombre del comensal..."
                        />
-                       <button 
-                         onClick={() => handleStartEditing(g.id, g.name)}
-                         className="ml-2 size-8 rounded-lg bg-white/5 flex items-center justify-center text-text-secondary hover:text-primary transition-colors"
-                       >
-                         <span className="material-symbols-outlined text-[20px]">edit_note</span>
-                       </button>
                     </div>
                   </div>
                   {selectedGuestId === g.id && <span className="material-symbols-outlined text-primary ml-2">check_circle</span>}
@@ -574,7 +696,21 @@ const MenuView: React.FC<MenuViewProps> = ({
                 <p className="text-xs font-bold text-amber-500 uppercase">Se ha alcanzado la capacidad máxima de la mesa.</p>
               </div>
             )}
-            <button onClick={() => setIsManageGuestsOpen(false)} className="w-full h-14 bg-white/5 text-white/60 border border-white/10 rounded-2xl mt-6 font-bold">Cerrar</button>
+            {hasChanges ? (
+              <button 
+                onClick={handleSaveChanges} 
+                className="w-full h-14 bg-primary text-background-dark rounded-2xl mt-6 font-black text-lg shadow-xl shadow-primary/20 active:scale-[0.98] transition-all"
+              >
+                Guardar cambios
+              </button>
+            ) : (
+              <button 
+                onClick={() => setIsManageGuestsOpen(false)} 
+                className="w-full h-14 bg-white/5 text-white/60 border border-white/10 rounded-2xl mt-6 font-bold"
+              >
+                Cerrar
+              </button>
+            )}
           </div>
         </div>
       )}

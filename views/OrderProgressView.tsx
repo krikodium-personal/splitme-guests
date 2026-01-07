@@ -4,6 +4,45 @@ import { supabase } from '../lib/supabase';
 import { OrderItem, OrderBatch, MenuItem } from '../types';
 import { formatPrice } from './MenuView';
 
+// Función helper para calcular tiempo transcurrido desde created_at
+const getTimeAgo = (createdAt: string | undefined): string => {
+  if (!createdAt) return 'Pedido hace un momento';
+  
+  const now = new Date();
+  const created = new Date(createdAt);
+  const diffMs = now.getTime() - created.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+  
+  if (diffMins < 1) return 'Pedido hace un momento';
+  if (diffMins < 60) return `Pedido hace ${diffMins} ${diffMins === 1 ? 'minuto' : 'minutos'}`;
+  if (diffHours < 24) return `Pedido hace ${diffHours} ${diffHours === 1 ? 'hora' : 'horas'}`;
+  return `Pedido hace ${diffDays} ${diffDays === 1 ? 'día' : 'días'}`;
+};
+
+// Función helper para calcular tiempo de servicio (entre created_at y served_at)
+const getServiceTime = (createdAt: string | undefined, servedAt: string | undefined): string => {
+  if (!createdAt || !servedAt) return 'Pedido servido';
+  
+  const created = new Date(createdAt);
+  const served = new Date(servedAt);
+  const diffMs = served.getTime() - created.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMins / 60);
+  
+  if (diffMins < 1) return 'Pedido servido en menos de un minuto';
+  if (diffMins < 60) return `Pedido servido en ${diffMins} ${diffMins === 1 ? 'minuto' : 'minutos'}`;
+  if (diffHours < 24) {
+    const remainingMins = diffMins % 60;
+    if (remainingMins === 0) {
+      return `Pedido servido en ${diffHours} ${diffHours === 1 ? 'hora' : 'horas'}`;
+    }
+    return `Pedido servido en ${diffHours} ${diffHours === 1 ? 'hora' : 'horas'} y ${remainingMins} ${remainingMins === 1 ? 'minuto' : 'minutos'}`;
+  }
+  return 'Pedido servido';
+};
+
 interface OrderProgressViewProps {
   cart: OrderItem[];
   batches: OrderBatch[]; // Recibidos como prop inicial
@@ -22,6 +61,7 @@ const OrderProgressView: React.FC<OrderProgressViewProps> = ({
   const [orderStatus, setOrderStatus] = useState<string>('ABIERTO');
   const [isFlickering, setIsFlickering] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
+  const [currentTime, setCurrentTime] = useState(new Date()); // Para actualizar el tiempo cada minuto
   
   const orderId = activeOrderId;
   const orderChannelRef = useRef<any>(null);
@@ -37,11 +77,12 @@ const OrderProgressView: React.FC<OrderProgressViewProps> = ({
       if (orderData) setOrderStatus(orderData.status.toUpperCase());
 
       // Traer estados actuales de todos los lotes (Fuente de Verdad Directa)
+      // Incluir served_at para calcular el tiempo de servicio
       const { data: batchesData } = await supabase
         .from('order_batches')
-        .select('*')
+        .select('*, served_at')
         .eq('order_id', orderId)
-        .order('batch_number', { ascending: true });
+        .order('batch_number', { ascending: false }); // Orden descendente: último batch arriba
       
       if (batchesData) {
         setLocalBatches(batchesData);
@@ -96,6 +137,15 @@ const OrderProgressView: React.FC<OrderProgressViewProps> = ({
     };
   }, [orderId, onRedirectToFeedback]);
 
+  // Actualizar el tiempo cada minuto para refrescar los indicadores "hace X minutos"
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 60000); // Actualizar cada minuto
+
+    return () => clearInterval(interval);
+  }, []);
+
   const getStatusConfig = (status: string) => {
     const s = status.toUpperCase();
     switch (s) {
@@ -106,6 +156,8 @@ const OrderProgressView: React.FC<OrderProgressViewProps> = ({
       case 'EN PREPARACIÓN': 
       case 'PREPARANDO':
         return { icon: 'skillet', color: 'text-orange-500', bg: 'bg-orange-500/10', label: 'En cocina' };
+      case 'ENVIADO':
+        return { icon: 'send', color: 'text-blue-400', bg: 'bg-blue-400/10', label: 'Enviado' };
       default: 
         return { icon: 'schedule', color: 'text-white/40', bg: 'bg-white/5', label: 'En espera' };
     }
@@ -113,7 +165,12 @@ const OrderProgressView: React.FC<OrderProgressViewProps> = ({
 
   // Agrupar items por batch usando el cart (que ya contiene los items de la DB)
   const groupedItems = useMemo(() => {
-    const confirmedItems = cart.filter(i => i.isConfirmed);
+    // Filtrar solo items con status='pedido' (enviados a cocina)
+    const confirmedItems = cart.filter(i => i.status === 'pedido' || (!i.status && i.isConfirmed));
+    console.log("[OrderProgressView] Total items en cart:", cart.length);
+    console.log("[OrderProgressView] Items confirmados (status='pedido'):", confirmedItems.length);
+    console.log("[OrderProgressView] Items con batch_id:", confirmedItems.filter(i => i.batch_id).length);
+    
     const groups: Record<string, OrderItem[]> = {};
     
     confirmedItems.forEach(item => {
@@ -122,6 +179,7 @@ const OrderProgressView: React.FC<OrderProgressViewProps> = ({
       groups[bId].push(item);
     });
     
+    console.log("[OrderProgressView] Grupos por batch:", Object.keys(groups).length, "batches");
     return groups;
   }, [cart]);
 
@@ -144,7 +202,7 @@ const OrderProgressView: React.FC<OrderProgressViewProps> = ({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 pb-40 no-scrollbar">
+      <div className="flex-1 overflow-y-auto p-4 pb-64 no-scrollbar">
         {localBatches.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center p-8">
             <div className="size-20 bg-white/5 rounded-full flex items-center justify-center mb-6">
@@ -155,23 +213,50 @@ const OrderProgressView: React.FC<OrderProgressViewProps> = ({
           </div>
         ) : (
           <div className="space-y-8">
-            {localBatches.map((batch, index) => {
-              const status = getStatusConfig(batch.status);
-              const items = groupedItems[batch.id] || [];
-              const isReady = batch.status.toUpperCase() === 'LISTO';
+            {localBatches
+              .filter(batch => {
+                // No mostrar batches con status='CREADO' que estén vacíos (sin productos)
+                const items = groupedItems[batch.id] || [];
+                const batchStatus = batch.status.toUpperCase();
+                if ((batchStatus === 'CREADO' || batchStatus === 'ENVIADO') && items.length === 0) {
+                  return false;
+                }
+                // Solo mostrar batches que ya fueron enviados (ENVIADO, PREPARANDO, LISTO, SERVIDO)
+                if (batchStatus === 'CREADO') {
+                  return false;
+                }
+                return true;
+              })
+              .sort((a, b) => b.batch_number - a.batch_number) // Ordenar descendente: último batch arriba
+              .map((batch, index) => {
+                const batchStatus = batch.status?.toUpperCase() || '';
+                const status = getStatusConfig(batch.status);
+                const items = groupedItems[batch.id] || [];
+                const isReady = batchStatus === 'LISTO';
               
               return (
                 <div key={batch.id} className="animate-fade-in-up" style={{ animationDelay: `${index * 0.1}s` }}>
-                  <div className="flex items-center justify-between mb-4 px-2">
-                    <div className="flex items-center gap-3">
-                      <div className={`size-8 rounded-lg ${status.bg} flex items-center justify-center`}>
-                        <span className={`material-symbols-outlined text-sm ${status.color}`}>{status.icon}</span>
+                  <div className="mb-4 px-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-3">
+                        <div className={`size-8 rounded-lg ${status.bg} flex items-center justify-center`}>
+                          <span className={`material-symbols-outlined text-sm ${status.color}`}>{status.icon}</span>
+                        </div>
+                        <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/60">Envío #{batch.batch_number}</span>
                       </div>
-                      <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/60">Envío #{batch.batch_number}</span>
+                      <span className={`text-[10px] font-black uppercase px-2 py-1 rounded-md border ${status.color} ${status.bg} border-current`}>
+                        {status.label}
+                      </span>
                     </div>
-                    <span className={`text-[10px] font-black uppercase px-2 py-1 rounded-md border ${status.color} ${status.bg} border-current`}>
-                      {status.label}
-                    </span>
+                    <p className="text-[9px] text-white/40 font-medium ml-11">
+                      {(() => {
+                        if (batchStatus === 'SERVIDO') {
+                          console.log("[OrderProgressView] Batch SERVIDO #", batch.batch_number, "created_at:", batch.created_at, "served_at:", batch.served_at);
+                          return getServiceTime(batch.created_at, batch.served_at);
+                        }
+                        return getTimeAgo(batch.created_at);
+                      })()}
+                    </p>
                   </div>
 
                   {isReady && (

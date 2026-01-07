@@ -266,7 +266,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
                 <div key={share.id} className="bg-surface-dark border border-white/5 rounded-2xl p-5 flex flex-col gap-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <div className={`size-12 rounded-full flex items-center justify-center font-black text-sm border-2 border-primary/20 ${getGuestColor(share.id)}`}>
+                      <div className={`size-12 rounded-full flex items-center justify-center font-black text-base border-2 border-primary/20 ${getGuestColor(share.id)}`}>
                         {getInitials(share.name)}
                       </div>
                       <div className="flex flex-col">
@@ -279,7 +279,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
                     </div>
                   </div>
 
-                  <div className="bg-black/20 rounded-xl p-3 space-y-2 border border-white/5">
+                  <div className="bg-black/20 rounded-[8px] p-3 space-y-2 border border-white/5">
                     {share.items && share.items.length > 0 ? (
                       share.items.map((item: any, idx: number) => (
                         <div key={idx} className="flex justify-between items-center text-[11px]">

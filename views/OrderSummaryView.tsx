@@ -1,7 +1,46 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { Guest, OrderItem, MenuItem, OrderBatch } from '../types';
 import { formatPrice } from './MenuView';
 import { getInitials, getGuestColor } from './GuestInfoView';
+
+// Función helper para calcular tiempo transcurrido desde created_at
+const getTimeAgo = (createdAt: string | undefined): string => {
+  if (!createdAt) return 'Pedido hace un momento';
+  
+  const now = new Date();
+  const created = new Date(createdAt);
+  const diffMs = now.getTime() - created.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+  
+  if (diffMins < 1) return 'Pedido hace un momento';
+  if (diffMins < 60) return `Pedido hace ${diffMins} ${diffMins === 1 ? 'minuto' : 'minutos'}`;
+  if (diffHours < 24) return `Pedido hace ${diffHours} ${diffHours === 1 ? 'hora' : 'horas'}`;
+  return `Pedido hace ${diffDays} ${diffDays === 1 ? 'día' : 'días'}`;
+};
+
+// Función helper para calcular tiempo de servicio (entre created_at y served_at)
+const getServiceTime = (createdAt: string | undefined, servedAt: string | undefined): string => {
+  if (!createdAt || !servedAt) return 'Pedido servido';
+  
+  const created = new Date(createdAt);
+  const served = new Date(servedAt);
+  const diffMs = served.getTime() - created.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMins / 60);
+  
+  if (diffMins < 1) return 'Pedido servido en menos de un minuto';
+  if (diffMins < 60) return `Pedido servido en ${diffMins} ${diffMins === 1 ? 'minuto' : 'minutos'}`;
+  if (diffHours < 24) {
+    const remainingMins = diffMins % 60;
+    if (remainingMins === 0) {
+      return `Pedido servido en ${diffHours} ${diffHours === 1 ? 'hora' : 'horas'}`;
+    }
+    return `Pedido servido en ${diffHours} ${diffHours === 1 ? 'hora' : 'horas'} y ${remainingMins} ${remainingMins === 1 ? 'minuto' : 'minutos'}`;
+  }
+  return 'Pedido servido';
+};
 
 interface OrderSummaryViewProps {
   guests: Guest[];
@@ -23,8 +62,31 @@ interface OrderSummaryViewProps {
 const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({ 
   guests, cart, batches, onBack, onSend, onPay, isSending = false, onUpdateQuantity, menuItems
 }) => {
-  const pendingItems = cart.filter(i => !i.isConfirmed);
-  const confirmedItems = cart.filter(i => i.isConfirmed);
+  const [currentTime, setCurrentTime] = useState(new Date()); // Para actualizar el tiempo cada minuto
+
+  // Actualizar el tiempo cada minuto para refrescar los indicadores "hace X minutos"
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 60000); // Actualizar cada minuto
+
+    return () => clearInterval(interval);
+  }, []);
+  // Encontrar el batch con status='CREADO' (batch activo que aún no se ha enviado)
+  const createdBatch = batches.find(b => b.status === 'CREADO');
+  
+  // Filtrar items por status: 'elegido' = pendientes, 'pedido' = confirmados/enviados
+  // IMPORTANTE: Los items pendientes SOLO son los que pertenecen al batch con status='CREADO'
+  const pendingItems = cart.filter(i => {
+    const isElegido = i.status === 'elegido' || (!i.status && !i.isConfirmed);
+    // Solo incluir si pertenece al batch con status='CREADO' (si existe)
+    if (createdBatch) {
+      return isElegido && i.batch_id === createdBatch.id;
+    }
+    // Si no hay batch con status='CREADO', no hay items pendientes
+    return false;
+  });
+  const confirmedItems = cart.filter(i => i.status === 'pedido' || (!i.status && i.isConfirmed));
 
   const grandTotal = cart.reduce((sum, item) => {
     const menuItem = menuItems.find(m => m.id === item.itemId);
@@ -38,26 +100,44 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
 
   // Agrupación dinámica por Lote (Batch) usando el estado real de DB
   const confirmedByBatch = useMemo(() => {
-    return batches
+    console.log("[OrderSummaryView] Batches recibidos:", batches.map(b => ({ id: b.id, batch_number: b.batch_number, status: b.status })));
+    const result = batches
       .map(batch => ({
         ...batch,
         items: confirmedItems.filter(i => i.batch_id === batch.id)
       }))
-      .filter(b => b.items.length > 0)
+      .filter(b => {
+        // Solo incluir batches que tengan items confirmados y que NO sean 'CREADO'
+        const hasItems = b.items.length > 0;
+        const isNotCreated = b.status?.toUpperCase() !== 'CREADO';
+        console.log("[OrderSummaryView] Batch #", b.batch_number, "status:", b.status, "hasItems:", hasItems, "isNotCreated:", isNotCreated);
+        return hasItems && isNotCreated;
+      })
       .reverse(); // Recientes arriba
+    console.log("[OrderSummaryView] confirmedByBatch result:", result.map(b => ({ batch_number: b.batch_number, status: b.status, itemsCount: b.items.length })));
+    return result;
   }, [batches, confirmedItems]);
 
   const getStatusConfig = (status: string) => {
-    const s = (status || 'RECIBIDO').toUpperCase();
+    // Normalizar el status: trim y uppercase
+    const s = (status || '').trim().toUpperCase();
+    console.log("[OrderSummaryView] getStatusConfig recibió:", status, "normalizado a:", s);
+    
     switch (s) {
       case 'SERVIDO': 
         return { icon: 'check_circle', color: 'text-primary', label: 'Servido', bg: 'bg-primary/5' };
       case 'LISTO': 
-        return { icon: 'notifications_active', color: 'text-primary', label: '¡Llegando!', bg: 'bg-primary/10 animate-pulse' };
+        return { icon: 'notifications_active', color: 'text-blue-400', label: '¡Llegando!', bg: 'bg-blue-400/10 animate-pulse' };
       case 'EN PREPARACIÓN': 
       case 'PREPARANDO':
         return { icon: 'skillet', color: 'text-orange-400', label: 'En cocina', bg: 'bg-orange-400/5' };
+      case 'ENVIADO':
+        return { icon: 'send', color: 'text-blue-400', label: 'Enviado', bg: 'bg-blue-400/5' };
+      case 'CREADO':
+        // No debería aparecer aquí porque se filtra antes, pero por si acaso
+        return { icon: 'schedule', color: 'text-white/40', label: 'En espera', bg: 'bg-white/5' };
       default: 
+        console.warn("[OrderSummaryView] Status desconocido:", s, "usando default");
         return { icon: 'schedule', color: 'text-white/40', label: 'Recibido', bg: 'bg-white/5' };
     }
   };
@@ -72,7 +152,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
         <div className="size-10"></div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 pb-48 no-scrollbar">
+      <div className="flex-1 overflow-y-auto p-4 pb-64 no-scrollbar">
         {/* SECCIÓN: PENDIENTES */}
         {pendingItems.length > 0 && (
           <div className="mb-10">
@@ -133,15 +213,26 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
           <div className="space-y-8 animate-fade-in">
             <h3 className="text-text-secondary text-[10px] font-black uppercase tracking-[0.3em] pl-2">Pedidos Realizados</h3>
             {confirmedByBatch.map((batch) => {
-              const status = getStatusConfig(batch.status);
+              // Usar el status del batch directamente, asegurándonos de que no sea undefined
+              const batchStatus = (batch.status || '').trim().toUpperCase();
+              const status = getStatusConfig(batchStatus);
+              console.log("[OrderSummaryView] Batch #", batch.batch_number, "raw status:", batch.status, "normalized:", batchStatus, "config:", status);
               return (
                 <div key={batch.id} className="space-y-3">
-                  <div className="flex items-center justify-between px-2">
-                    <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em]">Envío #{batch.batch_number}</span>
-                    <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full border border-current ${status.color} ${status.bg}`}>
-                       <span className="material-symbols-outlined text-[14px] font-black">{status.icon}</span>
-                       <span className="text-[9px] font-black uppercase tracking-widest">{status.label}</span>
+                  <div className="px-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em]">Envío #{batch.batch_number}</span>
+                      <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full border border-current ${status.color} ${status.bg}`}>
+                         <span className="material-symbols-outlined text-[14px] font-black">{status.icon}</span>
+                         <span className="text-[9px] font-black uppercase tracking-widest">{status.label}</span>
+                      </div>
                     </div>
+                    <p className="text-[9px] text-white/40 font-medium">
+                      {batchStatus === 'SERVIDO' 
+                        ? getServiceTime(batch.created_at, batch.served_at)
+                        : getTimeAgo(batch.created_at)
+                      }
+                    </p>
                   </div>
 
                   <div className="bg-surface-dark/50 rounded-3xl border border-white/5 overflow-hidden shadow-sm">

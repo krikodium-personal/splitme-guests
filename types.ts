@@ -7,7 +7,10 @@ export type AppView =
   | 'ORDER_SUMMARY' 
   | 'PROGRESS' 
   | 'SPLIT_BILL' 
+  | 'GUEST_SELECTION'
   | 'INDIVIDUAL_SHARE' 
+  | 'TRANSFER_PAYMENT'
+  | 'CASH_PAYMENT'
   | 'CHECKOUT' 
   | 'FEEDBACK' 
   | 'CONFIRMATION';
@@ -19,6 +22,10 @@ export interface Guest {
   avatar?: string;
   status?: string;
   table_id?: string;
+  individualAmount?: number | null;
+  paid?: boolean;
+  payment_id?: string | null;
+  payment_method?: string | null;
 }
 
 export interface MenuItem {
@@ -54,6 +61,7 @@ export interface OrderBatch {
   batch_number: number;
   status: string;
   created_at?: string;
+  served_at?: string;
 }
 
 export interface OrderItem {
@@ -64,8 +72,9 @@ export interface OrderItem {
   extras?: string[];
   removedIngredients?: string[];
   order_id?: string;
-  batch_id?: string;
+  batch_id?: string | null;
   isConfirmed?: boolean;
+  status?: 'elegido' | 'pedido'; // Estado del item: elegido (sin enviar) o pedido (enviado a cocina)
 }
 
 export interface BillSplit {

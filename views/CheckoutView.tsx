@@ -6,15 +6,16 @@ import { formatPrice } from './MenuView';
 
 interface CheckoutViewProps {
   onBack: () => void;
-  onConfirm: () => void;
+  onConfirm: (guestId?: string) => void;
   cart: OrderItem[];
   guests?: Guest[];
   menuItems: MenuItem[];
   tableNumber?: number;
   splitData: any[] | null;
+  activeOrderId?: string | null;
 }
 
-const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, guests = [], menuItems, tableNumber, splitData }) => {
+const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, guests = [], menuItems, tableNumber, splitData, activeOrderId }) => {
   const [showQr, setShowQr] = useState(false);
 
   // Total global de la mesa (precios ya incluyen impuestos)
@@ -23,28 +24,58 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, gu
     return sum + (menuItem ? menuItem.price * item.quantity : 0);
   }, 0), [cart, menuItems]);
 
+  // Identificar al usuario actual (el host o primer guest)
+  const currentUserGuest = useMemo(() => {
+    // Buscar el host primero
+    const host = guests.find(g => g.isHost);
+    if (host) return host;
+    // Si no hay host, usar el primer guest
+    return guests.length > 0 ? guests[0] : null;
+  }, [guests]);
+
+  const currentUserId = currentUserGuest?.id || '';
+
+  // Función para formatear el nombre del método de pago
+  const getPaymentMethodLabel = (method: string | null | undefined): string => {
+    if (!method) return '';
+    switch (method.toLowerCase()) {
+      case 'mercadopago':
+        return 'Mercado Pago';
+      case 'transferencia':
+        return 'Transferencia';
+      case 'efectivo':
+        return 'Efectivo';
+      default:
+        return method;
+    }
+  };
+
   // Mapeo de comensales con sus montos exactos y estado inicial "Impagado"
   const dinerShares = useMemo(() => {
     if (splitData) {
-      return splitData.map((share) => ({
-        ...share,
-        status: share.id === '1' ? 'PENDIENTE' : 'IMPAGADO',
-        amount: share.total 
-      }));
+      return splitData.map((share) => {
+        const guest = guests.find(g => g.id === share.id);
+        return {
+          ...share,
+          ...guest,
+          status: share.id === currentUserId ? 'PENDIENTE' : 'IMPAGADO',
+          amount: share.total 
+        };
+      });
     }
     
     const perGuest = grandTotal / (guests.length || 1);
     return guests.map((guest) => ({
       ...guest,
       amount: perGuest,
-      status: guest.id === '1' ? 'PENDIENTE' : 'IMPAGADO'
+      status: guest.id === currentUserId ? 'PENDIENTE' : 'IMPAGADO'
     }));
-  }, [guests, grandTotal, splitData]);
+  }, [guests, grandTotal, splitData, currentUserId]);
 
   const myShare = useMemo(() => {
-    const me = dinerShares.find(d => d.id === '1');
+    const me = dinerShares.find(d => d.id === currentUserId);
     return me ? me.amount : (grandTotal / (guests.length || 1));
-  }, [dinerShares, grandTotal, guests.length]);
+  }, [dinerShares, grandTotal, guests.length, currentUserId]);
 
   // Se asegura una URL absoluta válida y limpia
   const shareUrl = useMemo(() => {
@@ -88,8 +119,11 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, gu
   };
 
   const handleSharePayment = async (guestName: string, amount: number, guestId: string) => {
-    // Crear URL con parámetros para identificar el comensal
-    const shareUrlWithGuest = `${shareUrl.split('?')[0]}?guestId=${guestId}`;
+    // Crear URL con parámetros para identificar el comensal y la orden
+    const orderIdToUse = activeOrderId || cart[0]?.order_id || '';
+    const shareUrlWithGuest = orderIdToUse 
+      ? `${shareUrl.split('?')[0]}?orderId=${orderIdToUse}&guestId=${guestId}`
+      : `${shareUrl.split('?')[0]}?guestId=${guestId}`;
     const text = `¡Hola ${guestName}! Esta es tu parte de la cuenta en SplitMe: $${formatPrice(amount)}. Puedes pagar aquí: ${shareUrlWithGuest}`;
     
     if (navigator.share) {
@@ -158,11 +192,20 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, gu
           {showQr && (
             <div className="flex flex-col items-center animate-fade-in pb-2">
               <div className="bg-white p-4 rounded-3xl shadow-2xl">
-                <img 
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(shareUrl)}&color=102217`} 
-                  alt="Mesa QR" 
-                  className="w-40 h-40"
-                />
+                {(() => {
+                  // Generar URL solo con orderId (sin guestId) para que el usuario seleccione su nombre
+                  const orderIdToUse = activeOrderId || cart[0]?.order_id || '';
+                  const qrUrl = orderIdToUse 
+                    ? `${shareUrl.split('?')[0]}?orderId=${orderIdToUse}`
+                    : shareUrl.split('?')[0];
+                  return (
+                    <img 
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrUrl)}&color=102217`} 
+                      alt="Mesa QR" 
+                      className="w-40 h-40"
+                    />
+                  );
+                })()}
               </div>
               <p className="text-[10px] font-black text-primary uppercase tracking-[0.2em] mt-4">Escanea para pagar tu parte</p>
             </div>
@@ -179,7 +222,7 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, gu
 
       <div className="flex-1 overflow-y-auto no-scrollbar px-4 space-y-3 pb-8">
         {dinerShares.map((diner) => {
-          const isMe = diner.id === '1';
+          const isMe = diner.id === currentUserId;
           const isPaid = diner.status === 'PAGADO';
           
           return (
@@ -195,6 +238,11 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, gu
                 <p className="text-xs font-black uppercase tracking-widest text-[#9db9a8]">
                   Debe ${formatPrice(diner.amount)}
                 </p>
+                {!isMe && diner.payment_method && (
+                  <p className="text-[10px] font-medium text-primary mt-1">
+                    {getPaymentMethodLabel(diner.payment_method)}
+                  </p>
+                )}
               </div>
               
               {!isMe && (
@@ -212,7 +260,7 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, gu
 
       <div className="fixed bottom-0 left-0 w-full bg-background-dark border-t border-[#2a3c32] p-4 flex flex-col gap-3 shadow-[0_-10px_40px_rgba(0,0,0,0.5)] z-50">
         <button 
-          onClick={onConfirm} 
+          onClick={() => onConfirm(currentUserId)} 
           className="w-full bg-primary hover:bg-green-400 active:scale-[0.98] text-background-dark font-black text-lg h-16 rounded-2xl flex items-center justify-between px-8 transition-all shadow-xl shadow-primary/20 group"
         >
           <div className="flex flex-col items-start leading-none">
@@ -222,7 +270,7 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, gu
           <span className="material-symbols-outlined font-black group-hover:translate-x-1 transition-transform">arrow_forward</span>
         </button>
         <button 
-          onClick={onConfirm} 
+          onClick={() => onConfirm(currentUserId)} 
           className="w-full flex items-center justify-center text-[#9db9a8] font-bold text-[10px] uppercase tracking-[0.2em] py-2 hover:text-white transition-colors"
         >
           O pagar la cuenta completa (${formatPrice(grandTotal)})

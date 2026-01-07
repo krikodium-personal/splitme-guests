@@ -6,7 +6,7 @@ interface GuestInfoViewProps {
   guests: Guest[];
   setGuests: React.Dispatch<React.SetStateAction<Guest[]>>;
   onBack: () => void;
-  onNext: () => void;
+  onNext: (finalGuests: Guest[]) => void;
   table?: any;
   waiter?: any;
   restaurant?: any;
@@ -101,7 +101,7 @@ const GuestInfoView: React.FC<GuestInfoViewProps> = ({ guests, setGuests, onBack
       isHost: i === 0
     }));
     setGuests(finalGuests);
-    onNext();
+    onNext(finalGuests);
   };
 
   return (

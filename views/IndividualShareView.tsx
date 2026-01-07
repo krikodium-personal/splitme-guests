@@ -1,18 +1,23 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Guest, OrderItem, MenuItem } from '../types';
 import { formatPrice } from './MenuView';
+import { supabase } from '../lib/supabase';
 
 interface IndividualShareViewProps {
   onBack: () => void;
   onPay: (paymentData: { amount: number, method: string, tip: number }) => Promise<void>;
+  onShowTransfer?: (amount: number) => void;
+  onShowCash?: (amount: number, guestName: string) => void;
+  onUpdatePaymentMethod?: (guestId: string, method: 'mercadopago' | 'transfer' | 'cash') => Promise<boolean>;
   cart: OrderItem[];
   menuItems: MenuItem[];
   splitData: any[] | null;
   restaurant?: any;
+  guests?: Guest[];
 }
 
-const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay, cart, menuItems, splitData, restaurant }) => {
+const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay, onShowTransfer, onShowCash, onUpdatePaymentMethod, cart, menuItems, splitData, restaurant, guests = [] }) => {
   const [tipPercentage, setTipPercentage] = useState<number>(15);
   const [paymentMethod, setPaymentMethod] = useState<'mercadopago' | 'transfer' | 'cash'>('mercadopago');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -32,27 +37,82 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
     return cart.filter(item => item.guestId === targetGuestId);
   }, [cart, targetGuestId]);
 
+  // Obtener información del comensal
+  const targetGuest = useMemo(() => {
+    return guests.find(g => g.id === targetGuestId);
+  }, [guests, targetGuestId]);
+
+  const guestName = targetGuest?.name || 'Comensal';
+
+  // Calcular subtotal: prioridad individualAmount desde BD, luego splitData, luego calcular desde items
   const subtotal = useMemo(() => {
-    return myDataFromSplit?.total || 0;
-  }, [myDataFromSplit]);
+    // Primero verificar si el guest tiene individualAmount guardado en BD
+    if (targetGuest?.individualAmount !== null && targetGuest?.individualAmount !== undefined) {
+      return targetGuest.individualAmount;
+    }
+    
+    // Si hay splitData, usar los totales ya calculados
+    if (myDataFromSplit?.total) {
+      return myDataFromSplit.total;
+    }
+    
+    // Si no hay splitData ni individualAmount, calcular desde los items del comensal
+    return myCartItems.reduce((sum, item) => {
+      const menuItem = menuItems.find(m => m.id === item.itemId);
+      return sum + (menuItem ? Number(menuItem.price) * item.quantity : 0);
+    }, 0);
+  }, [targetGuest, myDataFromSplit, myCartItems, menuItems]);
 
   const tipAmount = useMemo(() => (subtotal * tipPercentage) / 100, [subtotal, tipPercentage]);
   const finalTotal = useMemo(() => subtotal + tipAmount, [subtotal, tipAmount]);
 
   const handleProcessPayment = async () => {
     if (isProcessing) return;
-    setIsProcessing(true);
-    try {
-      await onPay({
-        amount: Number(finalTotal.toFixed(2)),
-        method: paymentMethod,
-        tip: Number(tipAmount.toFixed(2))
-      });
-    } catch (error) {
-      console.error("Error al iniciar pago:", error);
-      alert("Hubo un error al conectar con Mercado Pago. Intenta nuevamente.");
-    } finally {
-      setIsProcessing(false);
+    
+    // GUARDAR el método de pago cuando el usuario hace click en el CTA
+    if (onUpdatePaymentMethod) {
+      await onUpdatePaymentMethod(targetGuestId, paymentMethod);
+    }
+    
+    // Si es transferencia, mostrar vista de transferencia con el monto final
+    if (paymentMethod === 'transfer' && onShowTransfer) {
+      onShowTransfer(Number(finalTotal.toFixed(2)));
+      return;
+    }
+    
+    // Si es efectivo, mostrar vista de efectivo con el monto final y nombre del comensal
+    if (paymentMethod === 'cash' && onShowCash) {
+      onShowCash(Number(finalTotal.toFixed(2)), guestName);
+      return;
+    }
+    
+    // Para Mercado Pago, procesar el pago normalmente
+    if (paymentMethod === 'mercadopago') {
+      setIsProcessing(true);
+      try {
+        await onPay({
+          amount: Number(finalTotal.toFixed(2)),
+          method: paymentMethod,
+          tip: Number(tipAmount.toFixed(2))
+        });
+      } catch (error) {
+        console.error("Error al iniciar pago:", error);
+        alert("Hubo un error al conectar con Mercado Pago. Intenta nuevamente.");
+      } finally {
+        setIsProcessing(false);
+      }
+    }
+  };
+
+  // Obtener el texto del CTA según el método de pago
+  const getCTAButtonText = () => {
+    switch (paymentMethod) {
+      case 'transfer':
+        return 'Ver instrucciones';
+      case 'cash':
+        return 'Avisar al mesero';
+      default:
+        return 'Pagar Ahora';
     }
   };
 
@@ -70,7 +130,7 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
         <button onClick={onBack} disabled={isProcessing} className="flex size-10 items-center justify-center rounded-full active:bg-white/10 transition-colors">
           <span className="material-symbols-outlined text-[24px]">arrow_back</span>
         </button>
-        <h1 className="text-base font-bold leading-tight">Tu Parte</h1>
+        <h1 className="text-base font-bold leading-tight">{guestName}</h1>
         <div className="size-10"></div>
       </header>
 
@@ -141,7 +201,7 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
             >
               <div className="flex items-center justify-between">
                 <div className="bg-white p-2 rounded-xl">
-                   <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/c7/Mercado_Pago_logo.svg/1024px-Mercado_Pago_logo.svg.png" className="h-4 object-contain" alt="MP" />
+                   <img src="/mercadopago-icon.png" className="h-4 object-contain" alt="MP" />
                 </div>
                 {paymentMethod === 'mercadopago' && <span className="material-symbols-outlined text-primary font-black filled">check_circle</span>}
               </div>
@@ -169,6 +229,25 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
                 <p className="text-[9px] font-bold text-text-secondary uppercase tracking-widest">Alias / CBU</p>
               </div>
             </button>
+
+            <button 
+              onClick={() => setPaymentMethod('cash')}
+              disabled={isProcessing}
+              className={`relative flex min-w-[200px] flex-col gap-5 rounded-3xl p-6 border-2 transition-all cursor-pointer ${
+                paymentMethod === 'cash' ? 'bg-surface-dark border-primary' : 'bg-surface-dark border-transparent opacity-40 hover:opacity-70'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <div className="bg-white/10 p-2 rounded-xl">
+                   <span className="material-symbols-outlined text-white text-2xl">payments</span>
+                </div>
+                {paymentMethod === 'cash' && <span className="material-symbols-outlined text-primary font-black filled">check_circle</span>}
+              </div>
+              <div className="text-left">
+                <p className="font-black text-sm leading-none mb-1 uppercase tracking-tight">Efectivo</p>
+                <p className="text-[9px] font-bold text-text-secondary uppercase tracking-widest">Pagar al mesero</p>
+              </div>
+            </button>
           </div>
         </section>
       </div>
@@ -188,7 +267,7 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
             </div>
           ) : (
             <>
-              <span className="text-xl font-black text-background-dark uppercase tracking-tighter">Pagar Ahora</span>
+              <span className="text-xl font-black text-background-dark uppercase tracking-tighter">{getCTAButtonText()}</span>
               <span className="material-symbols-outlined text-background-dark font-black group-hover:translate-x-1 transition-transform">arrow_forward</span>
             </>
           )}
