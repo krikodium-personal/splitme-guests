@@ -274,33 +274,25 @@ const App: React.FC = () => {
       setMenuItems(itemRes.data || []);
       
       // PASO 3: Verificar orden activa
-      // Si la mesa está OCUPADA, buscar la orden más reciente (excluyendo PAGADO y CANCELADO)
-      // Si la mesa no está OCUPADA, solo buscar órdenes ABIERTAS
+      // Mientras el status de la orden esté en ABIERTO, la orden se tiene que seguir mostrando
+      // Buscar órdenes que no estén PAGADO o CANCELADO (incluye ABIERTO y otros estados)
       let activeTableOrder;
       
-      if (tableData.status === 'OCUPADA') {
-        // Mesa ocupada: buscar la orden más reciente que no esté PAGADO o CANCELADO
-        const { data: orders } = await supabase
-          .from('orders')
-          .select('id, status')
-          .eq('table_id', tableData.id)
-          .order('created_at', { ascending: false });
-        
-        // Filtrar en el código para excluir PAGADO y CANCELADO
-        activeTableOrder = orders?.find(order => 
-          order.status !== 'PAGADO' && order.status !== 'CANCELADO'
-        );
+      const { data: orders } = await supabase
+        .from('orders')
+        .select('id, status, table_id')
+        .eq('table_id', tableData.id)
+        .order('created_at', { ascending: false });
+      
+      // Filtrar para excluir PAGADO y CANCELADO (incluye ABIERTO y otros estados activos)
+      activeTableOrder = orders?.find(order => 
+        order.status !== 'PAGADO' && order.status !== 'CANCELADO'
+      );
+      
+      if (activeTableOrder) {
+        console.log("[DineSplit] Orden activa encontrada:", activeTableOrder.id, "status:", activeTableOrder.status);
       } else {
-        // Mesa no ocupada: solo buscar órdenes ABIERTAS
-        const { data: openOrder } = await supabase
-          .from('orders')
-          .select('id, status')
-          .eq('table_id', tableData.id)
-          .eq('status', 'ABIERTO')
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        activeTableOrder = openOrder;
+        console.log("[DineSplit] No se encontró orden activa para la mesa:", tableData.id);
       }
 
       if (activeTableOrder) {
@@ -431,18 +423,90 @@ const App: React.FC = () => {
   const fetchOrderGuests = useCallback(async (orderId: string) => {
     if (!supabase) return;
     
-    const { data: orderGuests, error } = await supabase
+    console.log("[DineSplit] fetchOrderGuests - Buscando guests para order_id:", orderId);
+    
+    // Intentar primero sin order para ver si el problema es el order
+    let { data: orderGuests, error } = await supabase
       .from('order_guests')
       .select('*')
-      .eq('order_id', orderId)
-      .order('position', { ascending: true });
+      .eq('order_id', orderId);
+    
+    if (error) {
+      console.error("[DineSplit] Error en query sin order:", error);
+      // Intentar con order
+      const result2 = await supabase
+        .from('order_guests')
+        .select('*')
+        .eq('order_id', orderId)
+        .order('position', { ascending: true });
+      orderGuests = result2.data;
+      error = result2.error;
+    } else if (orderGuests && orderGuests.length > 0) {
+      // Ordenar manualmente si la query funcionó
+      orderGuests.sort((a: any, b: any) => (a.position || 0) - (b.position || 0));
+    }
 
     if (error) {
-      console.error("[DineSplit] Error al cargar guests:", error);
+      console.error("[DineSplit] ❌ Error al cargar guests:", error);
+      console.error("[DineSplit] Error code:", error.code);
+      console.error("[DineSplit] Error message:", error.message);
+      console.error("[DineSplit] Error details:", JSON.stringify(error, null, 2));
+      
+      // Intentar una query más simple para verificar RLS
+      const { data: testAccess, error: testError } = await supabase
+        .from('order_guests')
+        .select('id, order_id, name')
+        .limit(10);
+      
+      if (testError) {
+        console.error("[DineSplit] ❌ Error de RLS - no se puede acceder a order_guests:", testError);
+      } else {
+        console.log("[DineSplit] ✅ La tabla order_guests es accesible. Muestra de datos:", testAccess);
+        // Buscar si hay algún guest con ese order_id en la muestra
+        const matching = testAccess?.filter(g => g.order_id === orderId);
+        console.log("[DineSplit] Guests con order_id", orderId, "en muestra:", matching?.length || 0);
+      }
+      
       return;
     }
 
-    if (orderGuests) {
+    console.log("[DineSplit] fetchOrderGuests - Resultado de query:", orderGuests?.length || 0, "guests encontrados");
+    
+    // Si no hay resultados pero no hay error, verificar si hay un problema con el order_id
+    if ((!orderGuests || orderGuests.length === 0) && !error) {
+      console.warn("[DineSplit] ⚠️ Query exitosa pero sin resultados. Verificando order_id...");
+      
+      // Verificar que el order_id sea válido
+      const { data: orderCheck } = await supabase
+        .from('orders')
+        .select('id, status, table_id')
+        .eq('id', orderId)
+        .single();
+      
+      if (orderCheck) {
+        console.log("[DineSplit] ✅ La orden existe:", orderCheck);
+        console.log("[DineSplit] Status de la orden:", orderCheck.status);
+        console.log("[DineSplit] Verificando si hay guests con este order_id...");
+        
+        // Intentar una query más básica sin ningún filtro adicional
+        const { data: allGuestsForOrder, error: simpleError } = await supabase
+          .from('order_guests')
+          .select('id, order_id, name, position')
+          .eq('order_id', orderId);
+        
+        console.log("[DineSplit] Query simple (sin select *):", allGuestsForOrder?.length || 0, "guests");
+        if (simpleError) {
+          console.error("[DineSplit] Error en query simple:", simpleError);
+        } else if (allGuestsForOrder && allGuestsForOrder.length > 0) {
+          console.log("[DineSplit] ✅ Query simple funcionó! Usando estos resultados...");
+          orderGuests = allGuestsForOrder;
+        }
+      } else {
+        console.error("[DineSplit] ❌ La orden no existe o no se puede acceder:", orderId);
+      }
+    }
+    
+    if (orderGuests && orderGuests.length > 0) {
       const guestsFromDB: Guest[] = orderGuests.map(og => ({
         id: og.id, // Usar el UUID real de la base de datos
         name: og.name,
@@ -459,6 +523,97 @@ const App: React.FC = () => {
       if (guestsFromDB.length > 0) {
         setActiveGuestId(guestsFromDB[0].id);
         console.log("[DineSplit] ActiveGuestId establecido a:", guestsFromDB[0].id);
+      }
+    } else {
+      console.warn("[DineSplit] ⚠️ No se encontraron guests para order_id:", orderId);
+      console.warn("[DineSplit] Intentando fallback: buscar guests por guest_ids de order_items...");
+      
+      // Si no hay guests pero hay items, intentar obtener los guest_ids únicos de los items
+      const { data: itemsData, error: itemsError } = await supabase
+        .from('order_items')
+        .select('guest_id')
+        .eq('order_id', orderId);
+      
+      if (itemsError) {
+        console.error("[DineSplit] Error al buscar items para fallback:", itemsError);
+      }
+      
+      console.log("[DineSplit] Items encontrados para fallback:", itemsData?.length || 0);
+      
+      if (itemsData && itemsData.length > 0) {
+        const uniqueGuestIds = [...new Set(itemsData.map(i => i.guest_id).filter(Boolean))];
+        console.log("[DineSplit] Guest IDs únicos encontrados en order_items:", uniqueGuestIds.length, uniqueGuestIds);
+        
+        if (uniqueGuestIds.length > 0) {
+          // Intentar obtener los guests directamente por sus IDs
+          const { data: guestsById, error: guestsByIdError } = await supabase
+            .from('order_guests')
+            .select('*')
+            .in('id', uniqueGuestIds)
+            .order('position', { ascending: true });
+          
+          if (guestsByIdError) {
+            console.error("[DineSplit] Error al buscar guests por IDs:", guestsByIdError);
+          }
+          
+          console.log("[DineSplit] Guests encontrados por IDs (fallback):", guestsById?.length || 0);
+          
+          if (guestsById && guestsById.length > 0) {
+            const guestsFromDB: Guest[] = guestsById.map(og => ({
+              id: og.id,
+              name: og.name,
+              isHost: og.is_host || false,
+              individualAmount: og.individual_amount || null,
+              paid: og.paid || false,
+              payment_id: og.payment_id || null,
+              payment_method: og.payment_method || null
+            }));
+            console.log("[DineSplit] ✅ Guests cargados mediante fallback:", guestsFromDB.length, "guests");
+            console.log("[DineSplit] Guest IDs:", guestsFromDB.map(g => g.id));
+            setGuests(guestsFromDB);
+            if (guestsFromDB.length > 0) {
+              setActiveGuestId(guestsFromDB[0].id);
+              console.log("[DineSplit] ActiveGuestId establecido a:", guestsFromDB[0].id);
+            }
+          } else {
+            console.error("[DineSplit] ❌ Fallback falló: no se encontraron guests con esos IDs");
+            console.error("[DineSplit] Guest IDs buscados:", uniqueGuestIds);
+            
+            // Verificar RLS específicamente para estos IDs
+            console.error("[DineSplit] Verificando RLS: intentando query directa a order_guests...");
+            const { data: directQuery, error: directError } = await supabase
+              .from('order_guests')
+              .select('id, order_id, name, is_host, position')
+              .eq('order_id', orderId);
+            
+            if (directError) {
+              console.error("[DineSplit] ❌ Error de RLS en query directa:", directError);
+            } else {
+              console.log("[DineSplit] Query directa sin .in() encontró:", directQuery?.length || 0, "guests");
+              if (directQuery && directQuery.length > 0) {
+                console.log("[DineSplit] IDs encontrados:", directQuery.map(g => g.id));
+                // Usar estos resultados
+                const guestsFromDB: Guest[] = directQuery.map(og => ({
+                  id: og.id,
+                  name: og.name,
+                  isHost: og.is_host || false,
+                  individualAmount: null,
+                  paid: false,
+                  payment_id: null,
+                  payment_method: null
+                }));
+                setGuests(guestsFromDB);
+                if (guestsFromDB.length > 0) {
+                  setActiveGuestId(guestsFromDB[0].id);
+                }
+              }
+            }
+          }
+        } else {
+          console.error("[DineSplit] ❌ No hay guest_ids válidos en los items");
+        }
+      } else {
+        console.error("[DineSplit] ❌ No hay items para hacer fallback");
       }
     }
   }, []);
@@ -868,14 +1023,14 @@ const App: React.FC = () => {
     }
   }, [supabase, activeOrderId]);
 
-  // Recargar guests cuando se navega al MENU si hay una orden activa
+  // Recargar guests cuando se navega al MENU o SPLIT_BILL si hay una orden activa
   useEffect(() => {
-    if (currentView === 'MENU' && activeOrderId && supabase) {
+    if ((currentView === 'MENU' || currentView === 'SPLIT_BILL') && activeOrderId && supabase) {
       fetchOrderGuests(activeOrderId);
     }
   }, [currentView, activeOrderId, fetchOrderGuests]);
 
-  const handlePayIndividual = async (paymentData: { amount: number, method: string, tip: number }) => {
+  const handlePayIndividual = async (paymentData: { amount: number, method: string }) => {
     if (!activeOrderId || !restaurant) return;
     
     // Obtener guestId de la URL si existe
@@ -884,31 +1039,134 @@ const App: React.FC = () => {
     
     if (paymentData.method === 'mercadopago') {
       try {
-        const { data: config } = await supabase.from('payment_configs').select('*').eq('restaurant_id', restaurant.id).eq('provider', 'mercadopago').maybeSingle();
-        if (!config?.token_cbu) throw new Error("Mercado Pago no configurado.");
+        // Validar que el monto sea válido
+        const amount = Number(paymentData.amount);
+        if (isNaN(amount) || amount <= 0) {
+          throw new Error("El monto a pagar debe ser mayor a cero.");
+        }
+
+        const { data: config, error: configError } = await supabase
+          .from('payment_configs')
+          .select('*')
+          .eq('restaurant_id', restaurant.id)
+          .eq('provider', 'mercadopago')
+          .maybeSingle();
+        
+        if (configError) {
+          console.error('[DineSplit] Error al obtener configuración de Mercado Pago:', configError);
+          throw new Error(`Error al obtener configuración: ${configError.message}`);
+        }
+        
+        if (!config) {
+          console.error('[DineSplit] No se encontró configuración de Mercado Pago para restaurant_id:', restaurant.id);
+          throw new Error("Mercado Pago no está configurado para este restaurante.");
+        }
+        
+        console.log('[DineSplit] Configuración de Mercado Pago encontrada:', {
+          restaurant_id: restaurant.id,
+          provider: config.provider,
+          has_token_cbu: !!config.token_cbu,
+          has_user_account: !!config.user_account,
+          has_key_alias: !!config.key_alias
+        });
+        
+        // Para Mercado Pago, el access token está en token_cbu (renombrado desde access_token)
+        const accessToken = config.token_cbu;
+        if (!accessToken) {
+          throw new Error("El token de acceso de Mercado Pago (token_cbu) no está configurado.");
+        }
+        if (!accessToken.trim()) {
+          throw new Error("El token de acceso de Mercado Pago está vacío.");
+        }
 
         const cleanUrl = window.location.origin + window.location.pathname;
         // Incluir guestId en la URL de retorno para poder identificar quién pagó
-        const successUrl = cleanUrl + `?status=success&orderId=${activeOrderId}&guestId=${guestId}`;
+        const successUrl = `${cleanUrl}?status=success&orderId=${activeOrderId}&guestId=${guestId}`;
+        const failureUrl = `${cleanUrl}?status=failure&orderId=${activeOrderId}&guestId=${guestId}`;
+        const pendingUrl = `${cleanUrl}?status=pending&orderId=${activeOrderId}&guestId=${guestId}`;
+        
+        // Validar que las URLs estén bien formadas
+        if (!successUrl || !successUrl.startsWith('http') || successUrl.trim().length === 0) {
+          console.error('[DineSplit] URL de éxito inválida:', successUrl);
+          throw new Error("La URL de éxito no está bien formada.");
+        }
+        
+        // Construir back_urls primero y validarlo - asegurarse de que sean strings válidos
+        const backUrls: { success: string; failure: string; pending: string } = {
+          success: String(successUrl).trim(),
+          failure: String(failureUrl).trim(),
+          pending: String(pendingUrl).trim()
+        };
+        
+        // Validar que success esté definido y no vacío - esto es crítico para auto_return
+        if (!backUrls.success || backUrls.success.length === 0 || !backUrls.success.startsWith('http')) {
+          console.error('[DineSplit] back_urls.success está vacío, undefined o inválido:', backUrls.success);
+          throw new Error("La URL de éxito (back_urls.success) es requerida y debe ser una URL válida para usar auto_return.");
+        }
+        
+        // Mercado Pago NO acepta localhost cuando se usa auto_return
+        // Solo usar auto_return si la URL es pública (no localhost)
+        const isLocalhost = cleanUrl.includes('localhost') || cleanUrl.includes('127.0.0.1') || cleanUrl.includes('0.0.0.0');
+        
+        const tableNum = currentTable?.table_number || 'N/A';
+        // Construir el payload base
+        const preferencesPayload: any = {
+          items: [{ 
+            title: `Pago Mesa ${tableNum}`, 
+            quantity: 1, 
+            unit_price: parseFloat(amount.toFixed(2)), 
+            currency_id: 'ARS' 
+          }],
+          external_reference: `${activeOrderId}|${guestId}`,
+          back_urls: {
+            success: backUrls.success,
+            failure: backUrls.failure,
+            pending: backUrls.pending
+          }
+        };
+        
+        // Solo agregar auto_return si NO es localhost (Mercado Pago requiere URLs públicas)
+        if (!isLocalhost) {
+          preferencesPayload.auto_return = 'approved';
+          console.log('[DineSplit] Usando auto_return porque la URL es pública:', cleanUrl);
+        } else {
+          console.log('[DineSplit] Omitiendo auto_return porque la URL es localhost (Mercado Pago no lo permite):', cleanUrl);
+        }
+        
+        // Log del payload antes de enviar
+        console.log('[DineSplit] Payload completo antes de enviar:', JSON.stringify(preferencesPayload, null, 2));
         
         const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${config.token_cbu}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            items: [{ title: `Pago Mesa ${currentTable?.table_number}`, quantity: 1, unit_price: paymentData.amount, currency_id: 'ARS' }],
-            external_reference: `${activeOrderId}|${guestId}`, // Incluir guestId en external_reference
-            back_urls: { success: successUrl },
-            auto_return: 'approved'
-          })
+          headers: { 
+            'Authorization': `Bearer ${accessToken}`, 
+            'Content-Type': 'application/json' 
+          },
+          body: JSON.stringify(preferencesPayload)
         });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          console.error('[DineSplit] Error de Mercado Pago:', errorData);
+          throw new Error(`Error de Mercado Pago: ${errorData.message || response.statusText || 'Error desconocido'}`);
+        }
+
         const pref = await response.json();
-        if (pref.init_point) window.location.href = pref.init_point;
-      } catch (err: any) { alert(err.message); }
+        console.log('[DineSplit] Preferencia creada exitosamente:', pref);
+        
+        if (pref.init_point) {
+          window.location.href = pref.init_point;
+        } else {
+          throw new Error("No se recibió el link de pago de Mercado Pago.");
+        }
+      } catch (err: any) { 
+        console.error('[DineSplit] Error al procesar pago con Mercado Pago:', err);
+        alert(err.message || "Error al conectar con Mercado Pago. Por favor, intenta nuevamente."); 
+      }
     } else { 
       // Para métodos de pago no-Mercado Pago (transferencia, efectivo), procesar directamente
       if (guestId) {
-        const totalAmount = paymentData.amount + paymentData.tip;
-        await handlePaymentSuccess(guestId, totalAmount, paymentData.method);
+        await handlePaymentSuccess(guestId, paymentData.amount, paymentData.method);
       }
       localStorage.clear();
       setCurrentView('FEEDBACK'); 
@@ -1497,10 +1755,22 @@ const App: React.FC = () => {
               restaurant={restaurant}
             />;
           case 'CASH_PAYMENT':
+            // Obtener guestId de la URL o usar activeGuestId
+            const cashGuestId = guestIdParam || activeGuestId;
             return <CashPaymentView 
               onBack={() => navigate('INDIVIDUAL_SHARE')}
-              amount={paymentAmount}
+              onNext={() => {
+                localStorage.clear();
+                navigate('CONFIRMATION');
+              }}
+              amount={paymentAmount || 0}
+              guestId={cashGuestId}
+              orderId={activeOrderId || ''}
               guestName={paymentGuestName}
+              cart={cart}
+              menuItems={menuItems}
+              waiter={currentWaiter}
+              restaurant={restaurant}
             />;
           case 'FEEDBACK': 
             return <FeedbackView onNext={() => navigate('CONFIRMATION')} onSkip={() => navigate('CONFIRMATION')} cart={cart} menuItems={menuItems} waiter={currentWaiter} restaurant={restaurant} />;

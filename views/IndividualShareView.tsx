@@ -6,7 +6,7 @@ import { supabase } from '../lib/supabase';
 
 interface IndividualShareViewProps {
   onBack: () => void;
-  onPay: (paymentData: { amount: number, method: string, tip: number }) => Promise<void>;
+  onPay: (paymentData: { amount: number, method: string }) => Promise<void>;
   onShowTransfer?: (amount: number) => void;
   onShowCash?: (amount: number, guestName: string) => void;
   onUpdatePaymentMethod?: (guestId: string, method: 'mercadopago' | 'transfer' | 'cash') => Promise<boolean>;
@@ -18,7 +18,6 @@ interface IndividualShareViewProps {
 }
 
 const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay, onShowTransfer, onShowCash, onUpdatePaymentMethod, cart, menuItems, splitData, restaurant, guests = [] }) => {
-  const [tipPercentage, setTipPercentage] = useState<number>(15);
   const [paymentMethod, setPaymentMethod] = useState<'mercadopago' | 'transfer' | 'cash'>('mercadopago');
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -63,8 +62,7 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
     }, 0);
   }, [targetGuest, myDataFromSplit, myCartItems, menuItems]);
 
-  const tipAmount = useMemo(() => (subtotal * tipPercentage) / 100, [subtotal, tipPercentage]);
-  const finalTotal = useMemo(() => subtotal + tipAmount, [subtotal, tipAmount]);
+  const finalTotal = subtotal;
 
   const handleProcessPayment = async () => {
     if (isProcessing) return;
@@ -92,8 +90,7 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
       try {
         await onPay({
           amount: Number(finalTotal.toFixed(2)),
-          method: paymentMethod,
-          tip: Number(tipAmount.toFixed(2))
+          method: paymentMethod
         });
       } catch (error) {
         console.error("Error al iniciar pago:", error);
@@ -115,14 +112,6 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
         return 'Pagar Ahora';
     }
   };
-
-  const tips = [
-    { label: 'Ninguna', value: 0 },
-    { label: '10%', value: 10 },
-    { label: '15%', value: 15, badge: 'Sugerida' },
-    { label: '20%', value: 20 },
-    { label: 'Custom', value: 25 },
-  ];
 
   return (
     <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden pb-40 bg-background-dark text-white font-display antialiased">
@@ -146,107 +135,73 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
       <div className="px-5 space-y-8">
         {/* Desglose resumido */}
         <section className="animate-fade-in-up" style={{ animationDelay: '0.1s' }}>
-          <div className="bg-surface-dark rounded-3xl p-5 border border-white/5 space-y-3">
-             <div className="flex justify-between items-center text-sm">
-                <span className="text-text-secondary font-medium">Consumos asignados</span>
-                <span className="font-bold tabular-nums">${formatPrice(subtotal)}</span>
-             </div>
-             <div className="flex justify-between items-center text-sm">
-                <span className="text-text-secondary font-medium">Propina seleccionada</span>
-                <span className="font-bold tabular-nums">${formatPrice(tipAmount)}</span>
-             </div>
-             <div className="pt-3 mt-3 border-t border-white/10 flex justify-between items-center">
-                <span className="text-white font-black uppercase text-[10px] tracking-widest">Total a Confirmar</span>
+          <div className="bg-surface-dark rounded-3xl p-5 border border-white/5">
+             <div className="flex justify-between items-center">
+                <span className="text-text-secondary font-medium text-sm">Consumos asignados</span>
                 <span className="text-xl font-black text-primary tabular-nums">${formatPrice(finalTotal)}</span>
              </div>
           </div>
         </section>
 
-        {/* Propina Selector */}
-        <section className="animate-fade-in-up" style={{ animationDelay: '0.2s' }}>
-          <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-text-secondary mb-4 px-1">Dejar Propina</h3>
-          <div className="grid grid-cols-5 gap-2">
-            {tips.map((t) => (
-              <button 
-                key={t.label} 
-                onClick={() => setTipPercentage(t.value)}
-                disabled={isProcessing}
-                className={`relative flex h-14 flex-col items-center justify-center rounded-2xl border transition-all active:scale-95 ${
-                  tipPercentage === t.value 
-                  ? 'bg-primary border-primary text-background-dark font-black shadow-lg shadow-primary/20' 
-                  : 'bg-surface-dark border-white/5 text-white/40 font-bold hover:border-white/20'
-                }`}
-              >
-                <span className="text-[11px] uppercase tracking-tighter">{t.label}</span>
-                {t.badge && (
-                  <div className="absolute -top-2 rounded-full bg-white px-2 py-0.5 text-[7px] font-black text-black shadow-lg uppercase tracking-tighter">
-                    {t.badge}
-                  </div>
-                )}
-              </button>
-            ))}
-          </div>
-        </section>
-
         {/* Pasarela de Pago */}
-        <section className="animate-fade-in-up" style={{ animationDelay: '0.3s' }}>
+        <section className="animate-fade-in-up" style={{ animationDelay: '0.2s' }}>
           <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-text-secondary mb-4 px-1">Método de Pago</h3>
-          <div className="flex gap-4 overflow-x-auto no-scrollbar pb-4">
+          <div className="flex flex-col gap-3">
             <button 
               onClick={() => setPaymentMethod('mercadopago')}
               disabled={isProcessing}
-              className={`relative flex min-w-[200px] flex-col gap-5 rounded-3xl p-6 border-2 transition-all cursor-pointer ${
-                paymentMethod === 'mercadopago' ? 'bg-surface-dark border-primary' : 'bg-surface-dark border-transparent opacity-40 hover:opacity-70'
+              className={`relative flex items-center justify-between gap-4 rounded-2xl p-5 border-2 transition-all cursor-pointer ${
+                paymentMethod === 'mercadopago' ? 'bg-surface-dark border-primary' : 'bg-surface-dark border-white/5 hover:border-white/20'
               }`}
             >
-              <div className="flex items-center justify-between">
-                <div className="bg-white p-2 rounded-xl">
+              <div className="flex items-center gap-4">
+                <div className="bg-white p-2 rounded-xl shrink-0">
                    <img src="/mercadopago-icon.png" className="h-4 object-contain" alt="MP" />
                 </div>
-                {paymentMethod === 'mercadopago' && <span className="material-symbols-outlined text-primary font-black filled">check_circle</span>}
+                <div className="text-left">
+                  <p className="font-black text-sm leading-none mb-1 uppercase tracking-tight">Mercado Pago</p>
+                  <p className="text-[9px] font-bold text-text-secondary uppercase tracking-widest">Wallet / Tarjetas</p>
+                </div>
               </div>
-              <div className="text-left">
-                <p className="font-black text-sm leading-none mb-1 uppercase tracking-tight">Mercado Pago</p>
-                <p className="text-[9px] font-bold text-text-secondary uppercase tracking-widest">Wallet / Tarjetas</p>
-              </div>
+              {paymentMethod === 'mercadopago' && <span className="material-symbols-outlined text-primary font-black filled shrink-0">check_circle</span>}
             </button>
 
             <button 
               onClick={() => setPaymentMethod('transfer')}
               disabled={isProcessing}
-              className={`relative flex min-w-[200px] flex-col gap-5 rounded-3xl p-6 border-2 transition-all cursor-pointer ${
-                paymentMethod === 'transfer' ? 'bg-surface-dark border-primary' : 'bg-surface-dark border-transparent opacity-40 hover:opacity-70'
+              className={`relative flex items-center justify-between gap-4 rounded-2xl p-5 border-2 transition-all cursor-pointer ${
+                paymentMethod === 'transfer' ? 'bg-surface-dark border-primary' : 'bg-surface-dark border-white/5 hover:border-white/20'
               }`}
             >
-              <div className="flex items-center justify-between">
-                <div className="bg-white/10 p-2 rounded-xl">
+              <div className="flex items-center gap-4">
+                <div className="bg-white/10 p-2 rounded-xl shrink-0">
                    <span className="material-symbols-outlined text-white text-2xl">account_balance</span>
                 </div>
-                {paymentMethod === 'transfer' && <span className="material-symbols-outlined text-primary font-black filled">check_circle</span>}
+                <div className="text-left">
+                  <p className="font-black text-sm leading-none mb-1 uppercase tracking-tight">Transferencia</p>
+                  <p className="text-[9px] font-bold text-text-secondary uppercase tracking-widest">Alias / CBU</p>
+                </div>
               </div>
-              <div className="text-left">
-                <p className="font-black text-sm leading-none mb-1 uppercase tracking-tight">Transferencia</p>
-                <p className="text-[9px] font-bold text-text-secondary uppercase tracking-widest">Alias / CBU</p>
-              </div>
+              {paymentMethod === 'transfer' && <span className="material-symbols-outlined text-primary font-black filled shrink-0">check_circle</span>}
             </button>
 
             <button 
               onClick={() => setPaymentMethod('cash')}
               disabled={isProcessing}
-              className={`relative flex min-w-[200px] flex-col gap-5 rounded-3xl p-6 border-2 transition-all cursor-pointer ${
-                paymentMethod === 'cash' ? 'bg-surface-dark border-primary' : 'bg-surface-dark border-transparent opacity-40 hover:opacity-70'
+              className={`relative flex items-center justify-between gap-4 rounded-2xl p-5 border-2 transition-all cursor-pointer ${
+                paymentMethod === 'cash' ? 'bg-surface-dark border-primary' : 'bg-surface-dark border-white/5 hover:border-white/20'
               }`}
             >
-              <div className="flex items-center justify-between">
-                <div className="bg-white/10 p-2 rounded-xl">
+              <div className="flex items-center gap-4">
+                <div className="bg-white/10 p-2 rounded-xl shrink-0">
                    <span className="material-symbols-outlined text-white text-2xl">payments</span>
                 </div>
-                {paymentMethod === 'cash' && <span className="material-symbols-outlined text-primary font-black filled">check_circle</span>}
+                <div className="text-left">
+                  <p className="font-black text-sm leading-none mb-1 uppercase tracking-tight">Efectivo</p>
+                  <p className="text-[9px] font-bold text-text-secondary uppercase tracking-widest">Pagar al mesero</p>
+                </div>
               </div>
-              <div className="text-left">
-                <p className="font-black text-sm leading-none mb-1 uppercase tracking-tight">Efectivo</p>
-                <p className="text-[9px] font-bold text-text-secondary uppercase tracking-widest">Pagar al mesero</p>
-              </div>
+              {paymentMethod === 'cash' && <span className="material-symbols-outlined text-primary font-black filled shrink-0">check_circle</span>}
             </button>
           </div>
         </section>

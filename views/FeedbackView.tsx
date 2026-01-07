@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { OrderItem, MenuItem } from '../types';
 import { formatPrice } from './MenuView';
@@ -18,6 +18,7 @@ const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuI
   const [waiterRating, setWaiterRating] = useState(0);
   const [itemRatings, setItemRatings] = useState<Record<string, number>>({});
   const [comment, setComment] = useState('');
+  const [tipPercentage, setTipPercentage] = useState<number>(15);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
 
@@ -25,6 +26,14 @@ const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuI
   const uniqueItems = Array.from(new Set(cart.map(i => i.itemId)))
     .map(id => menuItems.find(m => m.id === id))
     .filter(Boolean) as MenuItem[];
+
+  // Calcular el total de la orden para la propina
+  const orderTotal = cart.reduce((sum, item) => {
+    const menuItem = menuItems.find(m => m.id === item.itemId);
+    return sum + (menuItem ? menuItem.price * item.quantity : 0);
+  }, 0);
+
+  const tipAmount = useMemo(() => (orderTotal * tipPercentage) / 100, [orderTotal, tipPercentage]);
 
   const handleItemRating = (itemId: string, rating: number) => {
     setItemRatings(prev => ({ ...prev, [itemId]: rating }));
@@ -262,6 +271,57 @@ const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuI
             </div>
           </div>
         )}
+
+        {/* DIMENSIÓN 4: Propina */}
+        <div className="mb-8 animate-fade-in-up" style={{ animationDelay: '0.4s' }}>
+          <div className="flex items-center gap-2 mb-4 px-1">
+            <span className="material-symbols-outlined text-primary">tips_and_updates</span>
+            <h3 className="text-xs font-black uppercase tracking-[0.2em] text-text-secondary">Propina</h3>
+          </div>
+          <div className="grid grid-cols-5 gap-2 mb-4">
+            {[
+              { label: 'Ninguna', value: 0 },
+              { label: '10%', value: 10 },
+              { label: '15%', value: 15, badge: 'Sugerida' },
+              { label: '20%', value: 20 },
+              { label: 'Custom', value: 25 },
+            ].map((t) => (
+              <button 
+                key={t.label} 
+                onClick={() => setTipPercentage(t.value)}
+                disabled={isSubmitting}
+                className={`relative flex h-14 flex-col items-center justify-center rounded-2xl border transition-all active:scale-95 ${
+                  tipPercentage === t.value 
+                  ? 'bg-primary border-primary text-background-dark font-black shadow-lg shadow-primary/20' 
+                  : 'bg-surface-dark border-white/5 text-white/40 font-bold hover:border-white/20'
+                }`}
+              >
+                <span className="text-[11px] uppercase tracking-tighter">{t.label}</span>
+                {t.badge && (
+                  <div className="absolute -top-2 rounded-full bg-white px-2 py-0.5 text-[7px] font-black text-black shadow-lg uppercase tracking-tighter">
+                    {t.badge}
+                  </div>
+                )}
+              </button>
+            ))}
+          </div>
+          {tipPercentage > 0 && (
+            <div className="bg-surface-dark rounded-2xl p-4 border border-white/5">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-text-secondary text-sm font-medium">Subtotal de la orden</span>
+                <span className="font-bold tabular-nums">${formatPrice(orderTotal)}</span>
+              </div>
+              <div className="flex justify-between items-center mb-3 pb-3 border-b border-white/10">
+                <span className="text-text-secondary text-sm font-medium">Propina ({tipPercentage}%)</span>
+                <span className="font-bold tabular-nums text-primary">${formatPrice(tipAmount)}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-white font-black uppercase text-[10px] tracking-widest">Total con propina</span>
+                <span className="text-xl font-black text-primary tabular-nums">${formatPrice(orderTotal + tipAmount)}</span>
+              </div>
+            </div>
+          )}
+        </div>
       </main>
 
       <div className="fixed bottom-0 left-0 w-full p-4 bg-gradient-to-t from-background-dark via-background-dark to-transparent pt-12 pb-8 z-20">

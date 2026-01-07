@@ -24,14 +24,38 @@ interface BillItemAssignment {
 
 const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onConfirm, menuItems }) => {
   const [method, setMethod] = useState<'equal' | 'item' | 'guest' | 'custom'>('item');
+  const [selectedForEqual, setSelectedForEqual] = useState<string[]>([]);
   
-  const [selectedForEqual, setSelectedForEqual] = useState<string[]>(guests.map(g => g.id));
+  // Debug: Log guests cuando cambian
+  useEffect(() => {
+    console.log("[SplitBillView] Guests recibidos:", guests.length, guests);
+    if (guests.length > 0) {
+      setSelectedForEqual(guests.map(g => g.id));
+    }
+  }, [guests]);
   
   const [customAmounts, setCustomAmounts] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {};
-    guests.forEach(g => initial[g.id] = '0');
+    if (guests && guests.length > 0) {
+      guests.forEach(g => initial[g.id] = '0');
+    }
     return initial;
   });
+
+  // Actualizar customAmounts cuando cambian los guests
+  useEffect(() => {
+    if (guests.length > 0) {
+      setCustomAmounts(prev => {
+        const updated = { ...prev };
+        guests.forEach(g => {
+          if (!updated[g.id]) {
+            updated[g.id] = '0';
+          }
+        });
+        return updated;
+      });
+    }
+  }, [guests]);
 
   const [assignments, setAssignments] = useState<BillItemAssignment[]>(() => {
     const units: BillItemAssignment[] = [];
@@ -56,6 +80,11 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
   // Los precios ya incluyen impuestos según el requerimiento.
   const subtotal = useMemo(() => assignments.reduce((sum: number, a) => sum + a.unitPrice, 0), [assignments]);
   const grandTotal = subtotal;
+
+  // Verificar si hay algún comensal que ya pagó
+  const hasPaidGuests = useMemo(() => {
+    return guests.some(g => g.paid === true);
+  }, [guests]);
 
   const guestShares = useMemo(() => {
     const shares: Record<string, number> = {};
@@ -116,6 +145,11 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
     });
   }, [method, selectedForEqual, assignments, customAmounts, cart, guests, menuItems, subtotal]);
 
+  // Debug: Log guestShares cuando cambian
+  useEffect(() => {
+    console.log("[SplitBillView] GuestShares calculados:", guestShares.length, guestShares);
+  }, [guestShares]);
+
   const assignedSubtotal = useMemo(() => {
     if (method === 'item') return assignments.filter(a => a.assignedGuestIds.length > 0).reduce((sum: number, a) => sum + a.unitPrice, 0);
     if (method === 'custom') return Object.values(customAmounts).reduce((sum: number, val) => sum + (parseFloat(val as string) || 0), 0);
@@ -126,10 +160,12 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
   const isFullyAssigned = Math.abs(assignedSubtotal - subtotal) < 0.01;
 
   const toggleEqualGuest = (id: string) => {
+    if (hasPaidGuests) return; // No permitir cambios si hay comensales pagados
     setSelectedForEqual(prev => prev.includes(id) ? prev.filter(gid => gid !== id) : [...prev, id]);
   };
 
   const toggleItemAssignment = (assignmentId: string, guestId: string) => {
+    if (hasPaidGuests) return; // No permitir cambios si hay comensales pagados
     setAssignments(prev => prev.map(a => {
       if (a.id === assignmentId) {
         const isAssigned = a.assignedGuestIds.includes(guestId);
@@ -145,6 +181,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
   };
 
   const handleCustomAmountChange = (id: string, value: string) => {
+    if (hasPaidGuests) return; // No permitir cambios si hay comensales pagados
     setCustomAmounts(prev => ({ ...prev, [id]: value }));
   };
 
@@ -172,6 +209,17 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
         </div>
 
         <div className="px-4 mb-6">
+          {hasPaidGuests && (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 mb-4">
+              <div className="flex items-start gap-3">
+                <span className="material-symbols-outlined text-amber-500 text-xl shrink-0">info</span>
+                <div className="flex-1">
+                  <p className="text-amber-500 font-bold text-sm mb-1">No se puede cambiar el método de división</p>
+                  <p className="text-amber-500/80 text-xs">Uno o más comensales ya realizaron su pago. Los montos individuales no pueden modificarse.</p>
+                </div>
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-4 bg-white/5 p-1 rounded-2xl border border-white/5">
             {[
               { id: 'equal', label: 'Equitativo', icon: 'balance' },
@@ -181,9 +229,14 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
             ].map((m) => (
               <button 
                 key={m.id} 
-                onClick={() => setMethod(m.id as any)} 
+                onClick={() => !hasPaidGuests && setMethod(m.id as any)}
+                disabled={hasPaidGuests}
                 className={`flex flex-col items-center justify-center py-3 rounded-xl transition-all gap-1 ${
-                  method === m.id ? 'bg-primary text-background-dark shadow-lg' : 'text-text-secondary hover:text-white'
+                  hasPaidGuests 
+                    ? 'opacity-40 cursor-not-allowed grayscale' 
+                    : method === m.id 
+                      ? 'bg-primary text-background-dark shadow-lg' 
+                      : 'text-text-secondary hover:text-white'
                 }`}
               >
                 <span className="material-symbols-outlined text-lg font-bold">{m.icon}</span>
@@ -194,7 +247,13 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
         </div>
 
         <div className="px-4 pb-8 space-y-6">
-          {method === 'equal' && (
+          {guests.length === 0 && (
+            <div className="text-center py-8 text-text-secondary animate-fade-in-up">
+              <p className="text-sm mb-2">No hay comensales disponibles</p>
+              <p className="text-xs opacity-60">Los comensales se cargarán automáticamente...</p>
+            </div>
+          )}
+          {method === 'equal' && guests.length > 0 && (
             <div className="space-y-4 animate-fade-in-up">
               <p className="text-center text-sm text-text-secondary px-6">Selecciona quiénes participan en la división equitativa.</p>
               <div className="grid grid-cols-2 gap-3">
@@ -202,8 +261,13 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
                   <button 
                     key={guest.id} 
                     onClick={() => toggleEqualGuest(guest.id)}
+                    disabled={hasPaidGuests}
                     className={`flex items-center gap-3 p-3 rounded-2xl border transition-all ${
-                      selectedForEqual.includes(guest.id) ? 'bg-primary/10 border-primary shadow-[0_0_15px_rgba(19,236,106,0.1)]' : 'bg-white/5 border-white/5 grayscale opacity-50'
+                      hasPaidGuests 
+                        ? 'opacity-40 cursor-not-allowed' 
+                        : selectedForEqual.includes(guest.id) 
+                          ? 'bg-primary/10 border-primary shadow-[0_0_15px_rgba(19,236,106,0.1)]' 
+                          : 'bg-white/5 border-white/5 grayscale opacity-50'
                     }`}
                   >
                     <div className={`size-10 rounded-full flex items-center justify-center font-black text-xs ${getGuestColor(guest.id)}`}>
@@ -216,7 +280,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
             </div>
           )}
 
-          {method === 'item' && (
+          {method === 'item' && guests.length > 0 && (
             <div className="space-y-4 animate-fade-in-up">
               <div className="bg-surface-dark border border-white/5 rounded-2xl p-4 sticky top-0 z-20 shadow-xl">
                  <div className="flex justify-between items-center mb-2">
@@ -244,9 +308,14 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
                       {guests.map(guest => (
                         <button 
                           key={guest.id} 
-                          onClick={() => toggleItemAssignment(unit.id, guest.id)} 
+                          onClick={() => toggleItemAssignment(unit.id, guest.id)}
+                          disabled={hasPaidGuests}
                           className={`relative size-9 rounded-full border-2 transition-all flex items-center justify-center shrink-0 ${
-                            unit.assignedGuestIds.includes(guest.id) ? 'border-primary scale-110' : 'border-transparent opacity-40 hover:opacity-100'
+                            hasPaidGuests 
+                              ? 'opacity-30 cursor-not-allowed' 
+                              : unit.assignedGuestIds.includes(guest.id) 
+                                ? 'border-primary scale-110' 
+                                : 'border-transparent opacity-40 hover:opacity-100'
                           } ${getGuestColor(guest.id)} shadow-lg`}
                         >
                           <span className="text-[9px] font-black text-white">{getInitials(guest.name)}</span>
@@ -259,10 +328,10 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
             </div>
           )}
 
-          {method === 'guest' && (
+          {method === 'guest' && guests.length > 0 && (
             <div className="space-y-4 animate-fade-in-up">
               <p className="text-center text-sm text-text-secondary px-6">Cada comensal paga lo que pidió inicialmente.</p>
-              {guestShares.map(share => (
+              {guestShares.length > 0 ? guestShares.map(share => (
                 <div key={share.id} className="bg-surface-dark border border-white/5 rounded-2xl p-5 flex flex-col gap-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
@@ -299,14 +368,18 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
                     </div>
                   </div>
                 </div>
-              ))}
+              )) : (
+                <div className="text-center py-8 text-text-secondary">
+                  <p className="text-sm">No hay comensales para mostrar</p>
+                </div>
+              )}
             </div>
           )}
 
-          {method === 'custom' && (
+          {method === 'custom' && guests.length > 0 && (
             <div className="space-y-4 animate-fade-in-up">
                {guests.map(guest => (
-                 <div key={guest.id} className="flex items-center gap-4 bg-surface-dark border border-white/5 p-4 rounded-2xl">
+                 <div key={guest.id} className={`flex items-center gap-4 bg-surface-dark border border-white/5 p-4 rounded-2xl ${hasPaidGuests ? 'opacity-60' : ''}`}>
                     <div className={`size-12 rounded-full flex items-center justify-center font-black text-sm shrink-0 ${getGuestColor(guest.id)}`}>
                       {getInitials(guest.name)}
                     </div>
@@ -317,9 +390,12 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
                         <input 
                           type="number" 
                           value={customAmounts[guest.id]}
-                          onFocus={() => handleCustomAmountChange(guest.id, '')}
-                          onChange={(e) => handleCustomAmountChange(guest.id, e.target.value)}
-                          className="w-full bg-white/5 border border-white/10 rounded-xl pl-7 pr-4 py-2 text-white font-bold outline-none focus:ring-2 focus:ring-primary"
+                          onFocus={() => !hasPaidGuests && handleCustomAmountChange(guest.id, '')}
+                          onChange={(e) => !hasPaidGuests && handleCustomAmountChange(guest.id, e.target.value)}
+                          disabled={hasPaidGuests}
+                          className={`w-full bg-white/5 border border-white/10 rounded-xl pl-7 pr-4 py-2 text-white font-bold outline-none focus:ring-2 focus:ring-primary ${
+                            hasPaidGuests ? 'opacity-40 cursor-not-allowed' : ''
+                          }`}
                           placeholder="0.00"
                         />
                       </div>

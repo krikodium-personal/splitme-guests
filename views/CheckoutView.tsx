@@ -1,8 +1,9 @@
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { OrderItem, Guest, MenuItem } from '../types';
 import { getInitials, getGuestColor } from './GuestInfoView';
 import { formatPrice } from './MenuView';
+import { supabase } from '../lib/supabase';
 
 interface CheckoutViewProps {
   onBack: () => void;
@@ -17,6 +18,92 @@ interface CheckoutViewProps {
 
 const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, guests = [], menuItems, tableNumber, splitData, activeOrderId }) => {
   const [showQr, setShowQr] = useState(false);
+  const [localGuests, setLocalGuests] = useState<Guest[]>(guests);
+  const channelRef = useRef<any>(null);
+
+  // Sincronizar localGuests cuando guests cambian
+  useEffect(() => {
+    setLocalGuests(guests);
+  }, [guests]);
+
+  // Suscripción Realtime para escuchar cambios en order_guests.paid
+  useEffect(() => {
+    if (!activeOrderId || !supabase) return;
+
+    console.log('[CheckoutView] Iniciando suscripción Realtime para order_guests, order_id:', activeOrderId);
+
+    // Verificar estado inicial de los guests
+    const checkInitialPaidStatus = async () => {
+      const { data: orderGuests, error } = await supabase
+        .from('order_guests')
+        .select('id, paid, payment_method')
+        .eq('order_id', activeOrderId);
+
+      if (error) {
+        console.error('[CheckoutView] Error al verificar estado inicial:', error);
+        return;
+      }
+
+      if (orderGuests && orderGuests.length > 0) {
+        console.log('[CheckoutView] Estado inicial de guests:', orderGuests);
+        setLocalGuests(prev => prev.map(g => {
+          const dbGuest = orderGuests.find(og => og.id === g.id);
+          if (dbGuest) {
+            return { 
+              ...g, 
+              paid: dbGuest.paid === true, 
+              payment_method: dbGuest.payment_method 
+            };
+          }
+          return g;
+        }));
+      }
+    };
+
+    checkInitialPaidStatus();
+
+    const channel = supabase
+      .channel(`checkout-payment-status-${activeOrderId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'order_guests',
+          filter: `order_id=eq.${activeOrderId}`
+        },
+        (payload) => {
+          console.log('[CheckoutView] ✅ Cambio detectado en order_guests:', payload.new);
+          const updatedGuest = payload.new;
+          
+          // Actualizar el guest en localGuests
+          setLocalGuests(prev => {
+            const updated = prev.map(g => 
+              g.id === updatedGuest.id 
+                ? { ...g, paid: updatedGuest.paid === true, payment_method: updatedGuest.payment_method }
+                : g
+            );
+            console.log('[CheckoutView] Guests actualizados:', updated);
+            return updated;
+          });
+        }
+      )
+      .subscribe((status) => {
+        console.log('[CheckoutView] Estado de suscripción Realtime:', status);
+        if (status === 'SUBSCRIBED') {
+          console.log('[CheckoutView] ✅ Suscripción activa, escuchando cambios en order_guests');
+        }
+      });
+
+    channelRef.current = channel;
+
+    return () => {
+      if (channelRef.current) {
+        console.log('[CheckoutView] Limpiando suscripción Realtime');
+        supabase.removeChannel(channelRef.current);
+      }
+    };
+  }, [activeOrderId]);
 
   // Total global de la mesa (precios ya incluyen impuestos)
   const grandTotal = useMemo(() => cart.reduce((sum, item) => {
@@ -27,11 +114,11 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, gu
   // Identificar al usuario actual (el host o primer guest)
   const currentUserGuest = useMemo(() => {
     // Buscar el host primero
-    const host = guests.find(g => g.isHost);
+    const host = localGuests.find(g => g.isHost);
     if (host) return host;
     // Si no hay host, usar el primer guest
-    return guests.length > 0 ? guests[0] : null;
-  }, [guests]);
+    return localGuests.length > 0 ? localGuests[0] : null;
+  }, [localGuests]);
 
   const currentUserId = currentUserGuest?.id || '';
 
@@ -51,10 +138,11 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, gu
   };
 
   // Mapeo de comensales con sus montos exactos y estado inicial "Impagado"
+  // Usar localGuests en lugar de guests para reflejar los cambios en tiempo real
   const dinerShares = useMemo(() => {
     if (splitData) {
       return splitData.map((share) => {
-        const guest = guests.find(g => g.id === share.id);
+        const guest = localGuests.find(g => g.id === share.id);
         return {
           ...share,
           ...guest,
@@ -64,18 +152,18 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, gu
       });
     }
     
-    const perGuest = grandTotal / (guests.length || 1);
-    return guests.map((guest) => ({
+    const perGuest = grandTotal / (localGuests.length || 1);
+    return localGuests.map((guest) => ({
       ...guest,
       amount: perGuest,
       status: guest.id === currentUserId ? 'PENDIENTE' : 'IMPAGADO'
     }));
-  }, [guests, grandTotal, splitData, currentUserId]);
+  }, [localGuests, grandTotal, splitData, currentUserId]);
 
   const myShare = useMemo(() => {
     const me = dinerShares.find(d => d.id === currentUserId);
-    return me ? me.amount : (grandTotal / (guests.length || 1));
-  }, [dinerShares, grandTotal, guests.length, currentUserId]);
+    return me ? me.amount : (grandTotal / (localGuests.length || 1));
+  }, [dinerShares, grandTotal, localGuests.length, currentUserId]);
 
   // Se asegura una URL absoluta válida y limpia
   const shareUrl = useMemo(() => {
@@ -223,7 +311,7 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, gu
       <div className="flex-1 overflow-y-auto no-scrollbar px-4 space-y-3 pb-8">
         {dinerShares.map((diner) => {
           const isMe = diner.id === currentUserId;
-          const isPaid = diner.status === 'PAGADO';
+          const isPaid = diner.paid === true;
           
           return (
             <div key={diner.id} className={`flex items-center p-3 rounded-2xl bg-surface-dark border border-[#3b5445]/50 shadow-sm transition-all ${isPaid ? 'opacity-40 grayscale-[0.5]' : 'border-white/5'}`}>
@@ -235,17 +323,23 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, gu
               </div>
               <div className="ml-3 flex-1 min-w-0">
                 <p className="text-white font-bold truncate">{isMe ? 'Tú' : diner.name}</p>
-                <p className="text-xs font-black uppercase tracking-widest text-[#9db9a8]">
-                  Debe ${formatPrice(diner.amount)}
-                </p>
-                {!isMe && diner.payment_method && (
+                {!isPaid ? (
+                  <p className="text-xs font-black uppercase tracking-widest text-[#9db9a8]">
+                    Debe ${formatPrice(diner.amount)}
+                  </p>
+                ) : (
+                  <p className="text-xs font-black uppercase tracking-widest text-[#9db9a8]">
+                    Pagado: {diner.payment_method ? getPaymentMethodLabel(diner.payment_method) : 'N/A'}
+                  </p>
+                )}
+                {!isMe && !isPaid && diner.payment_method && (
                   <p className="text-[10px] font-medium text-primary mt-1">
                     {getPaymentMethodLabel(diner.payment_method)}
                   </p>
                 )}
               </div>
               
-              {!isMe && (
+              {!isMe && !isPaid && (
                 <button 
                   onClick={() => handleSharePayment(diner.name, diner.amount, diner.id)}
                   className="size-10 rounded-xl bg-white/5 flex items-center justify-center text-text-secondary active:scale-90 transition-all hover:bg-primary/20 hover:text-primary border border-white/5"

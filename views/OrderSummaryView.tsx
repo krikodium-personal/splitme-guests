@@ -63,6 +63,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
   guests, cart, batches, onBack, onSend, onPay, isSending = false, onUpdateQuantity, menuItems
 }) => {
   const [currentTime, setCurrentTime] = useState(new Date()); // Para actualizar el tiempo cada minuto
+  const [viewMode, setViewMode] = useState<'batches' | 'guests'>('batches'); // 'batches' = pedidos realizados, 'guests' = pedidos de comensales
 
   // Actualizar el tiempo cada minuto para refrescar los indicadores "hace X minutos"
   useEffect(() => {
@@ -92,6 +93,22 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
     const menuItem = menuItems.find(m => m.id === item.itemId);
     return sum + (menuItem ? menuItem.price * item.quantity : 0);
   }, 0);
+
+  // Agrupar items por comensal para la vista de comensales
+  const itemsByGuest = useMemo(() => {
+    return guests.map(guest => {
+      const guestItems = cart.filter(item => item.guestId === guest.id);
+      const guestTotal = guestItems.reduce((sum, item) => {
+        const menuItem = menuItems.find(m => m.id === item.itemId);
+        return sum + (menuItem ? menuItem.price * item.quantity : 0);
+      }, 0);
+      return {
+        guest,
+        items: guestItems,
+        total: guestTotal
+      };
+    }).filter(group => group.items.length > 0);
+  }, [guests, cart, menuItems]);
 
   const pendingTotal = pendingItems.reduce((sum, item) => {
     const menuItem = menuItems.find(m => m.id === item.itemId);
@@ -152,9 +169,37 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
         <div className="size-10"></div>
       </div>
 
+      {/* Toggle para cambiar entre vistas */}
+      <div className="px-4 pt-4 pb-2 border-b border-white/5">
+        <div className="flex gap-2 bg-surface-dark rounded-xl p-1 border border-white/5">
+          <button
+            onClick={() => setViewMode('batches')}
+            className={`flex-1 py-2.5 px-4 rounded-lg font-black text-xs transition-all ${
+              viewMode === 'batches'
+                ? 'bg-primary text-background-dark shadow-lg'
+                : 'text-white/60 hover:text-white/80'
+            }`}
+          >
+            Ver pedidos realizados
+          </button>
+          <button
+            onClick={() => setViewMode('guests')}
+            className={`flex-1 py-2.5 px-4 rounded-lg font-black text-xs transition-all ${
+              viewMode === 'guests'
+                ? 'bg-primary text-background-dark shadow-lg'
+                : 'text-white/60 hover:text-white/80'
+            }`}
+          >
+            Ver pedidos de los comensales
+          </button>
+        </div>
+      </div>
+
       <div className="flex-1 overflow-y-auto p-4 pb-64 no-scrollbar">
-        {/* SECCIÓN: PENDIENTES */}
-        {pendingItems.length > 0 && (
+        {viewMode === 'batches' ? (
+          <>
+            {/* SECCIÓN: PENDIENTES */}
+            {pendingItems.length > 0 && (
           <div className="mb-10">
             <h3 className="text-primary text-[10px] font-black uppercase tracking-[0.3em] mb-4 pl-2">Por Enviar a Cocina</h3>
             <div className="space-y-4">
@@ -277,11 +322,85 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
           </div>
         )}
 
-        {cart.length === 0 && (
-          <div className="h-full flex flex-col items-center justify-center text-center opacity-20 pt-20">
-            <span className="material-symbols-outlined text-6xl mb-4">shopping_cart</span>
-            <p className="font-bold">Tu carrito está vacío</p>
-          </div>
+            {cart.length === 0 && (
+              <div className="h-full flex flex-col items-center justify-center text-center opacity-20 pt-20">
+                <span className="material-symbols-outlined text-6xl mb-4">shopping_cart</span>
+                <p className="font-bold">Tu carrito está vacío</p>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            {/* VISTA: PEDIDOS DE LOS COMENSALES */}
+            {itemsByGuest.length > 0 ? (
+              <div className="space-y-6 animate-fade-in">
+                {itemsByGuest.map(({ guest, items, total }) => (
+                  <div key={guest.id} className="bg-surface-dark rounded-3xl p-5 border border-white/5 shadow-lg">
+                    {/* Header del comensal */}
+                    <div className="flex items-center justify-between mb-4 pb-4 border-b border-white/5">
+                      <div className="flex items-center gap-3">
+                        <div className={`size-10 rounded-full ${getGuestColor(guest.id)} flex items-center justify-center`}>
+                          <span className="text-sm font-black text-white">{getInitials(guest.name)}</span>
+                        </div>
+                        <div>
+                          <p className="text-base font-black text-white">{guest.name}</p>
+                          <p className="text-[10px] text-white/40 font-medium uppercase tracking-widest">
+                            {items.length} {items.length === 1 ? 'plato' : 'platos'}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs text-white/40 font-medium uppercase tracking-widest mb-1">Subtotal</p>
+                        <p className="text-xl font-black tabular-nums">${formatPrice(total)}</p>
+                      </div>
+                    </div>
+
+                    {/* Lista de platos del comensal */}
+                    <div className="space-y-4">
+                      {items.map(item => {
+                        const dish = menuItems.find(m => m.id === item.itemId);
+                        const itemTotal = (dish?.price || 0) * item.quantity;
+                        return (
+                          <div key={item.id} className="flex flex-col gap-2">
+                            <div className="flex items-start gap-4">
+                              <div className="size-14 rounded-xl bg-cover bg-center shrink-0 border border-white/5" style={{ backgroundImage: `url("${dish?.image_url}")` }}></div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-bold mb-1">{dish?.name}</p>
+                                <div className="flex items-center gap-3 text-xs text-white/60">
+                                  <span className="font-medium">Cantidad: {item.quantity}</span>
+                                  <span className="text-white/40">×</span>
+                                  <span className="font-black tabular-nums">${formatPrice(dish?.price || 0)}</span>
+                                </div>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <p className="text-sm font-black tabular-nums">${formatPrice(itemTotal)}</p>
+                              </div>
+                            </div>
+                            {/* Personalizaciones */}
+                            {(item.extras?.length > 0 || item.removedIngredients?.length > 0) && (
+                              <div className="flex flex-wrap items-center gap-1.5 ml-[72px]">
+                                {item.extras?.filter(ex => ex && ex.trim()).map(ex => (
+                                  <span key={ex} className="text-[9px] font-black uppercase bg-primary/10 text-primary px-2 py-0.5 rounded-md border border-primary/20">+{ex}</span>
+                                ))}
+                                {item.removedIngredients?.filter(rem => rem && rem.trim()).map(rem => (
+                                  <span key={rem} className="text-[9px] font-black uppercase bg-red-500/10 text-red-400 px-2 py-0.5 rounded-md border border-red-500/20">-{rem}</span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="h-full flex flex-col items-center justify-center text-center opacity-20 pt-20">
+                <span className="material-symbols-outlined text-6xl mb-4">people</span>
+                <p className="font-bold">No hay pedidos de comensales</p>
+              </div>
+            )}
+          </>
         )}
       </div>
 
