@@ -914,22 +914,45 @@ const App: React.FC = () => {
         normalizedPaymentMethod = 'efectivo';
       }
 
-      // Paso 2: Actualizar order_guests con paid=true, payment_id y payment_method
+      // Paso 2: Actualizar order_guests con paid=true y payment_method
+      // Intentar primero con payment_id, si falla intentar sin payment_id (por si la columna no existe)
+      let guestUpdatePayload: any = {
+        paid: true,
+        payment_method: normalizedPaymentMethod
+      };
+      
+      // Intentar agregar payment_id solo si tenemos un ID válido
+      if (newPayment && newPayment.id) {
+        guestUpdatePayload.payment_id = newPayment.id;
+      }
+      
       const { error: guestUpdateError } = await supabase
         .from('order_guests')
-        .update({
-          paid: true,
-          payment_id: newPayment.id,
-          payment_method: normalizedPaymentMethod
-        })
+        .update(guestUpdatePayload)
         .eq('id', guestId);
 
-      if (guestUpdateError) {
+      // Si el error es porque payment_id no existe, intentar sin payment_id
+      if (guestUpdateError && guestUpdateError.code === 'PGRST204' && guestUpdateError.message?.includes('payment_id')) {
+        console.warn("[DineSplit] La columna payment_id no existe, actualizando sin payment_id");
+        const { error: retryError } = await supabase
+          .from('order_guests')
+          .update({
+            paid: true,
+            payment_method: normalizedPaymentMethod
+          })
+          .eq('id', guestId);
+        
+        if (retryError) {
+          console.error("[DineSplit] Error al actualizar guest (sin payment_id):", retryError);
+          throw retryError;
+        }
+        console.log("[DineSplit] ✅ Guest actualizado con paid=true y payment_method:", normalizedPaymentMethod, "(sin payment_id)");
+      } else if (guestUpdateError) {
         console.error("[DineSplit] Error al actualizar guest:", guestUpdateError);
         throw guestUpdateError;
+      } else {
+        console.log("[DineSplit] ✅ Guest actualizado con paid=true, payment_id:", newPayment.id, "y payment_method:", normalizedPaymentMethod);
       }
-
-      console.log("[DineSplit] ✅ Guest actualizado con paid=true, payment_id:", newPayment.id, "y payment_method:", normalizedPaymentMethod);
       console.log("[DineSplit] ========================================");
 
       // Recargar guests para actualizar el estado local
@@ -1122,20 +1145,32 @@ const App: React.FC = () => {
         const isLocalhost = cleanUrl.includes('localhost') || cleanUrl.includes('127.0.0.1') || cleanUrl.includes('0.0.0.0');
         
         const tableNum = currentTable?.table_number || 'N/A';
-        // Construir el payload base
+        
+        // Asegurar que el unit_price sea un número válido y esté en el formato correcto
+        // Mercado Pago espera el precio como número, no string
+        const unitPrice = parseFloat(amount.toFixed(2));
+        if (isNaN(unitPrice) || unitPrice <= 0) {
+          throw new Error(`El monto ${amount} no es válido. Debe ser un número mayor a cero.`);
+        }
+        
+        // Construir el payload base según la documentación de Mercado Pago
         const preferencesPayload: any = {
           items: [{ 
-            title: `Pago Mesa ${tableNum}`, 
+            title: `Pago Mesa ${tableNum}`.substring(0, 127), // Título limitado a 127 caracteres
+            description: `Pago individual de comensal para mesa ${tableNum}`.substring(0, 255), // Descripción opcional
             quantity: 1, 
-            unit_price: parseFloat(amount.toFixed(2)), 
+            unit_price: unitPrice, // Número, no string
             currency_id: 'ARS' 
           }],
-          external_reference: `${activeOrderId}|${guestId}`,
+          external_reference: `${activeOrderId}|${guestId}`.substring(0, 256), // Máximo 256 caracteres
           back_urls: {
             success: backUrls.success,
             failure: backUrls.failure,
             pending: backUrls.pending
-          }
+          },
+          // Configuraciones adicionales para sandbox
+          binary_mode: false, // Permitir estados pendientes
+          statement_descriptor: `MESA ${tableNum}`.substring(0, 22) // Máximo 22 caracteres para el descriptor
         };
         
         // Solo agregar auto_return si NO es localhost (Mercado Pago requiere URLs públicas)
@@ -1144,6 +1179,11 @@ const App: React.FC = () => {
           console.log('[DineSplit] Usando auto_return porque la URL es pública:', cleanUrl);
         } else {
           console.log('[DineSplit] Omitiendo auto_return porque la URL es localhost (Mercado Pago no lo permite):', cleanUrl);
+        }
+        
+        // Validar que el título no esté vacío
+        if (!preferencesPayload.items[0].title || preferencesPayload.items[0].title.trim().length === 0) {
+          preferencesPayload.items[0].title = 'Pago de Mesa';
         }
         
         // Log del payload antes de enviar
@@ -1192,11 +1232,18 @@ const App: React.FC = () => {
         const pref = await response.json();
         console.log('[DineSplit] Preferencia creada exitosamente:', pref);
         console.log('[DineSplit] init_point:', pref.init_point);
+        console.log('[DineSplit] Preference ID:', pref.id);
+        console.log('[DineSplit] Sandbox URL:', pref.sandbox_init_point || 'No disponible');
         
-        if (pref.init_point) {
-          window.location.href = pref.init_point;
+        // Usar sandbox_init_point si está disponible y estamos en desarrollo, sino usar init_point
+        const paymentUrl = pref.sandbox_init_point || pref.init_point;
+        
+        if (paymentUrl) {
+          console.log('[DineSplit] Redirigiendo a:', paymentUrl);
+          window.location.href = paymentUrl;
         } else {
-          throw new Error("No se recibió el link de pago de Mercado Pago.");
+          console.error('[DineSplit] No se recibió ningún link de pago. Respuesta completa:', pref);
+          throw new Error("No se recibió el link de pago de Mercado Pago. Verifica la configuración de tu cuenta.");
         }
       } catch (err: any) { 
         console.error('[DineSplit] Error al procesar pago con Mercado Pago:', err);

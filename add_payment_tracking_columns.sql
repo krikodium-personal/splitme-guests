@@ -37,7 +37,10 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
-CREATE TRIGGER IF NOT EXISTS update_payments_updated_at 
+-- Eliminar el trigger si existe antes de crearlo (PostgreSQL no soporta IF NOT EXISTS en CREATE TRIGGER)
+DROP TRIGGER IF EXISTS update_payments_updated_at ON payments;
+
+CREATE TRIGGER update_payments_updated_at 
   BEFORE UPDATE ON payments 
   FOR EACH ROW 
   EXECUTE FUNCTION update_updated_at_column();
