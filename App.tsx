@@ -1078,6 +1078,19 @@ const App: React.FC = () => {
         if (!accessToken.trim()) {
           throw new Error("El token de acceso de Mercado Pago está vacío.");
         }
+        
+        // Detectar si el token es de TEST o PRODUCCIÓN
+        // Los tokens de TEST suelen comenzar con "TEST-" o tener un formato específico
+        // Los tokens de PRODUCCIÓN suelen ser más largos y no tienen el prefijo "TEST-"
+        const isTestToken = accessToken.startsWith('TEST-') || accessToken.includes('test') || accessToken.length < 50;
+        console.log('[DineSplit] Tipo de token detectado:', {
+          isTestToken,
+          tokenLength: accessToken.length,
+          tokenPrefix: accessToken.substring(0, 10) + '...',
+          note: isTestToken 
+            ? '⚠️ Token de TEST detectado. En sandbox, Mercado Pago puede requerir credenciales de PRODUCCIÓN con usuarios de prueba.'
+            : '✅ Token de PRODUCCIÓN detectado.'
+        });
 
         const cleanUrl = window.location.origin + window.location.pathname;
         // Incluir guestId en la URL de retorno para poder identificar quién pagó
@@ -1148,11 +1161,37 @@ const App: React.FC = () => {
         if (!response.ok) {
           const errorData = await response.json();
           console.error('[DineSplit] Error de Mercado Pago:', errorData);
+          console.error('[DineSplit] Detalles del error:', {
+            status: response.status,
+            statusText: response.statusText,
+            errorCode: errorData.error,
+            errorMessage: errorData.message,
+            isTestToken,
+            accessTokenPrefix: accessToken.substring(0, 10)
+          });
+          
+          // Detectar el error específico "Una de las partes con la que intentás hacer el pago es de prueba"
+          const errorMessage = errorData.message || '';
+          if (errorMessage.includes('prueba') || errorMessage.includes('test') || errorData.error === 'bad_request') {
+            let helpfulMessage = 'Error de configuración de Mercado Pago:\n\n';
+            helpfulMessage += 'El error "Una de las partes con la que intentás hacer el pago es de prueba" generalmente ocurre cuando:\n\n';
+            helpfulMessage += '1. Estás usando un token de TEST en el sandbox\n';
+            helpfulMessage += '2. O hay una inconsistencia entre el tipo de token y el entorno\n\n';
+            helpfulMessage += `Tipo de token detectado: ${isTestToken ? 'TEST' : 'PRODUCCIÓN'}\n\n`;
+            helpfulMessage += 'Solución:\n';
+            helpfulMessage += '- Si estás en sandbox, verifica que el access token en payment_configs sea el correcto\n';
+            helpfulMessage += '- Asegúrate de usar usuarios de prueba pero con credenciales apropiadas\n';
+            helpfulMessage += '- Revisa la documentación de Mercado Pago para tu entorno específico';
+            
+            throw new Error(helpfulMessage);
+          }
+          
           throw new Error(`Error de Mercado Pago: ${errorData.message || response.statusText || 'Error desconocido'}`);
         }
 
         const pref = await response.json();
         console.log('[DineSplit] Preferencia creada exitosamente:', pref);
+        console.log('[DineSplit] init_point:', pref.init_point);
         
         if (pref.init_point) {
           window.location.href = pref.init_point;
