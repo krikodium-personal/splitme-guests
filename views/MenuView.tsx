@@ -61,9 +61,6 @@ const MenuView: React.FC<MenuViewProps> = ({
   const [selectedIngredientsToRemove, setSelectedIngredientsToRemove] = useState<string[]>([]);
   const [newGuestName, setNewGuestName] = useState('');
   
-  const [dragY, setDragY] = useState(0);
-  const isDragging = useRef(false);
-  const startY = useRef(0);
 
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const [backupNames, setBackupNames] = useState<Record<string, string>>({});
@@ -158,35 +155,16 @@ const MenuView: React.FC<MenuViewProps> = ({
     return sum + (menuItem ? Number(menuItem.price) * item.quantity : 0);
   }, 0);
 
-  const handlePointerDown = (e: React.PointerEvent) => {
-    isDragging.current = true;
-    startY.current = e.clientY - dragY;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-  };
-
-  const handlePointerMove = (e: React.PointerEvent) => {
-    if (!isDragging.current) return;
-    setDragY(Math.max(0, e.clientY - startY.current));
-  };
-
-  const handlePointerUp = () => {
-    isDragging.current = false;
-    if (dragY > 150) handleClosePdp();
-    else setDragY(0);
-  };
-
   const handleOpenPdp = (item: MenuItem) => {
     setShowDetail(item);
     // Solo cargar personalizaciones del comensal actual para este item específico
     const existing = guestSpecificCart.find(i => i.itemId === item.id && (i.status === 'elegido' || (!i.status && !i.isConfirmed)));
     setSelectedExtras(existing?.extras || []);
     setSelectedIngredientsToRemove(existing?.removedIngredients || []);
-    setDragY(0);
   };
 
   const handleClosePdp = () => {
     setShowDetail(null);
-    setDragY(0);
     if (editingCartItem) onCancelEdit();
   };
 
@@ -540,14 +518,17 @@ const MenuView: React.FC<MenuViewProps> = ({
       </footer>
 
       {showDetail && (
-        <div className="fixed inset-0 z-[100] flex flex-col justify-end animate-fade-in">
+        <div className="fixed inset-0 z-[100] flex flex-col animate-fade-in">
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={handleClosePdp}></div>
-          <div 
-            className="bg-surface-dark w-full rounded-t-[40px] border-t border-white/10 relative z-10 overflow-hidden max-h-[90vh] flex flex-col shadow-2xl"
-            style={{ transform: `translateY(${dragY}px)` }}
-          >
-            <div className="flex justify-center py-4 bg-surface-dark sticky top-0 z-20 cursor-grab active:cursor-grabbing" onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp}>
-              <div className="w-12 h-1.5 bg-white/10 rounded-full"></div>
+          <div className="bg-surface-dark w-full h-full relative z-10 overflow-hidden flex flex-col shadow-2xl">
+            {/* Botón de cerrar arriba a la derecha */}
+            <div className="absolute top-4 right-4 z-30">
+              <button
+                onClick={handleClosePdp}
+                className="size-10 rounded-full bg-black/40 backdrop-blur-sm border border-white/10 flex items-center justify-center text-white hover:bg-black/60 active:scale-95 transition-all"
+              >
+                <span className="material-symbols-outlined text-xl">close</span>
+              </button>
             </div>
             <div className="overflow-y-auto flex-1 no-scrollbar">
               <div className="h-64 w-full bg-center bg-cover" style={{ backgroundImage: `url('${showDetail.image_url}')` }}></div>
@@ -604,7 +585,7 @@ const MenuView: React.FC<MenuViewProps> = ({
               </div>
             </div>
             
-            <div className="p-4 bg-surface-dark border-t border-white/5">
+            <div className="p-4 bg-surface-dark border-t border-white/5 space-y-3">
               {existingInCart ? (
                 <div className="flex flex-col gap-3">
                   <button 
@@ -644,6 +625,13 @@ const MenuView: React.FC<MenuViewProps> = ({
                   )}
                 </button>
               )}
+              {/* CTA de cerrar - solo texto, tipografía más chica, plano secundario */}
+              <button
+                onClick={handleClosePdp}
+                className="w-full text-text-secondary text-sm font-medium py-2 active:opacity-70 transition-opacity"
+              >
+                Cerrar
+              </button>
             </div>
           </div>
         </div>

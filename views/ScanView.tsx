@@ -118,8 +118,7 @@ const ScanView: React.FC<ScanViewProps> = ({ onNext, restaurantName }) => {
       
       <div className="flex items-center px-6 justify-between shrink-0 z-20">
         <div className="flex flex-col">
-          <span className="text-[10px] font-black text-primary uppercase tracking-[0.2em]">Bienvenido a</span>
-          <h2 className="text-white text-xl font-bold tracking-tight">{restaurantName || 'SplitMe'}</h2>
+          <h2 className="text-white text-xl font-bold tracking-tight">SplitMe</h2>
         </div>
         <button className="size-10 flex items-center justify-center rounded-full bg-white/5 text-white/50">
           <span className="material-symbols-outlined">help</span>

@@ -296,18 +296,48 @@ const App: React.FC = () => {
       }
 
       if (activeTableOrder) {
-        localStorage.setItem(ACTIVE_ORDER_KEY, activeTableOrder.id);
-        setActiveOrderId(activeTableOrder.id);
-        // Cargar guests primero para tener los IDs correctos
-        await fetchOrderGuests(activeTableOrder.id);
-        // Luego cargar items (que pueden referenciar guest_id)
-        await fetchOrderItemsFromDB(activeTableOrder.id);
-        setCurrentView('MENU');
+        // Verificar que la orden todavía esté activa (no PAGADO ni CANCELADO)
+        const { data: orderCheck, error: orderCheckError } = await supabase
+          .from('orders')
+          .select('id, status')
+          .eq('id', activeTableOrder.id)
+          .maybeSingle();
+        
+        if (orderCheckError) {
+          console.error("[DineSplit] Error al verificar orden:", orderCheckError);
+          localStorage.removeItem(ACTIVE_ORDER_KEY);
+          setActiveOrderId(null);
+          setCart([]);
+          setBatches([]);
+          setCurrentView('GUEST_INFO');
+        } else if (orderCheck && orderCheck.status !== 'PAGADO' && orderCheck.status !== 'CANCELADO') {
+          console.log("[DineSplit] ✅ Orden activa validada. Cargando datos...");
+          localStorage.setItem(ACTIVE_ORDER_KEY, activeTableOrder.id);
+          setActiveOrderId(activeTableOrder.id);
+          // Cargar guests primero para tener los IDs correctos
+          await fetchOrderGuests(activeTableOrder.id);
+          // Luego cargar items (que pueden referenciar guest_id)
+          await fetchOrderItemsFromDB(activeTableOrder.id);
+          setCurrentView('MENU');
+        } else {
+          // La orden ya fue cerrada, limpiar y empezar de nuevo
+          console.log("[DineSplit] ❌ La orden encontrada ya está cerrada (status:", orderCheck?.status || 'NO EXISTE', "). Limpiando sesión completamente.");
+          localStorage.clear(); // Limpiar todo, no solo ACTIVE_ORDER_KEY
+          setActiveOrderId(null);
+          setCart([]);
+          setBatches([]);
+          setGuests([{ id: '1', name: 'Invitado 1 (Tú)', isHost: true }]);
+          setActiveGuestId('1');
+          setCurrentView('GUEST_INFO');
+        }
       } else {
+        console.log("[DineSplit] No hay orden activa. Empezando nueva sesión.");
         localStorage.removeItem(ACTIVE_ORDER_KEY);
         setActiveOrderId(null);
         setCart([]);
         setBatches([]);
+        setGuests([{ id: '1', name: 'Invitado 1 (Tú)', isHost: true }]);
+        setActiveGuestId('1');
         setCurrentView('GUEST_INFO');
       }
 
@@ -845,23 +875,27 @@ const App: React.FC = () => {
           setLoading(false);
         }
       } else if (resParam && tableParam) {
+        // Si hay parámetros res y table en la URL, iniciar sesión
         await handleStartSession(resParam, tableParam);
         window.history.replaceState({}, '', window.location.pathname);
       } else {
-        const savedSession = localStorage.getItem(SESSION_KEY);
-        if (savedSession) {
-          try {
-            const { res, table } = JSON.parse(savedSession);
-            await handleStartSession(res, table);
-          } catch (e) {
-            localStorage.clear();
-            setCurrentView('SCAN');
-            setLoading(false);
-          }
-        } else {
-          setCurrentView('SCAN');
-          setLoading(false);
-        }
+        // Si no hay parámetros en la URL (URL raíz), SIEMPRE mostrar pantalla de inicio
+        // No restaurar sesiones guardadas, siempre empezar desde cero
+        console.log("[DineSplit] URL raíz detectada. Mostrando pantalla de inicio (SCAN) sin restaurar sesión.");
+        // Limpiar completamente el estado, incluyendo restaurante y mesa
+        localStorage.removeItem(ACTIVE_ORDER_KEY);
+        setRestaurant(null);
+        setCurrentTable(null);
+        setCurrentWaiter(null);
+        setMenuItems([]);
+        setCategories([]);
+        setActiveOrderId(null);
+        setCart([]);
+        setBatches([]);
+        setGuests([{ id: '1', name: 'Invitado 1 (Tú)', isHost: true }]);
+        setActiveGuestId('1');
+        setCurrentView('SCAN');
+        setLoading(false);
       }
     };
     initApp();
@@ -1737,7 +1771,7 @@ const App: React.FC = () => {
         switch (currentView) {
           case 'INIT':
           case 'SCAN': 
-            return <ScanView onNext={handleStartSession} restaurantName={restaurant?.name} />;
+            return <ScanView onNext={handleStartSession} restaurantName={undefined} />;
           case 'GUEST_INFO': 
             return <GuestInfoView 
               onBack={() => navigate('SCAN')} 
@@ -1863,7 +1897,7 @@ const App: React.FC = () => {
           case 'CONFIRMATION': 
             return <ConfirmationView onRestart={() => { localStorage.clear(); window.location.href = '/'; }} guests={guests} tableNumber={currentTable?.table_number} />;
           default: 
-            return <ScanView onNext={handleStartSession} restaurantName={restaurant?.name} />;
+            return <ScanView onNext={handleStartSession} restaurantName={undefined} />;
         }
       })()}
     </div>
