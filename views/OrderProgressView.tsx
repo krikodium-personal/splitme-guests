@@ -230,23 +230,23 @@ const OrderProgressView: React.FC<OrderProgressViewProps> = ({
               .sort((a, b) => b.batch_number - a.batch_number) // Ordenar descendente: último batch arriba
               .map((batch, index) => {
                 const batchStatus = batch.status?.toUpperCase() || '';
-                const status = getStatusConfig(batch.status);
-                const items = groupedItems[batch.id] || [];
+              const status = getStatusConfig(batch.status);
+              const items = groupedItems[batch.id] || [];
                 const isReady = batchStatus === 'LISTO';
               
               return (
                 <div key={batch.id} className="animate-fade-in-up" style={{ animationDelay: `${index * 0.1}s` }}>
                   <div className="mb-4 px-2">
                     <div className="flex items-center justify-between mb-1">
-                      <div className="flex items-center gap-3">
-                        <div className={`size-8 rounded-lg ${status.bg} flex items-center justify-center`}>
-                          <span className={`material-symbols-outlined text-sm ${status.color}`}>{status.icon}</span>
-                        </div>
-                        <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/60">Envío #{batch.batch_number}</span>
+                    <div className="flex items-center gap-3">
+                      <div className={`size-8 rounded-lg ${status.bg} flex items-center justify-center`}>
+                        <span className={`material-symbols-outlined text-sm ${status.color}`}>{status.icon}</span>
                       </div>
-                      <span className={`text-[10px] font-black uppercase px-2 py-1 rounded-md border ${status.color} ${status.bg} border-current`}>
-                        {status.label}
-                      </span>
+                      <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/60">Envío #{batch.batch_number}</span>
+                    </div>
+                    <span className={`text-[10px] font-black uppercase px-2 py-1 rounded-md border ${status.color} ${status.bg} border-current`}>
+                      {status.label}
+                    </span>
                     </div>
                     <p className="text-[9px] text-white/40 font-medium ml-11">
                       {(() => {

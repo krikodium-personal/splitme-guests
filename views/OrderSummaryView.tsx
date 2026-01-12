@@ -198,8 +198,8 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
       <div className="flex-1 overflow-y-auto p-4 pb-64 no-scrollbar">
         {viewMode === 'batches' ? (
           <>
-            {/* SECCIÓN: PENDIENTES */}
-            {pendingItems.length > 0 && (
+        {/* SECCIÓN: PENDIENTES */}
+        {pendingItems.length > 0 && (
           <div className="mb-10">
             <h3 className="text-primary text-[10px] font-black uppercase tracking-[0.3em] mb-4 pl-2">Por Enviar a Cocina</h3>
             <div className="space-y-4">
@@ -220,16 +220,16 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                         return (
                           <div key={item.id} className="flex flex-col gap-2">
                             <div className="flex items-center gap-4">
-                              <div className="size-12 rounded-xl bg-cover bg-center shrink-0 border border-white/5" style={{ backgroundImage: `url("${dish?.image_url}")` }}></div>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-bold truncate">{dish?.name}</p>
-                                <p className="text-primary text-xs font-bold">${formatPrice(Number(dish?.price || 0))}</p>
-                              </div>
-                              <div className="flex items-center gap-3 bg-background-dark/50 rounded-full px-2 py-1 shrink-0 border border-white/5">
-                                <button onClick={() => onUpdateQuantity(item.id, -1)} className="size-6 rounded-full hover:bg-white/10 flex items-center justify-center"><span className="material-symbols-outlined text-xs">remove</span></button>
-                                <span className="text-xs font-black w-4 text-center">{item.quantity}</span>
-                                <button onClick={() => onUpdateQuantity(item.id, 1)} className="size-6 rounded-full bg-white/10 flex items-center justify-center"><span className="material-symbols-outlined text-xs">add</span></button>
-                              </div>
+                            <div className="size-12 rounded-xl bg-cover bg-center shrink-0 border border-white/5" style={{ backgroundImage: `url("${dish?.image_url}")` }}></div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-bold truncate">{dish?.name}</p>
+                              <p className="text-primary text-xs font-bold">${formatPrice(Number(dish?.price || 0))}</p>
+                            </div>
+                            <div className="flex items-center gap-3 bg-background-dark/50 rounded-full px-2 py-1 shrink-0 border border-white/5">
+                              <button onClick={() => onUpdateQuantity(item.id, -1)} className="size-6 rounded-full hover:bg-white/10 flex items-center justify-center"><span className="material-symbols-outlined text-xs">remove</span></button>
+                              <span className="text-xs font-black w-4 text-center">{item.quantity}</span>
+                              <button onClick={() => onUpdateQuantity(item.id, 1)} className="size-6 rounded-full bg-white/10 flex items-center justify-center"><span className="material-symbols-outlined text-xs">add</span></button>
+                            </div>
                             </div>
                             {/* Personalizaciones */}
                             {(item.extras?.length > 0 || item.removedIngredients?.length > 0) && (
@@ -266,11 +266,11 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                 <div key={batch.id} className="space-y-3">
                   <div className="px-2">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em]">Envío #{batch.batch_number}</span>
-                      <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full border border-current ${status.color} ${status.bg}`}>
-                         <span className="material-symbols-outlined text-[14px] font-black">{status.icon}</span>
-                         <span className="text-[9px] font-black uppercase tracking-widest">{status.label}</span>
-                      </div>
+                    <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em]">Envío #{batch.batch_number}</span>
+                    <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full border border-current ${status.color} ${status.bg}`}>
+                       <span className="material-symbols-outlined text-[14px] font-black">{status.icon}</span>
+                       <span className="text-[9px] font-black uppercase tracking-widest">{status.label}</span>
+                    </div>
                     </div>
                     <p className="text-[9px] text-white/40 font-medium">
                       {batchStatus === 'SERVIDO' 
@@ -288,17 +288,17 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                         return (
                           <div key={item.id} className="p-4 flex flex-col gap-2">
                             <div className="flex items-center gap-4">
-                              <div className="size-11 rounded-xl bg-cover bg-center shrink-0 grayscale opacity-40 border border-white/5" style={{ backgroundImage: `url("${dish?.image_url}")` }}></div>
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 mb-0.5">
-                                  <div className={`size-4 rounded-full ${getGuestColor(item.guestId)} flex items-center justify-center shrink-0`}>
-                                    <span className="text-[6px] font-black text-white">{getInitials(guest?.name || '?')}</span>
-                                  </div>
-                                  <p className="text-sm font-bold text-white/80 truncate">{dish?.name}</p>
+                            <div className="size-11 rounded-xl bg-cover bg-center shrink-0 grayscale opacity-40 border border-white/5" style={{ backgroundImage: `url("${dish?.image_url}")` }}></div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-0.5">
+                                <div className={`size-4 rounded-full ${getGuestColor(item.guestId)} flex items-center justify-center shrink-0`}>
+                                  <span className="text-[6px] font-black text-white">{getInitials(guest?.name || '?')}</span>
                                 </div>
-                                <p className="text-white/30 text-[10px] font-black uppercase tracking-widest">Cantidad: {item.quantity}</p>
+                                <p className="text-sm font-bold text-white/80 truncate">{dish?.name}</p>
                               </div>
-                              <span className="text-xs font-black text-white/40 tabular-nums">${formatPrice((dish?.price || 0) * item.quantity)}</span>
+                              <p className="text-white/30 text-[10px] font-black uppercase tracking-widest">Cantidad: {item.quantity}</p>
+                            </div>
+                            <span className="text-xs font-black text-white/40 tabular-nums">${formatPrice((dish?.price || 0) * item.quantity)}</span>
                             </div>
                             {/* Personalizaciones */}
                             {(item.extras?.length > 0 || item.removedIngredients?.length > 0) && (
@@ -322,11 +322,11 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
           </div>
         )}
 
-            {cart.length === 0 && (
-              <div className="h-full flex flex-col items-center justify-center text-center opacity-20 pt-20">
-                <span className="material-symbols-outlined text-6xl mb-4">shopping_cart</span>
-                <p className="font-bold">Tu carrito está vacío</p>
-              </div>
+        {cart.length === 0 && (
+          <div className="h-full flex flex-col items-center justify-center text-center opacity-20 pt-20">
+            <span className="material-symbols-outlined text-6xl mb-4">shopping_cart</span>
+            <p className="font-bold">Tu carrito está vacío</p>
+          </div>
             )}
           </>
         ) : (

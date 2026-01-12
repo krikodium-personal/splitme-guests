@@ -203,8 +203,13 @@ const ScanView: React.FC<ScanViewProps> = ({ onNext, restaurantName }) => {
               <div>
                 <label className="text-[10px] font-black text-text-secondary uppercase tracking-widest block mb-2 ml-1">Número de Mesa</label>
                 <input 
-                  type="text" value={tableNumber} onChange={e => setTableNumber(e.target.value)}
-                  placeholder="Ej: 1" className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-5 text-white text-xl font-bold outline-none focus:ring-2 focus:ring-primary transition-all"
+                  type="tel" 
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={tableNumber} 
+                  onChange={e => setTableNumber(e.target.value.replace(/\D/g, ''))}
+                  placeholder="Ej: 1" 
+                  className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-5 text-white text-xl font-bold outline-none focus:ring-2 focus:ring-primary transition-all"
                 />
               </div>
               <button 

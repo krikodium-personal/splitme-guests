@@ -144,10 +144,10 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, gu
       return splitData.map((share) => {
         const guest = localGuests.find(g => g.id === share.id);
         return {
-          ...share,
+        ...share,
           ...guest,
           status: share.id === currentUserId ? 'PENDIENTE' : 'IMPAGADO',
-          amount: share.total 
+        amount: share.total 
         };
       });
     }
@@ -287,11 +287,11 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, gu
                     ? `${shareUrl.split('?')[0]}?orderId=${orderIdToUse}`
                     : shareUrl.split('?')[0];
                   return (
-                    <img 
+                <img 
                       src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrUrl)}&color=102217`} 
-                      alt="Mesa QR" 
-                      className="w-40 h-40"
-                    />
+                  alt="Mesa QR" 
+                  className="w-40 h-40"
+                />
                   );
                 })()}
               </div>
@@ -324,9 +324,9 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, gu
               <div className="ml-3 flex-1 min-w-0">
                 <p className="text-white font-bold truncate">{isMe ? 'Tú' : diner.name}</p>
                 {!isPaid ? (
-                  <p className="text-xs font-black uppercase tracking-widest text-[#9db9a8]">
-                    Debe ${formatPrice(diner.amount)}
-                  </p>
+                <p className="text-xs font-black uppercase tracking-widest text-[#9db9a8]">
+                  Debe ${formatPrice(diner.amount)}
+                </p>
                 ) : (
                   <p className="text-xs font-black uppercase tracking-widest text-[#9db9a8]">
                     Pagado: {diner.payment_method ? getPaymentMethodLabel(diner.payment_method) : 'N/A'}

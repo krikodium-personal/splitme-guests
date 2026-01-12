@@ -1,5 +1,6 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { Guest, MenuItem, OrderItem } from '../types';
 import { getInitials, getGuestColor } from './GuestInfoView';
 
@@ -49,18 +50,139 @@ const NutritionalItem = ({ label, value, unit, isPrimary = false }: { label: str
   </div>
 );
 
+const getDietaryTagConfig = (tag: string) => {
+  const normalizedTag = tag.toLowerCase();
+  
+  if (normalizedTag.includes('spicy') || normalizedTag.includes('picante')) {
+    return {
+      bgColor: 'bg-red-950/60',
+      textColor: 'text-red-300',
+      borderColor: 'border-red-800/40',
+      icon: 'local_fire_department',
+      label: tag
+    };
+  } else if (normalizedTag.includes('popular') || normalizedTag.includes('firma')) {
+    return {
+      bgColor: 'bg-white/5',
+      textColor: 'text-white',
+      borderColor: 'border-white/10',
+      icon: 'star',
+      label: tag
+    };
+  } else if (normalizedTag.includes('saludable') || normalizedTag.includes('healthy')) {
+    return {
+      bgColor: 'bg-white/5',
+      textColor: 'text-green-300',
+      borderColor: 'border-green-800/40',
+      icon: 'eco',
+      label: tag
+    };
+  } else if (normalizedTag.includes('gluten') || normalizedTag.includes('gluten-free')) {
+    return {
+      bgColor: 'bg-white/5',
+      textColor: 'text-white',
+      borderColor: 'border-white/10',
+      icon: null,
+      label: tag
+    };
+  } else if (normalizedTag.includes('vegano') || normalizedTag.includes('vegan')) {
+    return {
+      bgColor: 'bg-white/5',
+      textColor: 'text-green-300',
+      borderColor: 'border-green-800/40',
+      icon: 'restaurant',
+      label: tag
+    };
+  }
+  
+  // Default styling
+  return {
+    bgColor: 'bg-white/5',
+    textColor: 'text-white',
+    borderColor: 'border-white/10',
+    icon: null,
+    label: tag
+  };
+};
+
+// Helper functions para convertir entre nombres y slugs
+const categoryToSlug = (categoryName: string): string => {
+  return categoryName
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // Remover acentos
+    .replace(/[^a-z0-9]+/g, '-') // Reemplazar espacios y caracteres especiales con guiones
+    .replace(/^-+|-+$/g, ''); // Remover guiones al inicio y final
+};
+
+const slugToCategory = (slug: string, categories: any[]): string | null => {
+  const normalizedSlug = slug.toLowerCase();
+  // Buscar en categorías principales
+  const category = categories.find(c => 
+    c.parent_id === null && categoryToSlug(c.name) === normalizedSlug
+  );
+  if (category) return category.name;
+  
+  // Si no se encuentra, intentar con "Destacados"
+  if (normalizedSlug === 'destacados') return 'Destacados';
+  
+  return null;
+};
+
+const subcategorySlugToId = (slug: string, categories: any[], parentCategoryName: string): string | null => {
+  const parentCat = categories.find(c => c.name === parentCategoryName && c.parent_id === null);
+  if (!parentCat) return null;
+  
+  const subcategory = categories.find(c => 
+    c.parent_id === parentCat.id && categoryToSlug(c.name) === slug.toLowerCase()
+  );
+  return subcategory?.id || null;
+};
+
 const MenuView: React.FC<MenuViewProps> = ({ 
-  guests, setGuests, cart, onAddToCart, onUpdateCartItem, onNext,
+  guests, setGuests, cart, onAddToCart, onUpdateCartItem, onNext, 
   selectedGuestId, onSelectGuest, initialCategory, onCategoryChange, 
   editingCartItem, onCancelEdit, menuItems, categories: supabaseCategories,
   table, restaurant, onSaveGuestChanges
 }) => {
+  const { category: categorySlug, subcategory: subcategorySlug } = useParams<{ category?: string; subcategory?: string }>();
+  const navigate = useNavigate();
+  
   const [showDetail, setShowDetail] = useState<MenuItem | null>(null);
   const [isManageGuestsOpen, setIsManageGuestsOpen] = useState(false);
   const [selectedExtras, setSelectedExtras] = useState<string[]>([]);
   const [selectedIngredientsToRemove, setSelectedIngredientsToRemove] = useState<string[]>([]);
   const [newGuestName, setNewGuestName] = useState('');
+  const [selectedSubcategory, setSelectedSubcategory] = useState<string | null>(null);
   
+  // Sincronizar categoría desde la URL
+  useEffect(() => {
+    if (categorySlug) {
+      const categoryName = slugToCategory(categorySlug, supabaseCategories);
+      if (categoryName && categoryName !== initialCategory) {
+        onCategoryChange(categoryName);
+      }
+    } else {
+      // Si no hay slug en la URL, redirigir a "Destacados" por defecto
+      if (initialCategory === 'Destacados') {
+        navigate('/menu/destacados', { replace: true });
+      } else {
+        navigate(`/menu/${categoryToSlug(initialCategory)}`, { replace: true });
+      }
+    }
+  }, [categorySlug, supabaseCategories, initialCategory, onCategoryChange, navigate]);
+  
+  // Sincronizar subcategoría desde la URL
+  useEffect(() => {
+    if (subcategorySlug && initialCategory) {
+      const subcategoryId = subcategorySlugToId(subcategorySlug, supabaseCategories, initialCategory);
+      if (subcategoryId && subcategoryId !== selectedSubcategory) {
+        setSelectedSubcategory(subcategoryId);
+      }
+    } else if (!subcategorySlug && selectedSubcategory) {
+      setSelectedSubcategory(null);
+    }
+  }, [subcategorySlug, initialCategory, supabaseCategories, selectedSubcategory]);
 
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const [backupNames, setBackupNames] = useState<Record<string, string>>({});
@@ -109,6 +231,11 @@ const MenuView: React.FC<MenuViewProps> = ({
       setSelectedIngredientsToRemove([]);
     }
   }, [selectedGuestId, showDetail, guestSpecificCart]);
+
+  // Resetear subcategoría cuando cambia la categoría principal
+  useEffect(() => {
+    setSelectedSubcategory(null);
+  }, [initialCategory]);
 
   const categoriesList = useMemo(() => {
     const dbCategories = (supabaseCategories || [])
@@ -222,7 +349,7 @@ const MenuView: React.FC<MenuViewProps> = ({
     setAddingItems(prev => new Set(prev).add(showDetail.id));
     try {
       await onAddToCart(showDetail, selectedGuestId, [...selectedExtras], [...selectedIngredientsToRemove]);
-      handleClosePdp();
+    handleClosePdp();
     } catch (error) {
       console.error("Error al agregar item:", error);
     } finally {
@@ -317,14 +444,60 @@ const MenuView: React.FC<MenuViewProps> = ({
     }
   };
 
-  const filteredItems = useMemo(() => {
-    if (initialCategory === 'Destacados') return menuItems.filter(item => item.is_featured);
+  // Obtener subcategorías disponibles para la categoría actual
+  const availableSubcategories = useMemo(() => {
+    if (initialCategory === 'Destacados') return [];
+    
     const parentCatObj = supabaseCategories.find(c => c.name === initialCategory);
     if (!parentCatObj) return [];
+    
     const subCatIds = supabaseCategories.filter(c => c.parent_id === parentCatObj.id).map(c => c.id);
     const allRelevantIds = [parentCatObj.id, ...subCatIds];
-    return menuItems.filter(item => allRelevantIds.includes(item.category_id));
+    
+    // Obtener todos los items de esta categoría
+    const categoryItems = menuItems.filter(item => allRelevantIds.includes(item.category_id));
+    
+    // Extraer subcategory_id únicos que no sean null
+    const uniqueSubcategoryIds = new Set<string>();
+    categoryItems.forEach(item => {
+      if (item.subcategory_id) {
+        uniqueSubcategoryIds.add(item.subcategory_id);
+      }
+    });
+    
+    // Obtener los nombres de las subcategorías desde supabaseCategories
+    const subcategoriesWithNames = Array.from(uniqueSubcategoryIds).map(subId => {
+      const subCatObj = supabaseCategories.find(c => c.id === subId);
+      return {
+        id: subId,
+        name: subCatObj?.name || subId
+      };
+    });
+    
+    return subcategoriesWithNames;
   }, [initialCategory, menuItems, supabaseCategories]);
+
+  // Verificar si la categoría tiene subcategorías
+  const hasSubcategories = availableSubcategories.length > 0;
+
+  const filteredItems = useMemo(() => {
+    if (initialCategory === 'Destacados') return menuItems.filter(item => item.is_featured);
+    
+    const parentCatObj = supabaseCategories.find(c => c.name === initialCategory);
+    if (!parentCatObj) return [];
+    
+    const subCatIds = supabaseCategories.filter(c => c.parent_id === parentCatObj.id).map(c => c.id);
+    const allRelevantIds = [parentCatObj.id, ...subCatIds];
+    
+    let items = menuItems.filter(item => allRelevantIds.includes(item.category_id));
+    
+    // Filtrar por subcategoría si está seleccionada
+    if (selectedSubcategory !== null) {
+      items = items.filter(item => item.subcategory_id === selectedSubcategory);
+    }
+    
+    return items;
+  }, [initialCategory, menuItems, supabaseCategories, selectedSubcategory]);
 
   const hasNutritionalInfo = (item: MenuItem) => {
     return item.calories !== null || item.protein_g !== null || item.total_fat_g !== null || 
@@ -333,8 +506,9 @@ const MenuView: React.FC<MenuViewProps> = ({
   };
 
   const hasCustomization = (item: MenuItem) => {
-    return item.customer_customization?.ingredientsToAdd?.length || 
-           item.customer_customization?.ingredientsToRemove?.length;
+    const hasAdd = (item.customer_customization?.ingredientsToAdd?.length || 0) > 0;
+    const hasRemove = (item.customer_customization?.ingredientsToRemove?.length || 0) > 0;
+    return hasAdd || hasRemove;
   };
 
   return (
@@ -349,21 +523,21 @@ const MenuView: React.FC<MenuViewProps> = ({
 
         <div className="flex gap-4 overflow-x-auto no-scrollbar px-6 pt-2 pb-2 items-start flex-nowrap snap-x touch-pan-x">
           {guests.map((g) => (
-            <div key={g.id} className="flex flex-col items-center gap-2 shrink-0 max-w-[70px] snap-start">
+            <div key={g.id} className="flex flex-col items-center gap-2 shrink-0 max-w-[60px] snap-start">
               <button
                 onClick={() => onSelectGuest(g.id)}
-                className={`relative size-14 rounded-full transition-all duration-300 ${
+                className={`relative size-10 rounded-full transition-all duration-300 ${
                   selectedGuestId === g.id 
                     ? 'ring-4 ring-primary ring-offset-4 ring-offset-background-dark scale-105' 
                     : 'opacity-40 hover:opacity-100'
                 }`}
               >
-                <div className={`w-full h-full rounded-full overflow-hidden flex items-center justify-center font-black text-lg ${getGuestColor(g.id)}`}>
+                <div className={`w-full h-full rounded-full overflow-hidden flex items-center justify-center font-black text-sm ${getGuestColor(g.id)}`}>
                   {getInitials(g.name)}
                 </div>
                 {selectedGuestId === g.id && (
-                  <div className="absolute -bottom-1 -right-1 bg-primary text-background-dark rounded-full size-6 flex items-center justify-center border-2 border-background-dark shadow-lg">
-                    <span className="material-symbols-outlined text-[14px] font-black">check</span>
+                  <div className="absolute -bottom-1 -right-1 bg-primary text-background-dark rounded-full size-5 flex items-center justify-center border-2 border-background-dark shadow-lg">
+                    <span className="material-symbols-outlined text-[12px] font-black">check</span>
                   </div>
                 )}
               </button>
@@ -376,9 +550,9 @@ const MenuView: React.FC<MenuViewProps> = ({
           <div className="flex flex-col items-center gap-2 shrink-0 ml-2 max-w-[90px] snap-start">
             <button 
               onClick={() => setIsManageGuestsOpen(true)}
-              className="size-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-text-secondary active:scale-95 transition-all hover:bg-white/10"
+              className="size-10 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-text-secondary active:scale-95 transition-all hover:bg-white/10"
             >
-              <span className="material-symbols-outlined text-2xl">group</span>
+              <span className="material-symbols-outlined text-lg">group</span>
             </button>
             <span className="text-[9px] font-black uppercase tracking-widest text-text-secondary opacity-60 text-center leading-tight">Administrar<br/>comensales</span>
           </div>
@@ -391,9 +565,13 @@ const MenuView: React.FC<MenuViewProps> = ({
           const isSelected = initialCategory === cat;
           
           return (
-            <button
-              key={cat}
-              onClick={() => onCategoryChange(cat)}
+          <button
+            key={cat}
+            onClick={() => {
+              const slug = cat === 'Destacados' ? 'destacados' : categoryToSlug(cat);
+              navigate(`/menu/${slug}`);
+              onCategoryChange(cat);
+            }}
               className={`px-4 py-2 rounded-full whitespace-nowrap text-sm font-bold transition-colors ${
                 isSelected 
                   ? 'bg-primary text-background-dark' 
@@ -401,12 +579,52 @@ const MenuView: React.FC<MenuViewProps> = ({
                     ? 'bg-primary/20 text-primary border border-primary/30' 
                     : 'bg-white/5 text-text-secondary'
               }`}
-            >
-              {cat} {categoryCounts[cat] > 0 && <span className="ml-1 opacity-60">({categoryCounts[cat]})</span>}
-            </button>
+          >
+            {cat} {categoryCounts[cat] > 0 && <span className="ml-1 opacity-60">({categoryCounts[cat]})</span>}
+          </button>
           );
         })}
       </nav>
+
+      {hasSubcategories && (
+        <nav className="flex gap-3 overflow-x-auto no-scrollbar px-4 py-3 bg-background-dark border-b border-white/5">
+          <button
+            onClick={() => {
+              const categorySlug = initialCategory === 'Destacados' ? 'destacados' : categoryToSlug(initialCategory);
+              navigate(`/menu/${categorySlug}`);
+              setSelectedSubcategory(null);
+            }}
+            className={`px-3 py-1.5 rounded-full whitespace-nowrap text-xs font-bold transition-colors shrink-0 ${
+              selectedSubcategory === null
+                ? 'bg-primary/30 text-primary border border-primary/50'
+                : 'bg-white/5 text-text-secondary border border-white/5'
+            }`}
+          >
+            Todos
+          </button>
+          {availableSubcategories.map(subcat => {
+            const isSelected = selectedSubcategory === subcat.id;
+            return (
+              <button
+                key={subcat.id}
+                onClick={() => {
+                  const categorySlug = initialCategory === 'Destacados' ? 'destacados' : categoryToSlug(initialCategory);
+                  const subcategorySlug = categoryToSlug(subcat.name);
+                  navigate(`/menu/${categorySlug}/${subcategorySlug}`);
+                  setSelectedSubcategory(subcat.id);
+                }}
+                className={`px-3 py-1.5 rounded-full whitespace-nowrap text-xs font-bold transition-colors shrink-0 ${
+                  isSelected
+                    ? 'bg-primary/30 text-primary border border-primary/50'
+                    : 'bg-white/5 text-text-secondary border border-white/5'
+                }`}
+              >
+                {subcat.name}
+              </button>
+            );
+          })}
+        </nav>
+      )}
 
       <main className="flex-1 overflow-y-auto p-4 pb-32 no-scrollbar">
         <div className="grid grid-cols-1 gap-4">
@@ -426,61 +644,88 @@ const MenuView: React.FC<MenuViewProps> = ({
               >
                 <div className="flex gap-4">
                   <div className="size-24 rounded-2xl bg-center bg-cover border border-white/5 shrink-0 shadow-lg" style={{ backgroundImage: `url('${item.image_url}')` }}></div>
-                  <div className="flex-1 flex flex-col justify-center min-w-0 pr-10">
-                    <h3 className="font-bold text-base truncate mb-1">{item.name}</h3>
-                    <p className="text-text-secondary text-xs line-clamp-2 mb-2">{item.description}</p>
-                    <div className="flex items-center justify-between">
-                      <span className="text-primary font-black">${formatPrice(Number(item.price))}</span>
-                    </div>
-                  </div>
-
-                  <div className="absolute right-4 top-4 flex flex-col items-center z-10">
-                    {addingItems.has(item.id) ? (
-                      // Mostrar spinner mientras se guarda
-                      <div className="size-12 rounded-2xl bg-primary/20 border border-primary/30 flex items-center justify-center">
-                        <div className="size-5 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
-                      </div>
-                    ) : totalQty > 0 ? (
-                      <div 
-                        className="flex flex-col items-center bg-background-dark/80 backdrop-blur-md border border-white/10 rounded-2xl overflow-hidden shadow-2xl"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <button 
-                          onClick={(e) => handleIncrement(e, item)}
-                          className="size-11 flex items-center justify-center text-primary active:bg-white/5 transition-colors"
-                        >
-                          <span className="material-symbols-outlined font-black">add</span>
-                        </button>
-                        
-                        <div className="h-8 flex items-center justify-center">
-                          <span className="text-sm font-black tabular-nums text-white">{totalQty}</span>
-                        </div>
-
-                        <button 
-                          onClick={(e) => {
-                            if (simpleItem) {
-                              handleDecrement(e, item.id);
-                            } else {
-                              const anyItem = guestSpecificCart.find(i => i.itemId === item.id && (i.status === 'elegido' || (!i.status && !i.isConfirmed)));
-                              if (anyItem) onUpdateCartItem(anyItem.id, { quantity: anyItem.quantity - 1 });
-                            }
-                          }}
-                          className={`size-11 flex items-center justify-center active:bg-white/5 transition-colors ${showTrash ? 'text-red-500' : 'text-primary'}`}
-                        >
-                          <span className="material-symbols-outlined font-black">
-                            {showTrash ? 'delete' : 'remove'}
-                          </span>
-                        </button>
-                      </div>
-                    ) : (
-                      <button 
-                        onClick={(e) => handleIncrement(e, item)}
-                        className="size-12 rounded-2xl bg-primary text-background-dark shadow-lg shadow-primary/20 flex items-center justify-center active:scale-90 transition-all"
-                      >
-                        <span className="material-symbols-outlined font-black">add</span>
-                      </button>
+                  <div className="flex-1 flex flex-col justify-center min-w-0">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <h3 className="font-bold text-base truncate">{item.name}</h3>
+                    {item.is_new && (
+                      <span className="px-2 py-0.5 rounded-full bg-primary text-background-dark text-[10px] font-black uppercase tracking-wider shrink-0">
+                        NUEVO
+                      </span>
                     )}
                   </div>
+                  {item.dietary_tags && item.dietary_tags.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {item.dietary_tags.map((tag, idx) => {
+                        const config = getDietaryTagConfig(tag);
+                        return (
+                          <div
+                            key={idx}
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full ${config.bgColor} ${config.borderColor} border text-xs font-bold ${config.textColor}`}
+                          >
+                            {config.icon && (
+                              <span className="material-symbols-outlined text-xs" style={{ fontSize: '14px' }}>
+                                {config.icon}
+                              </span>
+                            )}
+                            <span>{config.label}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <p className="text-text-secondary text-xs line-clamp-2 mb-3">{item.description}</p>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-primary font-black text-lg">${formatPrice(Number(item.price))}</span>
+                    <div 
+                      className="flex items-center z-10 shrink-0"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {addingItems.has(item.id) ? (
+                        // Mostrar spinner mientras se guarda
+                        <div className="px-4 py-2 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center">
+                          <div className="size-4 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                        </div>
+                      ) : totalQty > 0 ? (
+                        <div className="flex items-center gap-2 bg-background-dark/80 backdrop-blur-md border border-white/10 rounded-xl overflow-hidden shadow-lg">
+                          <button 
+                            onClick={(e) => {
+                              if (simpleItem) {
+                                handleDecrement(e, item.id);
+                              } else {
+                                const anyItem = guestSpecificCart.find(i => i.itemId === item.id && (i.status === 'elegido' || (!i.status && !i.isConfirmed)));
+                                if (anyItem) onUpdateCartItem(anyItem.id, { quantity: anyItem.quantity - 1 });
+                              }
+                            }}
+                            className={`h-9 w-9 flex items-center justify-center active:bg-white/5 transition-colors ${showTrash ? 'text-red-500' : 'text-primary'}`}
+                          >
+                            <span className="material-symbols-outlined font-black text-lg">
+                              {showTrash ? 'delete' : 'remove'}
+                            </span>
+                          </button>
+                          
+                          <div className="min-w-[2rem] flex items-center justify-center">
+                            <span className="text-sm font-black tabular-nums text-white">{totalQty}</span>
+                          </div>
+
+                          <button 
+                            onClick={(e) => handleIncrement(e, item)}
+                            className="h-9 w-9 flex items-center justify-center text-primary active:bg-white/5 transition-colors"
+                          >
+                            <span className="material-symbols-outlined font-black text-lg">add</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <button 
+                          onClick={(e) => handleIncrement(e, item)}
+                          className="px-4 py-2 rounded-xl bg-black/40 border border-white/20 hover:bg-black/60 active:scale-95 transition-all flex items-center gap-1.5"
+                        >
+                          <span className="material-symbols-outlined font-black text-base text-white">add</span>
+                          <span className="text-sm font-bold text-white">Add</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
                 </div>
 
                 {/* Visualización de personalizaciones del comensal seleccionado */}
@@ -534,16 +779,43 @@ const MenuView: React.FC<MenuViewProps> = ({
               <div className="h-64 w-full bg-center bg-cover" style={{ backgroundImage: `url('${showDetail.image_url}')` }}></div>
               <div className="p-8">
                 <div className="flex justify-between items-start mb-4">
-                  <h2 className="text-3xl font-black leading-tight pr-4">{showDetail.name}</h2>
+                  <div className="flex items-center gap-3 pr-4">
+                    <h2 className="text-3xl font-black leading-tight">{showDetail.name}</h2>
+                    {showDetail.is_new && (
+                      <span className="px-3 py-1 rounded-full bg-primary text-background-dark text-xs font-black uppercase tracking-wider shrink-0">
+                        NUEVO
+                      </span>
+                    )}
+                  </div>
                   <span className="text-2xl font-black text-primary">${formatPrice(Number(showDetail.price))}</span>
                 </div>
+                {showDetail.dietary_tags && showDetail.dietary_tags.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mb-6">
+                    {showDetail.dietary_tags.map((tag, idx) => {
+                      const config = getDietaryTagConfig(tag);
+                      return (
+                        <div
+                          key={idx}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full ${config.bgColor} ${config.borderColor} border text-xs font-bold ${config.textColor}`}
+                        >
+                          {config.icon && (
+                            <span className="material-symbols-outlined text-sm" style={{ fontSize: '16px' }}>
+                              {config.icon}
+                            </span>
+                          )}
+                          <span>{config.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
                 <p className="text-text-secondary leading-relaxed mb-8">{showDetail.description}</p>
                 <div className="space-y-6">
                   {hasCustomization(showDetail) && (
                     <div className="bg-background-dark/30 rounded-[2.5rem] p-6 border border-white/5">
                       <div className="flex items-center gap-2 mb-6"><span className="material-symbols-outlined text-primary text-xl">tune</span><h3 className="text-[10px] font-black uppercase text-white tracking-[0.3em]">Personalización</h3></div>
                       <div className="space-y-6">
-                        {showDetail.customer_customization?.ingredientsToRemove && (
+                        {showDetail.customer_customization?.ingredientsToRemove && showDetail.customer_customization.ingredientsToRemove.length > 0 && (
                           <div>
                             <p className="text-[9px] font-black uppercase text-red-400 tracking-widest mb-3">Quitar:</p>
                             <div className="flex flex-wrap gap-2">
@@ -553,7 +825,7 @@ const MenuView: React.FC<MenuViewProps> = ({
                             </div>
                           </div>
                         )}
-                        {showDetail.customer_customization?.ingredientsToAdd && (
+                        {showDetail.customer_customization?.ingredientsToAdd && showDetail.customer_customization.ingredientsToAdd.length > 0 && (
                           <div>
                             <p className="text-[9px] font-black uppercase text-primary tracking-widest mb-3">Agregar:</p>
                             <div className="flex flex-wrap gap-2">
@@ -595,7 +867,7 @@ const MenuView: React.FC<MenuViewProps> = ({
                     Actualizar Plato
                   </button>
                   <button 
-                    onClick={handleAddNew}
+                    onClick={handleAddNew} 
                     disabled={addingItems.has(showDetail.id)}
                     className="w-full h-14 bg-white/5 border border-white/10 text-white rounded-2xl font-bold text-sm active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
@@ -611,7 +883,7 @@ const MenuView: React.FC<MenuViewProps> = ({
                 </div>
               ) : (
                 <button 
-                  onClick={handleAddNew}
+                  onClick={handleAddNew} 
                   disabled={addingItems.has(showDetail.id)}
                   className="w-full h-16 bg-primary text-background-dark rounded-2xl font-black text-lg shadow-xl shadow-primary/20 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >

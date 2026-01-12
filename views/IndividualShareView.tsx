@@ -86,18 +86,18 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
     
     // Para Mercado Pago, procesar el pago normalmente
     if (paymentMethod === 'mercadopago') {
-      setIsProcessing(true);
-      try {
-        await onPay({
-          amount: Number(finalTotal.toFixed(2)),
+    setIsProcessing(true);
+    try {
+      await onPay({
+        amount: Number(finalTotal.toFixed(2)),
           method: paymentMethod
-        });
-      } catch (error) {
-        console.error("Error al iniciar pago:", error);
-        alert("Hubo un error al conectar con Mercado Pago. Intenta nuevamente.");
-      } finally {
-        setIsProcessing(false);
-      }
+      });
+    } catch (error) {
+      console.error("Error al iniciar pago:", error);
+      alert("Hubo un error al conectar con Mercado Pago. Intenta nuevamente.");
+    } finally {
+      setIsProcessing(false);
+    }
     }
   };
 
@@ -157,10 +157,10 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
               <div className="flex items-center gap-4">
                 <div className="bg-white p-2 rounded-xl shrink-0">
                    <img src="/mercadopago-icon.png" className="h-4 object-contain" alt="MP" />
-                </div>
-                <div className="text-left">
-                  <p className="font-black text-sm leading-none mb-1 uppercase tracking-tight">Mercado Pago</p>
-                  <p className="text-[9px] font-bold text-text-secondary uppercase tracking-widest">Wallet / Tarjetas</p>
+              </div>
+              <div className="text-left">
+                <p className="font-black text-sm leading-none mb-1 uppercase tracking-tight">Mercado Pago</p>
+                <p className="text-[9px] font-bold text-text-secondary uppercase tracking-widest">Wallet / Tarjetas</p>
                 </div>
               </div>
               {paymentMethod === 'mercadopago' && <span className="material-symbols-outlined text-primary font-black filled shrink-0">check_circle</span>}
@@ -176,10 +176,10 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
               <div className="flex items-center gap-4">
                 <div className="bg-white/10 p-2 rounded-xl shrink-0">
                    <span className="material-symbols-outlined text-white text-2xl">account_balance</span>
-                </div>
-                <div className="text-left">
-                  <p className="font-black text-sm leading-none mb-1 uppercase tracking-tight">Transferencia</p>
-                  <p className="text-[9px] font-bold text-text-secondary uppercase tracking-widest">Alias / CBU</p>
+              </div>
+              <div className="text-left">
+                <p className="font-black text-sm leading-none mb-1 uppercase tracking-tight">Transferencia</p>
+                <p className="text-[9px] font-bold text-text-secondary uppercase tracking-widest">Alias / CBU</p>
                 </div>
               </div>
               {paymentMethod === 'transfer' && <span className="material-symbols-outlined text-primary font-black filled shrink-0">check_circle</span>}

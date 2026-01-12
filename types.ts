@@ -39,6 +39,7 @@ export interface MenuItem {
   subcategory_id?: string;
   average_rating?: number; 
   is_featured?: boolean;
+  is_new?: boolean;
   dietary_tags?: string[]; 
   calories?: number;
   protein_g?: number;

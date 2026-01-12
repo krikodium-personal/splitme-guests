@@ -1,6 +1,7 @@
 
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 
 console.log("[DineSplit] Entry point loaded");
@@ -12,12 +13,14 @@ if (!rootElement) {
 }
 
 try {
-  const root = ReactDOM.createRoot(rootElement);
-  root.render(
-    <React.StrictMode>
+const root = ReactDOM.createRoot(rootElement);
+root.render(
+  <React.StrictMode>
+    <BrowserRouter>
       <App />
-    </React.StrictMode>
-  );
+    </BrowserRouter>
+  </React.StrictMode>
+);
   console.log("[DineSplit] App mounted successfully");
 } catch (error) {
   console.error("[DineSplit] Error mounting app:", error);

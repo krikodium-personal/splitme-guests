@@ -37,7 +37,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
   const [customAmounts, setCustomAmounts] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {};
     if (guests && guests.length > 0) {
-      guests.forEach(g => initial[g.id] = '0');
+    guests.forEach(g => initial[g.id] = '0');
     }
     return initial;
   });
@@ -308,7 +308,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
                       {guests.map(guest => (
                         <button 
                           key={guest.id} 
-                          onClick={() => toggleItemAssignment(unit.id, guest.id)}
+                          onClick={() => toggleItemAssignment(unit.id, guest.id)} 
                           disabled={hasPaidGuests}
                           className={`relative size-9 rounded-full border-2 transition-all flex items-center justify-center shrink-0 ${
                             hasPaidGuests 
