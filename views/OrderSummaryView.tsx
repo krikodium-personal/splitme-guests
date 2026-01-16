@@ -57,11 +57,17 @@ interface OrderSummaryViewProps {
   categories: any[];
   tableNumber?: number;
   waiter?: any;
+  currentGuestId?: string | null;
 }
 
 const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({ 
-  guests, cart, batches, onBack, onSend, onPay, isSending = false, onUpdateQuantity, menuItems
+  guests, cart, batches, onBack, onSend, onPay, isSending = false, onUpdateQuantity, menuItems, currentGuestId
 }) => {
+  // Verificar si hay un host en la lista de guests (el usuario es host si existe un guest con isHost=true)
+  const isHost = useMemo(() => {
+    // Verificar si existe algún guest con isHost=true en la lista
+    return guests.some(g => g.isHost === true);
+  }, [guests]);
   const [currentTime, setCurrentTime] = useState(new Date()); // Para actualizar el tiempo cada minuto
   const [viewMode, setViewMode] = useState<'batches' | 'guests'>('batches'); // 'batches' = pedidos realizados, 'guests' = pedidos de comensales
 
@@ -411,7 +417,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
         </div>
         
         <div className="flex flex-col gap-3">
-          {pendingItems.length > 0 && (
+          {createdBatch && isHost && pendingItems.length > 0 && pendingTotal > 0 && (
             <button onClick={onSend} disabled={isSending} className="w-full h-16 bg-primary text-background-dark rounded-2xl flex items-center justify-between px-8 shadow-xl shadow-primary/20 font-black active:scale-[0.98] transition-all">
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined font-black">{isSending ? 'sync' : 'send'}</span>

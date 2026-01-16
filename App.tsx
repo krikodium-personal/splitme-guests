@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
+import { Routes, Route, useNavigate, useLocation, Navigate, useSearchParams } from 'react-router-dom';
 import { supabase } from './lib/supabase';
 import { AppView, Guest, OrderItem, MenuItem, OrderBatch } from './types';
 import ScanView from './views/ScanView';
@@ -23,8 +23,8 @@ const READY_SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2869/2869-p
 const App: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   
-  const searchParams = new URLSearchParams(window.location.search);
   const resParam = searchParams.get('res');
   const tableParam = searchParams.get('table');
   const paymentStatus = searchParams.get('status');
@@ -43,6 +43,11 @@ const App: React.FC = () => {
   const [categories, setCategories] = useState<any[]>([]);
   const [guests, setGuests] = useState<Guest[]>([{ id: '1', name: 'Invitado 1 (Tú)', isHost: true }]);
   const [activeGuestId, setActiveGuestId] = useState<string>('1');
+  
+  // Mantener el ref actualizado con el valor de activeGuestId
+  useEffect(() => {
+    activeGuestIdRef.current = activeGuestId;
+  }, [activeGuestId]);
   const [activeCategory, setActiveCategory] = useState<string>('Destacados');
   const [cart, setCart] = useState<OrderItem[]>([]);
   const [batches, setBatches] = useState<OrderBatch[]>([]);
@@ -55,6 +60,9 @@ const App: React.FC = () => {
   const [paymentGuestName, setPaymentGuestName] = useState<string>('');
 
   const batchChannelRef = useRef<any>(null);
+  const cartChannelRef = useRef<any>(null);
+  const guestsChannelRef = useRef<any>(null);
+  const activeGuestIdRef = useRef<string>('1');
 
   const fetchOrderItemsFromDB = useCallback(async (orderId: string) => {
     if (!supabase) return;
@@ -221,6 +229,34 @@ const App: React.FC = () => {
     batchChannelRef.current = channel;
     return () => { if (batchChannelRef.current) supabase.removeChannel(batchChannelRef.current); };
   }, [activeOrderId]);
+
+  // Suscripción real-time para actualizar el cart cuando otros comensales agregan items
+  useEffect(() => {
+    if (!activeOrderId || !supabase) return;
+
+    if (cartChannelRef.current) {
+      supabase.removeChannel(cartChannelRef.current);
+    }
+
+    const channel = supabase
+      .channel(`cart-sync-${activeOrderId}`)
+      .on('postgres_changes', 
+        { event: '*', schema: 'public', table: 'order_items', filter: `order_id=eq.${activeOrderId}` }, 
+        async (payload) => {
+          console.log('[App] Cambio detectado en order_items:', payload.eventType, payload.new);
+          // Recargar todos los items desde la BD cuando hay cambios
+          await fetchOrderItemsFromDB(activeOrderId);
+        }
+      )
+      .subscribe();
+
+    cartChannelRef.current = channel;
+    return () => { 
+      if (cartChannelRef.current) {
+        supabase.removeChannel(cartChannelRef.current);
+      }
+    };
+  }, [activeOrderId, fetchOrderItemsFromDB]);
 
   /**
    * FUNCIÓN DE ACCESO (REVERTIDA Y CORREGIDA)
@@ -454,10 +490,16 @@ const App: React.FC = () => {
   }, [restaurant, currentTable, currentWaiter]);
 
   // Función para recuperar guests de una orden existente
-  const fetchOrderGuests = useCallback(async (orderId: string) => {
+  // preferredGuestId: si se proporciona, no establecerá activeGuestId automáticamente al primer guest
+  const fetchOrderGuests = useCallback(async (orderId: string, preferredGuestId?: string) => {
     if (!supabase) return;
     
-    console.log("[DineSplit] fetchOrderGuests - Buscando guests para order_id:", orderId);
+    // Leer guestId directamente de searchParams para obtener siempre el valor más reciente
+    // Si no se proporciona preferredGuestId, verificar si hay uno en la URL
+    const guestIdFromUrl = searchParams.get('guestId');
+    const guestIdToPreserve = preferredGuestId || guestIdFromUrl || undefined;
+    
+    console.log("[DineSplit] fetchOrderGuests - Buscando guests para order_id:", orderId, "preferredGuestId:", preferredGuestId, "guestIdFromUrl:", guestIdFromUrl, "guestIdToPreserve:", guestIdToPreserve);
     
     // Intentar primero sin order para ver si el problema es el order
     let { data: orderGuests, error } = await supabase
@@ -553,10 +595,32 @@ const App: React.FC = () => {
       console.log("[DineSplit] Guests cargados desde DB:", guestsFromDB.length, "guests");
       console.log("[DineSplit] Guest IDs:", guestsFromDB.map(g => g.id));
       setGuests(guestsFromDB);
-      // Establecer el activeGuestId al primer guest cargado para que se muestren sus items
-      if (guestsFromDB.length > 0) {
-        setActiveGuestId(guestsFromDB[0].id);
-        console.log("[DineSplit] ActiveGuestId establecido a:", guestsFromDB[0].id);
+      // Establecer el activeGuestId al primer guest cargado solo si no hay un guestIdToPreserve
+      // Si hay un guestIdToPreserve, establecerlo explícitamente
+      // Si no hay guestIdToPreserve, verificar si el activeGuestId actual existe en la lista
+      if (guestsFromDB.length > 0 && !guestIdToPreserve) {
+        // Verificar si el activeGuestId actual existe en la lista de guests cargados
+        const currentActiveGuestId = activeGuestIdRef.current;
+        const currentGuestExists = guestsFromDB.some(g => g.id === currentActiveGuestId);
+        if (currentGuestExists) {
+          // Preservar el activeGuestId actual si existe en la lista
+          console.log("[DineSplit] Preservando activeGuestId actual:", currentActiveGuestId);
+          // No necesitamos llamar setActiveGuestId porque ya está establecido
+        } else {
+          // Si el activeGuestId actual no existe en la lista, establecerlo al primer guest
+          setActiveGuestId(guestsFromDB[0].id);
+          console.log("[DineSplit] ActiveGuestId establecido a (nuevo):", guestsFromDB[0].id);
+        }
+      } else if (guestIdToPreserve) {
+        // Verificar que el guestIdToPreserve existe en la lista de guests cargados
+        const guestExists = guestsFromDB.some(g => g.id === guestIdToPreserve);
+        if (guestExists) {
+          setActiveGuestId(guestIdToPreserve);
+          console.log("[DineSplit] ActiveGuestId establecido a guestIdToPreserve:", guestIdToPreserve);
+        } else {
+          console.warn("[DineSplit] guestIdToPreserve no existe en guests cargados, usando primer guest:", guestIdToPreserve);
+          setActiveGuestId(guestsFromDB[0].id);
+        }
       }
     } else {
       console.warn("[DineSplit] ⚠️ No se encontraron guests para order_id:", orderId);
@@ -605,9 +669,24 @@ const App: React.FC = () => {
             console.log("[DineSplit] ✅ Guests cargados mediante fallback:", guestsFromDB.length, "guests");
             console.log("[DineSplit] Guest IDs:", guestsFromDB.map(g => g.id));
             setGuests(guestsFromDB);
-            if (guestsFromDB.length > 0) {
-              setActiveGuestId(guestsFromDB[0].id);
-              console.log("[DineSplit] ActiveGuestId establecido a:", guestsFromDB[0].id);
+            if (guestsFromDB.length > 0 && !guestIdToPreserve) {
+              const currentActiveGuestId = activeGuestIdRef.current;
+              const currentGuestExists = guestsFromDB.some(g => g.id === currentActiveGuestId);
+              if (currentGuestExists) {
+                console.log("[DineSplit] Preservando activeGuestId actual (fallback):", currentActiveGuestId);
+              } else {
+                setActiveGuestId(guestsFromDB[0].id);
+                console.log("[DineSplit] ActiveGuestId establecido a (fallback):", guestsFromDB[0].id);
+              }
+            } else if (guestIdToPreserve) {
+              const guestExists = guestsFromDB.some(g => g.id === guestIdToPreserve);
+              if (guestExists) {
+                setActiveGuestId(guestIdToPreserve);
+                console.log("[DineSplit] ActiveGuestId establecido a guestIdToPreserve (fallback):", guestIdToPreserve);
+              } else {
+                console.warn("[DineSplit] guestIdToPreserve no existe en guests (fallback), usando primer guest:", guestIdToPreserve);
+                setActiveGuestId(guestsFromDB[0].id);
+              }
             }
           } else {
             console.error("[DineSplit] ❌ Fallback falló: no se encontraron guests con esos IDs");
@@ -637,8 +716,24 @@ const App: React.FC = () => {
                   payment_method: null
                 }));
                 setGuests(guestsFromDB);
-                if (guestsFromDB.length > 0) {
-                  setActiveGuestId(guestsFromDB[0].id);
+                if (guestsFromDB.length > 0 && !guestIdToPreserve) {
+                  const currentActiveGuestId = activeGuestIdRef.current;
+                  const currentGuestExists = guestsFromDB.some(g => g.id === currentActiveGuestId);
+                  if (currentGuestExists) {
+                    console.log("[DineSplit] Preservando activeGuestId actual (directQuery):", currentActiveGuestId);
+                  } else {
+                    setActiveGuestId(guestsFromDB[0].id);
+                    console.log("[DineSplit] ActiveGuestId establecido a (directQuery):", guestsFromDB[0].id);
+                  }
+                } else if (guestIdToPreserve) {
+                  const guestExists = guestsFromDB.some(g => g.id === guestIdToPreserve);
+                  if (guestExists) {
+                    setActiveGuestId(guestIdToPreserve);
+                    console.log("[DineSplit] ActiveGuestId establecido a guestIdToPreserve (directQuery):", guestIdToPreserve);
+                  } else {
+                    console.warn("[DineSplit] guestIdToPreserve no existe en guests (directQuery), usando primer guest:", guestIdToPreserve);
+                    setActiveGuestId(guestsFromDB[0].id);
+                  }
                 }
               }
             }
@@ -650,7 +745,36 @@ const App: React.FC = () => {
         console.error("[DineSplit] ❌ No hay items para hacer fallback");
       }
     }
-  }, []);
+  }, [supabase, searchParams, setActiveGuestId, setGuests]);
+
+  // Suscripción real-time para actualizar los guests cuando otros comensales se unen o cambian
+  useEffect(() => {
+    if (!activeOrderId || !supabase) return;
+
+    if (guestsChannelRef.current) {
+      supabase.removeChannel(guestsChannelRef.current);
+    }
+
+    const channel = supabase
+      .channel(`guests-sync-${activeOrderId}`)
+      .on('postgres_changes', 
+        { event: '*', schema: 'public', table: 'order_guests', filter: `order_id=eq.${activeOrderId}` }, 
+        async (payload) => {
+          console.log('[App] Cambio detectado en order_guests:', payload.eventType, payload.new);
+          // Recargar todos los guests desde la BD cuando hay cambios
+          // No pasar preferredGuestId aquí para que no sobrescriba la selección actual
+          await fetchOrderGuests(activeOrderId);
+        }
+      )
+      .subscribe();
+
+    guestsChannelRef.current = channel;
+    return () => { 
+      if (guestsChannelRef.current) {
+        supabase.removeChannel(guestsChannelRef.current);
+      }
+    };
+  }, [activeOrderId, fetchOrderGuests]);
 
   // Función para guardar montos individuales en order_guests
   // Esta función se llama CADA VEZ que se hace click en "Confirmar División"
@@ -811,7 +935,18 @@ const App: React.FC = () => {
   }, [supabase, activeOrderId]);
 
   useEffect(() => {
+    // Verificación ANTES de definir initApp: si hay sesión activa y estamos en ruta que la requiere, no ejecutar nada
+    const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/checkout', '/individual-share', '/transfer-payment', '/cash-payment', '/feedback', '/confirmation', '/guest-selection'];
+    const hasActiveSession = activeOrderId || localStorage.getItem(ACTIVE_ORDER_KEY);
+    
+    if (hasActiveSession && routesRequiringSession.includes(location.pathname) && !orderIdParam && !resParam && !tableParam) {
+      console.log("[DineSplit] ✅ Sesión activa detectada, saltando initApp completamente. Path:", location.pathname, "OrderId:", activeOrderId || localStorage.getItem(ACTIVE_ORDER_KEY));
+      setLoading(false);
+      return;
+    }
+
     const initApp = async () => {
+
       // Si hay orderId en la URL (con o sin guestId), cargar datos para el link compartido
       if (orderIdParam) {
         setLoading(true);
@@ -831,9 +966,10 @@ const App: React.FC = () => {
 
           const restaurantId = orderData.tables.restaurant_id;
 
-          // Cargar restaurante, menuItems, guests, items y batches en paralelo
-          const [restaurantRes, menuItemsRes, guestsRes] = await Promise.all([
+          // Cargar restaurante, categories, menuItems, guests, items y batches en paralelo
+          const [restaurantRes, categoriesRes, menuItemsRes, guestsRes] = await Promise.all([
             supabase.from('restaurants').select('*').eq('id', restaurantId).maybeSingle(),
+            supabase.from('categories').select('*').eq('restaurant_id', restaurantId).order('sort_order'),
             supabase.from('menu_items').select('*').eq('restaurant_id', restaurantId).order('sort_order'),
             supabase.from('order_guests').select('*').eq('order_id', orderIdParam).order('position', { ascending: true })
           ]);
@@ -843,6 +979,7 @@ const App: React.FC = () => {
           }
 
           setRestaurant(restaurantRes.data);
+          setCategories(categoriesRes.data || []);
           setMenuItems(menuItemsRes.data || []);
           setActiveOrderId(orderIdParam);
           localStorage.setItem(ACTIVE_ORDER_KEY, orderIdParam);
@@ -865,12 +1002,18 @@ const App: React.FC = () => {
           // Cargar items y batches
           await fetchOrderItemsFromDB(orderIdParam);
           
-          // Si hay guestId, navegar directamente a INDIVIDUAL_SHARE
-          // Si no hay guestId, navegar a GUEST_SELECTION para que el usuario elija
-          if (guestIdParam) {
-            navigate('/individual-share');
-          } else {
-            navigate('/guest-selection');
+          // Solo navegar si no estamos ya en una ruta que requiere sesión
+          const currentPath = location.pathname;
+          const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/checkout', '/individual-share', '/transfer-payment', '/cash-payment', '/feedback', '/confirmation', '/guest-selection'];
+          
+          if (!routesRequiringSession.includes(currentPath)) {
+            // Si hay guestId, navegar directamente a INDIVIDUAL_SHARE
+            // Si no hay guestId, navegar a GUEST_SELECTION para que el usuario elija
+            if (guestIdParam) {
+              navigate('/individual-share');
+            } else {
+              navigate('/guest-selection');
+            }
           }
           setLoading(false);
         } catch (error: any) {
@@ -883,25 +1026,39 @@ const App: React.FC = () => {
         await handleStartSession(resParam, tableParam);
         window.history.replaceState({}, '', window.location.pathname);
       } else {
-        // Si no hay parámetros en la URL (URL raíz), SIEMPRE mostrar pantalla de inicio
-        // No restaurar sesiones guardadas, siempre empezar desde cero
-        console.log("[DineSplit] URL raíz detectada. Mostrando pantalla de inicio (SCAN) sin restaurar sesión.");
-        // Limpiar completamente el estado, incluyendo restaurante y mesa
-        localStorage.removeItem(ACTIVE_ORDER_KEY);
-        setRestaurant(null);
-        setCurrentTable(null);
-        setCurrentWaiter(null);
-        setMenuItems([]);
-        setCategories([]);
-        setActiveOrderId(null);
-        setCart([]);
-        setBatches([]);
-        setGuests([{ id: '1', name: 'Invitado 1 (Tú)', isHost: true }]);
-        setActiveGuestId('1');
-        navigate('/scan');
-        setLoading(false);
+        // Si no hay parámetros en la URL (URL raíz), verificar si hay una sesión activa
+        // Si hay una sesión activa y estamos en una ruta que la requiere, NO limpiar la sesión
+        if (hasActiveSession && routesRequiringSession.includes(location.pathname)) {
+          console.log("[DineSplit] Sesión activa detectada en ruta que la requiere, NO limpiando sesión. Path:", location.pathname, "OrderId:", activeOrderId || localStorage.getItem(ACTIVE_ORDER_KEY));
+          setLoading(false);
+          return;
+        }
+        
+        // Solo limpiar si estamos en /scan o no hay sesión activa
+        if (location.pathname === '/scan' || !hasActiveSession) {
+          console.log("[DineSplit] URL raíz detectada. Mostrando pantalla de inicio (SCAN) sin restaurar sesión.");
+          // Limpiar completamente el estado, incluyendo restaurante y mesa
+          localStorage.removeItem(ACTIVE_ORDER_KEY);
+          setRestaurant(null);
+          setCurrentTable(null);
+          setCurrentWaiter(null);
+          setMenuItems([]);
+          setCategories([]);
+          setActiveOrderId(null);
+          setCart([]);
+          setBatches([]);
+          setGuests([{ id: '1', name: 'Invitado 1 (Tú)', isHost: true }]);
+          setActiveGuestId('1');
+          navigate('/scan');
+          setLoading(false);
+        } else {
+          // Si hay sesión activa pero no estamos en /scan, solo marcar como no cargando
+          console.log("[DineSplit] Sesión activa detectada, manteniendo sesión. Path:", location.pathname);
+          setLoading(false);
+        }
       }
     };
+    
     initApp();
   }, [resParam, tableParam, orderIdParam, guestIdParam, handleStartSession, fetchOrderItemsFromDB]);
 
@@ -1084,13 +1241,51 @@ const App: React.FC = () => {
     }
   }, [supabase, activeOrderId]);
 
-  // Recargar guests cuando se navega al MENU o SPLIT_BILL si hay una orden activa
+  // Recargar guests cuando se navega al MENU, SPLIT_BILL o INDIVIDUAL_SHARE si hay una orden activa
+  // También seleccionar el guest si hay guestIdParam en la URL
   useEffect(() => {
     const path = location.pathname;
-    if ((path === '/menu' || path === '/split-bill') && activeOrderId && supabase) {
+    if ((path === '/menu' || path.startsWith('/menu/')) && activeOrderId && supabase) {
+      // Si hay un guestIdParam, pasarlo a fetchOrderGuests para que no sobrescriba la selección
+      fetchOrderGuests(activeOrderId, guestIdParam || undefined).then(() => {
+        // Si hay un guestIdParam en la URL, seleccionar ese guest (por si acaso)
+        if (guestIdParam) {
+          console.log('[App] Seleccionando guest desde URL:', guestIdParam);
+          setActiveGuestId(guestIdParam);
+        }
+      });
+    } else if ((path === '/split-bill' || path === '/individual-share') && activeOrderId && supabase) {
       fetchOrderGuests(activeOrderId);
     }
-  }, [location.pathname, activeOrderId, fetchOrderGuests]);
+  }, [location.pathname, activeOrderId, fetchOrderGuests, guestIdParam]);
+
+  // Reconstruir splitData desde guests cuando se navega a individual-share y splitData está vacío
+  useEffect(() => {
+    if (location.pathname === '/individual-share' && (!splitData || splitData.length === 0) && guests.length > 0) {
+      // Reconstruir splitData desde los guests con individualAmount
+      const reconstructedSplitData = guests.map(guest => ({
+        id: guest.id,
+        name: guest.name,
+        subtotal: guest.individualAmount || 0,
+        total: guest.individualAmount || 0,
+        items: cart
+          .filter(item => item.guestId === guest.id)
+          .map(item => {
+            const menuItem = menuItems.find(m => m.id === item.itemId);
+            return {
+              name: menuItem?.name || 'Producto',
+              quantity: item.quantity,
+              price: menuItem?.price || 0
+            };
+          })
+      }));
+      
+      if (reconstructedSplitData.length > 0 && reconstructedSplitData.some(s => s.total > 0)) {
+        console.log('[App] Reconstruyendo splitData desde guests:', reconstructedSplitData);
+        setSplitData(reconstructedSplitData);
+      }
+    }
+  }, [location.pathname, splitData, guests, cart, menuItems]);
 
   const handlePayIndividual = async (paymentData: { amount: number, method: string }) => {
     if (!activeOrderId || !restaurant) return;
@@ -1420,33 +1615,9 @@ const App: React.FC = () => {
         const newItemsTotal = pendingItems.reduce((sum, item) => sum + (Number(menuItems.find(m => m.id === item.itemId)?.price || 0) * item.quantity), 0);
         await supabase.from('orders').update({ total_amount: currentTotal + newItemsTotal }).eq('id', orderId);
 
-        // Crear INMEDIATAMENTE un NUEVO batch para los próximos items que se agreguen
-        const { count: batchCount } = await supabase.from('order_batches').select('*', { count: 'exact', head: true }).eq('order_id', orderId);
-        const nextBatchNum = (batchCount || 0) + 1;
-        
-        console.log("[DineSplit] Creando nuevo batch #", nextBatchNum, "inmediatamente después de enviar el pedido");
-        
-        const { data: nextBatch, error: nextBatchError } = await supabase
-          .from('order_batches')
-          .insert({
-            order_id: orderId,
-            batch_number: nextBatchNum,
-            status: 'CREADO' // Estado inicial: CREADO (cambiará a ENVIADO cuando se envíe)
-          })
-          .select()
-          .single();
-
-        if (nextBatchError) {
-          console.error("[DineSplit] Error al crear nuevo batch:", nextBatchError);
-          throw new Error(`Error al crear nuevo batch: ${nextBatchError.message}`);
-        }
-        
-        if (!nextBatch || !nextBatch.id) {
-          throw new Error("No se pudo crear el nuevo batch. El batch no tiene ID.");
-        }
-        
-        console.log("[DineSplit] ✅ Nuevo batch creado inmediatamente. Batch ID:", nextBatch.id);
-        setActiveBatchId(nextBatch.id); // Establecer como batch activo para los próximos items
+        // NO crear batch aquí. El batch se creará automáticamente cuando un comensal agregue el próximo plato.
+        console.log("[DineSplit] Pedido enviado. El próximo batch se creará cuando se agregue un nuevo plato.");
+        setActiveBatchId(null); // Limpiar batch activo, se creará uno nuevo al agregar el próximo plato
 
         // Recargar items desde la BD
         await fetchOrderItemsFromDB(orderId!);
@@ -1487,34 +1658,9 @@ const App: React.FC = () => {
       const newItemsTotal = pendingItems.reduce((sum, item) => sum + (Number(menuItems.find(m => m.id === item.itemId)?.price || 0) * item.quantity), 0);
       await supabase.from('orders').update({ total_amount: currentTotal + newItemsTotal }).eq('id', orderId);
 
-      // Crear INMEDIATAMENTE un NUEVO batch para los próximos items que se agreguen
-      // Esto asegura que cuando el usuario vuelva al menú y agregue más platos, ya tenga un batch disponible
-      const { count: batchCount } = await supabase.from('order_batches').select('*', { count: 'exact', head: true }).eq('order_id', orderId);
-      const nextBatchNum = (batchCount || 0) + 1;
-      
-      console.log("[DineSplit] Creando nuevo batch #", nextBatchNum, "inmediatamente después de enviar el pedido");
-      
-      const { data: nextBatch, error: nextBatchError } = await supabase
-        .from('order_batches')
-        .insert({
-          order_id: orderId,
-          batch_number: nextBatchNum,
-          status: 'CREADO' // Estado inicial: CREADO (cambiará a ENVIADO cuando se envíe)
-        })
-        .select()
-        .single();
-
-      if (nextBatchError) {
-        console.error("[DineSplit] Error al crear nuevo batch:", nextBatchError);
-        throw new Error(`Error al crear nuevo batch: ${nextBatchError.message}`);
-      }
-      
-      if (!nextBatch || !nextBatch.id) {
-        throw new Error("No se pudo crear el nuevo batch. El batch no tiene ID.");
-      }
-      
-      console.log("[DineSplit] ✅ Nuevo batch creado inmediatamente. Batch ID:", nextBatch.id);
-      setActiveBatchId(nextBatch.id); // Establecer como batch activo para los próximos items que se agreguen
+      // NO crear batch aquí. El batch se creará automáticamente cuando un comensal agregue el próximo plato.
+      console.log("[DineSplit] Pedido enviado. El próximo batch se creará cuando se agregue un nuevo plato.");
+      setActiveBatchId(null); // Limpiar batch activo, se creará uno nuevo al agregar el próximo plato
 
       // Recargar items desde la BD para reflejar el status actualizado
       await fetchOrderItemsFromDB(orderId!);
@@ -1596,11 +1742,10 @@ const App: React.FC = () => {
     try {
       const menuItem = menuItems.find(m => m.id === item.id);
       
-      // Verificar si existe un batch con status='CREADO' (NO crear uno nuevo aquí, solo buscarlo)
-      // El nuevo batch se crea SOLO cuando se envía un batch en handleSendOrder
+      // Buscar si existe un batch con status='CREADO', si no existe, crear uno nuevo
       let currentBatchId = activeBatchId;
       
-      // Si no hay batch activo o el batch activo no tiene status='CREADO', buscar uno
+      // Si no hay batch activo o el batch activo no tiene status='CREADO', buscar o crear uno
       if (!currentBatchId) {
         console.log("[DineSplit] No hay batch activo, buscando uno con status='CREADO'...");
         const { data: existingBatches } = await supabase
@@ -1616,8 +1761,37 @@ const App: React.FC = () => {
           setActiveBatchId(createdBatch.id);
           console.log("[DineSplit] Batch con status='CREADO' encontrado:", createdBatch.id, "batch_number:", createdBatch.batch_number);
         } else {
-          console.error("[DineSplit] ❌ No se encontró ningún batch con status='CREADO'. Debe enviar un pedido primero para crear un batch.");
-          throw new Error("No hay batch disponible para agregar items. Debe enviar un pedido primero.");
+          // No existe batch con status='CREADO', crear uno nuevo
+          console.log("[DineSplit] No se encontró batch con status='CREADO', creando uno nuevo...");
+          const { count: batchCount } = await supabase
+            .from('order_batches')
+            .select('*', { count: 'exact', head: true })
+            .eq('order_id', activeOrderId);
+          const nextBatchNum = (batchCount || 0) + 1;
+          
+          const { data: newBatch, error: batchError } = await supabase
+            .from('order_batches')
+            .insert({
+              order_id: activeOrderId,
+              batch_number: nextBatchNum,
+              status: 'CREADO'
+            })
+            .select()
+            .single();
+          
+          if (batchError) {
+            console.error("[DineSplit] Error al crear nuevo batch:", batchError);
+            throw new Error(`Error al crear nuevo batch: ${batchError.message}`);
+          }
+          
+          if (!newBatch || !newBatch.id) {
+            throw new Error("No se pudo crear el nuevo batch. El batch no tiene ID.");
+          }
+          
+          currentBatchId = newBatch.id;
+          setActiveBatchId(newBatch.id);
+          setBatches(prev => [...prev, newBatch]);
+          console.log("[DineSplit] ✅ Nuevo batch creado. Batch ID:", newBatch.id, "batch_number:", newBatch.batch_number);
         }
       } else {
         // Verificar que el batch activo tenga status='CREADO'
@@ -1628,7 +1802,7 @@ const App: React.FC = () => {
           .single();
         
         if (activeBatch && activeBatch.status !== 'CREADO') {
-          // El batch activo ya fue enviado, buscar uno nuevo con status='CREADO'
+          // El batch activo ya fue enviado, buscar o crear uno nuevo con status='CREADO'
           console.log("[DineSplit] Batch activo tiene status='", activeBatch.status, "'. Buscando batch con status='CREADO'...");
           const { data: allBatches } = await supabase
             .from('order_batches')
@@ -1643,14 +1817,43 @@ const App: React.FC = () => {
             setActiveBatchId(createdBatch.id);
             console.log("[DineSplit] Batch con status='CREADO' encontrado:", createdBatch.id, "batch_number:", createdBatch.batch_number);
           } else {
-            console.error("[DineSplit] ❌ No se encontró ningún batch con status='CREADO'. Debe enviar un pedido primero para crear un batch.");
-            throw new Error("No hay batch disponible para agregar items. Debe enviar un pedido primero.");
+            // No existe batch con status='CREADO', crear uno nuevo
+            console.log("[DineSplit] No se encontró batch con status='CREADO', creando uno nuevo...");
+            const { count: batchCount } = await supabase
+              .from('order_batches')
+              .select('*', { count: 'exact', head: true })
+              .eq('order_id', activeOrderId);
+            const nextBatchNum = (batchCount || 0) + 1;
+            
+            const { data: newBatch, error: batchError } = await supabase
+              .from('order_batches')
+              .insert({
+                order_id: activeOrderId,
+                batch_number: nextBatchNum,
+                status: 'CREADO'
+              })
+              .select()
+              .single();
+            
+            if (batchError) {
+              console.error("[DineSplit] Error al crear nuevo batch:", batchError);
+              throw new Error(`Error al crear nuevo batch: ${batchError.message}`);
+            }
+            
+            if (!newBatch || !newBatch.id) {
+              throw new Error("No se pudo crear el nuevo batch. El batch no tiene ID.");
+            }
+            
+            currentBatchId = newBatch.id;
+            setActiveBatchId(newBatch.id);
+            setBatches(prev => [...prev, newBatch]);
+            console.log("[DineSplit] ✅ Nuevo batch creado. Batch ID:", newBatch.id, "batch_number:", newBatch.batch_number);
           }
         }
       }
       
       if (!currentBatchId) {
-        throw new Error("No se pudo encontrar un batch activo con status='CREADO'.");
+        throw new Error("No se pudo encontrar o crear un batch activo con status='CREADO'.");
       }
 
       console.log("[DineSplit] Agregando item al carrito con batch_id:", currentBatchId);
@@ -1856,7 +2059,8 @@ const App: React.FC = () => {
             categories={categories} 
             restaurant={restaurant} 
             table={currentTable} 
-            onSaveGuestChanges={handleSaveGuestChanges} 
+            onSaveGuestChanges={handleSaveGuestChanges}
+            activeOrderId={activeOrderId}
           />
         } />
         <Route path="/menu/:category" element={
@@ -1878,7 +2082,8 @@ const App: React.FC = () => {
             categories={categories} 
             restaurant={restaurant} 
             table={currentTable} 
-            onSaveGuestChanges={handleSaveGuestChanges} 
+            onSaveGuestChanges={handleSaveGuestChanges}
+            activeOrderId={activeOrderId}
           />
         } />
         <Route path="/menu/:category/:subcategory" element={
@@ -1900,7 +2105,8 @@ const App: React.FC = () => {
             categories={categories} 
             restaurant={restaurant} 
             table={currentTable} 
-            onSaveGuestChanges={handleSaveGuestChanges} 
+            onSaveGuestChanges={handleSaveGuestChanges}
+            activeOrderId={activeOrderId}
           />
         } />
         <Route path="/order-summary" element={
@@ -1934,7 +2140,8 @@ const App: React.FC = () => {
             menuItems={menuItems} 
             categories={categories} 
             tableNumber={currentTable?.table_number} 
-            waiter={currentWaiter} 
+            waiter={currentWaiter}
+            currentGuestId={guestIdParam || activeGuestId}
           />
         } />
         <Route path="/progress" element={
@@ -1988,13 +2195,20 @@ const App: React.FC = () => {
               } else {
                 navigateToView('INDIVIDUAL_SHARE');
               }
-            }} 
+            }}
+            onNavigateToTip={() => {
+              const guestIdToUse = guestIdParam || activeGuestId;
+              if (activeOrderId && guestIdToUse) {
+                navigate(`/cash-payment?orderId=${activeOrderId}&guestId=${guestIdToUse}`);
+              }
+            }}
             cart={cart} 
             guests={guests} 
             menuItems={menuItems} 
             tableNumber={currentTable?.table_number} 
             splitData={splitData} 
-            activeOrderId={activeOrderId} 
+            activeOrderId={activeOrderId}
+            currentGuestId={guestIdParam || activeGuestId}
           />
         } />
         <Route path="/individual-share" element={
@@ -2011,7 +2225,17 @@ const App: React.FC = () => {
             onPay={handlePayIndividual}
             onShowTransfer={(amount) => {
               setPaymentAmount(amount);
-              navigateToView('TRANSFER_PAYMENT');
+              // Navegar a /transfer-payment con los parámetros de la URL actual
+              const urlParams = new URLSearchParams(location.search);
+              const guestIdFromUrl = urlParams.get('guestId');
+              const orderIdFromUrl = urlParams.get('orderId');
+              const guestIdToUse = guestIdFromUrl || activeGuestId;
+              const orderIdToUse = orderIdFromUrl || activeOrderId || '';
+              if (orderIdToUse && guestIdToUse) {
+                navigate(`/transfer-payment?orderId=${orderIdToUse}&guestId=${guestIdToUse}`);
+              } else {
+                navigate('/transfer-payment');
+              }
             }}
             onShowCash={(amount, guestName) => {
               setPaymentAmount(amount);
@@ -2029,8 +2253,10 @@ const App: React.FC = () => {
         <Route path="/transfer-payment" element={
           <TransferPaymentView 
             onBack={() => navigateToView('INDIVIDUAL_SHARE')}
-            amount={paymentAmount}
+            amount={paymentAmount || 0}
             restaurant={restaurant}
+            guestId={guestIdParam || activeGuestId}
+            orderId={activeOrderId || ''}
           />
         } />
         <Route path="/cash-payment" element={
@@ -2040,7 +2266,35 @@ const App: React.FC = () => {
               localStorage.clear();
               navigateToView('CONFIRMATION');
             }}
-            amount={paymentAmount || 0}
+            amount={(() => {
+              // Calcular el amount basándose en el guestId de la URL o activeGuestId
+              const targetGuestId = guestIdParam || activeGuestId;
+              if (targetGuestId) {
+                // Buscar en splitData primero
+                if (splitData) {
+                  const guestShare = splitData.find(s => s.id === targetGuestId);
+                  if (guestShare?.total) {
+                    return guestShare.total;
+                  }
+                }
+                // Si no está en splitData, buscar en guests
+                const targetGuest = guests.find(g => g.id === targetGuestId);
+                if (targetGuest?.individualAmount) {
+                  return targetGuest.individualAmount;
+                }
+                // Si no hay individualAmount, calcular desde el cart
+                const guestCartItems = cart.filter(item => item.guestId === targetGuestId);
+                const calculatedAmount = guestCartItems.reduce((sum, item) => {
+                  const menuItem = menuItems.find(m => m.id === item.itemId);
+                  return sum + (menuItem ? menuItem.price * item.quantity : 0);
+                }, 0);
+                if (calculatedAmount > 0) {
+                  return calculatedAmount;
+                }
+              }
+              // Fallback a paymentAmount si está disponible
+              return paymentAmount || 0;
+            })()}
             guestId={guestIdParam || activeGuestId}
             orderId={activeOrderId || ''}
             guestName={paymentGuestName}
@@ -2065,9 +2319,15 @@ const App: React.FC = () => {
             onRestart={() => { 
               localStorage.clear(); 
               navigate('/scan'); 
-            }} 
+            }}
+            onBackToStart={() => {
+              localStorage.clear();
+              navigate('/scan');
+            }}
             guests={guests} 
-            tableNumber={currentTable?.table_number} 
+            tableNumber={currentTable?.table_number}
+            activeOrderId={activeOrderId}
+            currentGuestId={guestIdParam || activeGuestId}
           />
         } />
         <Route path="*" element={<Navigate to="/scan" replace />} />

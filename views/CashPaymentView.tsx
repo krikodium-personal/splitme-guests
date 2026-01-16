@@ -38,8 +38,12 @@ const CashPaymentView: React.FC<CashPaymentViewProps> = ({
   // Verificar si el mesero acepta propinas por transferencia
   const waiterAcceptsTransfer = waiter?.alias_tip && waiter.alias_tip.trim() !== '';
 
-  // Agrupar items únicos para la interfaz de reviews
-  const uniqueItems = Array.from(new Set(cart.map(i => i.itemId)))
+  // Agrupar items únicos para la interfaz de reviews (solo del comensal actual)
+  const uniqueItems = Array.from(new Set(
+    cart
+      .filter(item => item.guestId === guestId)
+      .map(i => i.itemId)
+  ))
     .map(id => menuItems.find(m => m.id === id))
     .filter(Boolean) as MenuItem[];
 
@@ -47,11 +51,13 @@ const CashPaymentView: React.FC<CashPaymentViewProps> = ({
   useEffect(() => {
     if (!supabase || !guestId || !orderId) return;
 
+    const PAID_SOUND_URL = 'https://hqaiuywzklrwywdhmqxw.supabase.co/storage/v1/object/public/sounds/pagado.wav';
+
     // Verificar estado inicial
     const checkInitialPaidStatus = async () => {
       const { data } = await supabase
         .from('order_guests')
-        .select('paid')
+        .select('paid, payment_method')
         .eq('id', guestId)
         .single();
       
@@ -77,6 +83,19 @@ const CashPaymentView: React.FC<CashPaymentViewProps> = ({
           console.log('[CashPaymentView] Cambio detectado en order_guests:', payload);
           if (payload.new.paid === true) {
             setIsPaid(true);
+            
+            // Reproducir sonido cuando el pago es confirmado para pagos en efectivo
+            const paymentMethod = payload.new.payment_method;
+            if (paymentMethod === 'efectivo' || paymentMethod === 'cash') {
+              try {
+                const audio = new Audio(PAID_SOUND_URL);
+                audio.play().catch(err => {
+                  console.warn('[CashPaymentView] Error al reproducir sonido:', err);
+                });
+              } catch (error) {
+                console.warn('[CashPaymentView] Error al crear Audio:', error);
+              }
+            }
           }
         }
       )
@@ -154,13 +173,33 @@ const CashPaymentView: React.FC<CashPaymentViewProps> = ({
     try {
       // 1. VALIDACIÓN DE IDs
       const waiterId = (waiter && typeof waiter.id === 'string' && waiter.id.length > 10) ? waiter.id : null;
+      
+      // Obtener orderId válido: primero del prop, luego del cart
+      let validOrderId = orderId;
+      if (!validOrderId || validOrderId.trim() === '') {
+        validOrderId = cart[0]?.order_id || null;
+      }
+      
+      // Verificar que la orden existe antes de insertar el review
+      if (validOrderId) {
+        const { data: orderCheck, error: orderCheckError } = await supabase
+          .from('orders')
+          .select('id')
+          .eq('id', validOrderId)
+          .maybeSingle();
+        
+        if (orderCheckError || !orderCheck) {
+          console.warn('[CashPaymentView] Orden no encontrada, insertando review sin order_id:', validOrderId);
+          validOrderId = null; // No usar order_id si no existe
+        }
+      }
 
       // 2. INSERCIÓN EN 'reviews'
       const { error: reviewError } = await supabase
         .from('reviews')
         .insert({
           restaurant_id: restaurant?.id,
-          order_id: orderId,
+          order_id: validOrderId || null, // Usar null si no hay order_id válido
           waiter_id: waiterId,
           restaurant_rating: restaurantRating,
           waiter_rating: waiterRating > 0 ? waiterRating : null,
@@ -169,20 +208,22 @@ const CashPaymentView: React.FC<CashPaymentViewProps> = ({
 
       if (reviewError) throw reviewError;
 
-      // 3. ACTUALIZACIÓN MASIVA DE PLATOS ('order_items')
-      const itemUpdatePromises = cart.map(async (cartItem) => {
-        const rating = itemRatings[cartItem.itemId] || 0;
-        if (rating > 0) {
-          const { error: itemErr } = await supabase
-            .from('order_items')
-            .update({ item_rating: rating })
-            .eq('id', cartItem.id);
-          
-          if (!itemErr) {
-            await syncMenuItemStats(cartItem.itemId);
+      // 3. ACTUALIZACIÓN MASIVA DE PLATOS ('order_items') - solo del comensal actual
+      const itemUpdatePromises = cart
+        .filter(item => item.guestId === guestId)
+        .map(async (cartItem) => {
+          const rating = itemRatings[cartItem.itemId] || 0;
+          if (rating > 0) {
+            const { error: itemErr } = await supabase
+              .from('order_items')
+              .update({ item_rating: rating })
+              .eq('id', cartItem.id);
+            
+            if (!itemErr) {
+              await syncMenuItemStats(cartItem.itemId);
+            }
           }
-        }
-      });
+        });
 
       await Promise.all(itemUpdatePromises);
 
@@ -381,13 +422,12 @@ const CashPaymentView: React.FC<CashPaymentViewProps> = ({
               <span className="material-symbols-outlined text-primary">tips_and_updates</span>
               <h3 className="text-xs font-black uppercase tracking-[0.2em] text-text-secondary">Propina</h3>
             </div>
-            <div className="grid grid-cols-5 gap-2 mb-4">
+            <div className="grid grid-cols-4 gap-2 mb-4">
               {[
                 { label: 'Ninguna', value: 0 },
                 { label: '10%', value: 10 },
                 { label: '15%', value: 15, badge: 'Sugerida' },
                 { label: '20%', value: 20 },
-                { label: 'Custom', value: 25 },
               ].map((t) => (
                 <button 
                   key={t.label} 
@@ -500,17 +540,15 @@ const CashPaymentView: React.FC<CashPaymentViewProps> = ({
           )}
         </main>
 
-        {tipPercentage > 0 && (
-          <div className="fixed bottom-0 left-0 w-full p-4 bg-gradient-to-t from-background-dark via-background-dark to-transparent pt-12 pb-8 z-20">
-            <button 
-              onClick={handleConfirmTip} 
-              className="w-full h-16 rounded-2xl font-black text-lg flex items-center justify-center gap-3 transition-all shadow-2xl bg-primary text-background-dark shadow-primary/20 hover:scale-[1.02] active:scale-[0.98]"
-            >
-              <span>Confirmar Propina</span>
-              <span className="material-symbols-outlined font-black">check</span>
-            </button>
-          </div>
-        )}
+        <div className="fixed bottom-0 left-0 w-full p-4 bg-gradient-to-t from-background-dark via-background-dark to-transparent pt-12 pb-8 z-20">
+          <button 
+            onClick={handleConfirmTip} 
+            className="w-full h-16 rounded-2xl font-black text-lg flex items-center justify-center gap-3 transition-all shadow-2xl bg-primary text-background-dark shadow-primary/20 hover:scale-[1.02] active:scale-[0.98]"
+          >
+            <span>Confirmar Propina</span>
+            <span className="material-symbols-outlined font-black">check</span>
+          </button>
+        </div>
       </div>
     );
   }

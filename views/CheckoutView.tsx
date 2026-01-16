@@ -1,5 +1,6 @@
 
 import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { OrderItem, Guest, MenuItem } from '../types';
 import { getInitials, getGuestColor } from './GuestInfoView';
 import { formatPrice } from './MenuView';
@@ -8,18 +9,36 @@ import { supabase } from '../lib/supabase';
 interface CheckoutViewProps {
   onBack: () => void;
   onConfirm: (guestId?: string) => void;
+  onNavigateToTip?: () => void;
   cart: OrderItem[];
   guests?: Guest[];
   menuItems: MenuItem[];
   tableNumber?: number;
   splitData: any[] | null;
   activeOrderId?: string | null;
+  currentGuestId?: string | null;
 }
 
-const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, guests = [], menuItems, tableNumber, splitData, activeOrderId }) => {
+const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNavigateToTip, cart, guests = [], menuItems, tableNumber, splitData, activeOrderId, currentGuestId }) => {
+  const navigate = useNavigate();
+  const location = useLocation();
   const [showQr, setShowQr] = useState(false);
   const [localGuests, setLocalGuests] = useState<Guest[]>(guests);
   const channelRef = useRef<any>(null);
+
+  // Redirigir a /individual-share si hay un guestId en la URL
+  useEffect(() => {
+    const urlParams = new URLSearchParams(location.search);
+    const guestIdFromUrl = urlParams.get('guestId');
+    const orderIdFromUrl = urlParams.get('orderId');
+    
+    // Si hay un guestId en la URL y un orderId, redirigir a /individual-share
+    if (guestIdFromUrl && orderIdFromUrl && activeOrderId) {
+      console.log('[CheckoutView] Redirigiendo a /individual-share con guestId:', guestIdFromUrl);
+      navigate(`/individual-share?orderId=${orderIdFromUrl}&guestId=${guestIdFromUrl}`, { replace: true });
+      return;
+    }
+  }, [location.search, activeOrderId, navigate]);
 
   // Sincronizar localGuests cuando guests cambian
   useEffect(() => {
@@ -111,16 +130,32 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, gu
     return sum + (menuItem ? menuItem.price * item.quantity : 0);
   }, 0), [cart, menuItems]);
 
-  // Identificar al usuario actual (el host o primer guest)
+  // Identificar al usuario actual (prioridad: currentGuestId de URL > host > primer guest)
   const currentUserGuest = useMemo(() => {
-    // Buscar el host primero
+    // Si hay un currentGuestId (viene de la URL), usar ese guest
+    if (currentGuestId) {
+      const guestFromUrl = localGuests.find(g => g.id === currentGuestId);
+      if (guestFromUrl) {
+        console.log('[CheckoutView] Usuario actual desde URL:', guestFromUrl.id, guestFromUrl.name);
+        return guestFromUrl;
+      }
+    }
+    // Si no, buscar el host
     const host = localGuests.find(g => g.isHost);
-    if (host) return host;
+    if (host) {
+      console.log('[CheckoutView] Usuario actual (host):', host.id, host.name);
+      return host;
+    }
     // Si no hay host, usar el primer guest
-    return localGuests.length > 0 ? localGuests[0] : null;
-  }, [localGuests]);
+    const firstGuest = localGuests.length > 0 ? localGuests[0] : null;
+    if (firstGuest) {
+      console.log('[CheckoutView] Usuario actual (primer guest):', firstGuest.id, firstGuest.name);
+    }
+    return firstGuest;
+  }, [localGuests, currentGuestId]);
 
-  const currentUserId = currentUserGuest?.id || '';
+  const currentUserId = currentGuestId || currentUserGuest?.id || '';
+  console.log('[CheckoutView] currentGuestId:', currentGuestId, 'currentUserId:', currentUserId);
 
   // Función para formatear el nombre del método de pago
   const getPaymentMethodLabel = (method: string | null | undefined): string => {
@@ -139,9 +174,12 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, gu
 
   // Mapeo de comensales con sus montos exactos y estado inicial "Impagado"
   // Usar localGuests en lugar de guests para reflejar los cambios en tiempo real
+  // Filtrar para mostrar solo comensales con monto > 0 (los que están seleccionados para pagar)
   const dinerShares = useMemo(() => {
+    let shares: any[] = [];
+    
     if (splitData) {
-      return splitData.map((share) => {
+      shares = splitData.map((share) => {
         const guest = localGuests.find(g => g.id === share.id);
         return {
         ...share,
@@ -150,20 +188,41 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, gu
         amount: share.total 
         };
       });
+    } else {
+      const perGuest = grandTotal / (localGuests.length || 1);
+      shares = localGuests.map((guest) => ({
+        ...guest,
+        amount: perGuest,
+        status: guest.id === currentUserId ? 'PENDIENTE' : 'IMPAGADO'
+      }));
     }
     
-    const perGuest = grandTotal / (localGuests.length || 1);
-    return localGuests.map((guest) => ({
-      ...guest,
-      amount: perGuest,
-      status: guest.id === currentUserId ? 'PENDIENTE' : 'IMPAGADO'
-    }));
+    // Filtrar solo comensales con monto > 0 (excluir los que no pagan)
+    return shares.filter(diner => (diner.amount || 0) > 0);
   }, [localGuests, grandTotal, splitData, currentUserId]);
+
+  // Verificar si el usuario actual está en la división
+  const isCurrentUserInSplit = useMemo(() => {
+    return dinerShares.some(d => d.id === currentUserId);
+  }, [dinerShares, currentUserId]);
 
   const myShare = useMemo(() => {
     const me = dinerShares.find(d => d.id === currentUserId);
     return me ? me.amount : (grandTotal / (localGuests.length || 1));
   }, [dinerShares, grandTotal, localGuests.length, currentUserId]);
+
+  // Verificar si el usuario actual ya pagó
+  const currentUserPaid = useMemo(() => {
+    const guestIdToCheck = currentGuestId || currentUserId;
+    const guestToCheck = localGuests.find(g => g.id === guestIdToCheck);
+    return guestToCheck?.paid === true || currentUserGuest?.paid === true;
+  }, [currentUserGuest, localGuests, currentGuestId, currentUserId]);
+
+  // Verificar si todos los comensales ya pagaron
+  const allGuestsPaid = useMemo(() => {
+    if (dinerShares.length === 0) return false;
+    return dinerShares.every(diner => diner.paid === true);
+  }, [dinerShares]);
 
   // Se asegura una URL absoluta válida y limpia
   const shareUrl = useMemo(() => {
@@ -303,13 +362,22 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, gu
 
       <div className="flex items-center justify-between px-4 pb-2 pt-6">
         <h3 className="text-white text-lg font-bold leading-tight">Estado de Pagos</h3>
-        <span className="text-[10px] font-black text-amber-500 uppercase bg-amber-500/10 px-3 py-1 rounded-full">
-          PENDIENTE DE COBRO
-        </span>
+        {allGuestsPaid ? (
+          <span className="text-[10px] font-black text-green-500 uppercase bg-green-500/10 px-3 py-1 rounded-full flex items-center gap-1.5">
+            <span className="material-symbols-outlined text-[12px]">check_circle</span>
+            CUENTA SALDADA
+          </span>
+        ) : (
+          <span className="text-[10px] font-black text-amber-500 uppercase bg-amber-500/10 px-3 py-1 rounded-full">
+            PENDIENTE DE COBRO
+          </span>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto no-scrollbar px-4 space-y-3 pb-8">
         {dinerShares.map((diner) => {
+          // Determinar si este diner es "yo" (el usuario actual de la sesión)
+          // currentUserId ya tiene la prioridad: currentGuestId de URL > host > primer guest
           const isMe = diner.id === currentUserId;
           const isPaid = diner.paid === true;
           
@@ -353,22 +421,79 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, cart, gu
       </div>
 
       <div className="fixed bottom-0 left-0 w-full bg-background-dark border-t border-[#2a3c32] p-4 flex flex-col gap-3 shadow-[0_-10px_40px_rgba(0,0,0,0.5)] z-50">
-        <button 
-          onClick={() => onConfirm(currentUserId)} 
-          className="w-full bg-primary hover:bg-green-400 active:scale-[0.98] text-background-dark font-black text-lg h-16 rounded-2xl flex items-center justify-between px-8 transition-all shadow-xl shadow-primary/20 group"
-        >
-          <div className="flex flex-col items-start leading-none">
-            <span className="text-[10px] uppercase font-black tracking-widest opacity-60">Pagar mi parte</span>
-            <span className="text-xl tabular-nums">${formatPrice(myShare)}</span>
-          </div>
-          <span className="material-symbols-outlined font-black group-hover:translate-x-1 transition-transform">arrow_forward</span>
-        </button>
-        <button 
-          onClick={() => onConfirm(currentUserId)} 
-          className="w-full flex items-center justify-center text-[#9db9a8] font-bold text-[10px] uppercase tracking-[0.2em] py-2 hover:text-white transition-colors"
-        >
-          O pagar la cuenta completa (${formatPrice(grandTotal)})
-        </button>
+        {dinerShares.length === 1 ? (
+          currentUserPaid ? (
+            <button 
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const guestIdToUse = currentGuestId || currentUserId || dinerShares[0]?.id;
+                if (activeOrderId && guestIdToUse) {
+                  if (onNavigateToTip) {
+                    onNavigateToTip();
+                  } else {
+                    navigate(`/cash-payment?orderId=${activeOrderId}&guestId=${guestIdToUse}`);
+                  }
+                }
+              }} 
+              className="w-full bg-primary hover:bg-green-400 active:scale-[0.98] text-background-dark font-black text-lg h-16 rounded-2xl flex items-center justify-center gap-3 transition-all shadow-xl shadow-primary/20 group"
+            >
+              <span>Avanzar a la propina</span>
+              <span className="material-symbols-outlined font-black group-hover:translate-x-1 transition-transform">arrow_forward</span>
+            </button>
+          ) : (
+            <button 
+              onClick={() => {
+                const guestIdToUse = dinerShares[0]?.id || currentUserId || localGuests[0]?.id;
+                if (guestIdToUse) {
+                  onConfirm(guestIdToUse);
+                } else {
+                  console.error('[CheckoutView] No se puede pagar: no se encontró guestId');
+                }
+              }} 
+              className="w-full bg-primary hover:bg-green-400 active:scale-[0.98] text-background-dark font-black text-lg h-16 rounded-2xl flex items-center justify-between px-8 transition-all shadow-xl shadow-primary/20 group"
+            >
+              <div className="flex flex-col items-start leading-none">
+                <span className="text-[10px] uppercase font-black tracking-widest opacity-60">Pagar cuenta</span>
+                <span className="text-xl tabular-nums">${formatPrice(grandTotal)}</span>
+              </div>
+              <span className="material-symbols-outlined font-black group-hover:translate-x-1 transition-transform">arrow_forward</span>
+            </button>
+          )
+        ) : (
+          isCurrentUserInSplit ? (
+            <>
+              <button 
+                onClick={() => {
+                  if (currentUserId) {
+                    onConfirm(currentUserId);
+                  } else {
+                    console.error('[CheckoutView] No se puede pagar: currentUserId no está definido');
+                  }
+                }} 
+                className="w-full bg-primary hover:bg-green-400 active:scale-[0.98] text-background-dark font-black text-lg h-16 rounded-2xl flex items-center justify-between px-8 transition-all shadow-xl shadow-primary/20 group"
+              >
+                <div className="flex flex-col items-start leading-none">
+                  <span className="text-[10px] uppercase font-black tracking-widest opacity-60">Pagar mi parte</span>
+                  <span className="text-xl tabular-nums">${formatPrice(myShare)}</span>
+                </div>
+                <span className="material-symbols-outlined font-black group-hover:translate-x-1 transition-transform">arrow_forward</span>
+              </button>
+              <button 
+                onClick={() => {
+                  if (currentUserId) {
+                    onConfirm(currentUserId);
+                  } else {
+                    console.error('[CheckoutView] No se puede pagar: currentUserId no está definido');
+                  }
+                }} 
+                className="w-full flex items-center justify-center text-[#9db9a8] font-bold text-[10px] uppercase tracking-[0.2em] py-2 hover:text-white transition-colors"
+              >
+                O pagar la cuenta completa (${formatPrice(grandTotal)})
+              </button>
+            </>
+          ) : null
+        )}
       </div>
     </div>
   );

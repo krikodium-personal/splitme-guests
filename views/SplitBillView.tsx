@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Guest, OrderItem, MenuItem } from '../types';
 import { getInitials, getGuestColor } from './GuestInfoView';
 import { formatPrice } from './MenuView';
@@ -41,6 +41,11 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
     }
     return initial;
   });
+
+  // Estado para rastrear qué comensal tiene el input con foco
+  const [focusedGuestId, setFocusedGuestId] = useState<string | null>(null);
+  const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const blurTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Actualizar customAmounts cuando cambian los guests
   useEffect(() => {
@@ -166,6 +171,8 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
 
   const toggleItemAssignment = (assignmentId: string, guestId: string) => {
     if (hasPaidGuests) return; // No permitir cambios si hay comensales pagados
+    // Establecer el comensal con foco cuando se hace clic en un botón de comensal
+    setFocusedGuestId(guestId);
     setAssignments(prev => prev.map(a => {
       if (a.id === assignmentId) {
         const isAssigned = a.assignedGuestIds.includes(guestId);
@@ -183,6 +190,49 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
   const handleCustomAmountChange = (id: string, value: string) => {
     if (hasPaidGuests) return; // No permitir cambios si hay comensales pagados
     setCustomAmounts(prev => ({ ...prev, [id]: value }));
+  };
+
+  // Función para agregar el faltante total al comensal con foco
+  const handleAddRemainingAmount = () => {
+    if (hasPaidGuests || !focusedGuestId) return; // No permitir cambios si hay comensales pagados o no hay comensal con foco
+    
+    const remaining = subtotal - assignedSubtotal;
+    if (remaining <= 0) return;
+
+    if (method === 'custom') {
+      // Para método custom: agregar el faltante al comensal con foco
+      // Leer el valor actual del input directamente si está disponible, sino del estado
+      const inputElement = inputRefs.current[focusedGuestId];
+      let currentValue = '';
+      if (inputElement) {
+        currentValue = inputElement.value || '';
+      } else {
+        currentValue = customAmounts[focusedGuestId] || '';
+      }
+      
+      const currentAmount = currentValue && currentValue.trim() !== '' ? parseFloat(currentValue) : 0;
+      const newAmount = currentAmount + remaining;
+      // Formatear el número para que tenga máximo 2 decimales
+      const formattedAmount = newAmount.toFixed(2);
+      setCustomAmounts(prev => ({ ...prev, [focusedGuestId]: formattedAmount }));
+      
+      // Si el input está enfocado, actualizar su valor también
+      if (inputElement) {
+        inputElement.value = formattedAmount;
+      }
+    } else if (method === 'item') {
+      // Para método item: asignar todos los items no asignados al comensal con foco
+      // Asignar todos los items no asignados al comensal seleccionado
+      setAssignments(prev => prev.map(a => {
+        if (a.assignedGuestIds.length === 0) {
+          return {
+            ...a,
+            assignedGuestIds: [focusedGuestId]
+          };
+        }
+        return a;
+      }));
+    }
   };
 
   const handleConfirm = () => {
@@ -239,8 +289,8 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
                       : 'text-text-secondary hover:text-white'
                 }`}
               >
-                <span className="material-symbols-outlined text-lg font-bold">{m.icon}</span>
-                <span className="text-[8px] font-black uppercase tracking-tighter">{m.label}</span>
+                <span className="material-symbols-outlined text-xl font-bold">{m.icon}</span>
+                <span className="text-xs font-black uppercase tracking-tighter">{m.label}</span>
               </button>
             ))}
           </div>
@@ -388,9 +438,47 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
                       <div className="relative">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-primary font-black">$</span>
                         <input 
+                          ref={(el) => { inputRefs.current[guest.id] = el; }}
                           type="number" 
-                          value={customAmounts[guest.id]}
-                          onFocus={() => !hasPaidGuests && handleCustomAmountChange(guest.id, '')}
+                          value={customAmounts[guest.id] || ''}
+                          onFocus={(e) => {
+                            if (!hasPaidGuests) {
+                              // Cancelar cualquier timeout pendiente de blur
+                              if (blurTimeoutRef.current) {
+                                clearTimeout(blurTimeoutRef.current);
+                                blurTimeoutRef.current = null;
+                              }
+                              setFocusedGuestId(guest.id);
+                              // Solo limpiar si el campo tiene el valor inicial '0'
+                              if (customAmounts[guest.id] === '0') {
+                                handleCustomAmountChange(guest.id, '');
+                              }
+                            }
+                          }}
+                          onBlur={(e) => {
+                            // Cancelar timeout anterior si existe
+                            if (blurTimeoutRef.current) {
+                              clearTimeout(blurTimeoutRef.current);
+                            }
+                            
+                            // No limpiar focusedGuestId inmediatamente para permitir que el botón funcione
+                            // Usar un delay para verificar si realmente se perdió el foco
+                            blurTimeoutRef.current = setTimeout(() => {
+                              // Verificar si algún input está enfocado o si se hizo clic en el botón
+                              const activeElement = document.activeElement;
+                              const isButton = activeElement?.closest('button')?.textContent?.includes('Agregar total faltante');
+                              const isInputFocused = activeElement?.tagName === 'INPUT' && activeElement?.getAttribute('type') === 'number';
+                              
+                              // Verificar si hay algún input en el documento que tenga foco
+                              const hasAnyInputFocused = document.querySelector('input[type="number"]:focus') !== null;
+                              
+                              // Solo limpiar si no hay ningún input enfocado y no se hizo clic en el botón
+                              if (!isButton && !isInputFocused && !hasAnyInputFocused) {
+                                setFocusedGuestId(null);
+                              }
+                              blurTimeoutRef.current = null;
+                            }, 200);
+                          }}
                           onChange={(e) => !hasPaidGuests && handleCustomAmountChange(guest.id, e.target.value)}
                           disabled={hasPaidGuests}
                           className={`w-full bg-white/5 border border-white/10 rounded-xl pl-7 pr-4 py-2 text-white font-bold outline-none focus:ring-2 focus:ring-primary ${
@@ -414,12 +502,28 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
       <footer className="fixed bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-background-dark via-background-dark to-transparent pt-12 pb-6 z-40">
         <div className="max-w-md mx-auto space-y-4">
           {!isFullyAssigned && (method === 'item' || method === 'custom') && (
-            <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 flex items-center gap-3 animate-pulse">
-              <span className="material-symbols-outlined text-amber-500">warning</span>
-              <p className="text-[10px] font-bold text-amber-500 uppercase tracking-widest leading-tight">
-                Faltan ${formatPrice(subtotal - assignedSubtotal)} por asignar
-              </p>
-            </div>
+            <>
+              <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 flex items-center gap-3 animate-pulse">
+                <span className="material-symbols-outlined text-amber-500 text-xl">warning</span>
+                <p className="text-sm font-bold text-amber-500 uppercase tracking-widest leading-tight">
+                  Faltan ${formatPrice(subtotal - assignedSubtotal)} por asignar
+                </p>
+              </div>
+              {focusedGuestId && (
+                <button
+                  onMouseDown={(e) => {
+                    // Prevenir que el input pierda el foco cuando se hace clic en el botón
+                    e.preventDefault();
+                  }}
+                  onClick={handleAddRemainingAmount}
+                  disabled={hasPaidGuests}
+                  className="w-full bg-amber-500/20 hover:bg-amber-500/30 active:scale-[0.98] border border-amber-500/30 text-amber-500 font-bold text-sm h-12 rounded-xl flex items-center justify-center gap-2 transition-all"
+                >
+                  <span className="material-symbols-outlined text-lg">add_circle</span>
+                  <span>Agregar total faltante ${formatPrice(subtotal - assignedSubtotal)}</span>
+                </button>
+              )}
+            </>
           )}
 
           <button 

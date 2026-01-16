@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { formatPrice } from './MenuView';
 import { supabase } from '../lib/supabase';
 
@@ -6,15 +7,22 @@ interface TransferPaymentViewProps {
   onBack: () => void;
   amount: number;
   restaurant?: any;
+  guestId?: string;
+  orderId?: string;
 }
 
-const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amount, restaurant }) => {
+const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amount, restaurant, guestId, orderId }) => {
+  const navigate = useNavigate();
   const [bankData, setBankData] = useState({
     alias: '',
     cbu: '',
     accountNumber: '',
     bankName: ''
   });
+  const [isPaid, setIsPaid] = useState(false);
+  const [isTransferConfirmed, setIsTransferConfirmed] = useState(false);
+  const [isWaitingConfirmation, setIsWaitingConfirmation] = useState(false);
+  const channelRef = useRef<any>(null);
 
   useEffect(() => {
     const loadBankData = async () => {
@@ -41,6 +49,72 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
     loadBankData();
   }, [restaurant]);
 
+  // Suscripción Realtime para escuchar cambios en order_guests.paid
+  useEffect(() => {
+    if (!supabase || !guestId || !orderId) return;
+
+    // Verificar estado inicial
+    const checkInitialPaidStatus = async () => {
+      const { data } = await supabase
+        .from('order_guests')
+        .select('paid, payment_method')
+        .eq('id', guestId)
+        .single();
+      
+      if (data) {
+        if (data.paid) {
+          setIsPaid(true);
+          setIsWaitingConfirmation(false);
+        }
+        // Si ya tiene payment_method como 'transferencia', significa que ya se confirmó
+        if (data.payment_method === 'transferencia' || data.payment_method === 'transfer') {
+          setIsTransferConfirmed(true);
+          if (!data.paid) {
+            setIsWaitingConfirmation(true);
+          }
+        }
+      }
+    };
+
+    checkInitialPaidStatus();
+
+    // Suscripción Realtime
+    const channel = supabase
+      .channel(`transfer-payment-${guestId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'order_guests',
+          filter: `id=eq.${guestId}`
+        },
+        (payload) => {
+          console.log('[TransferPaymentView] Cambio detectado en order_guests:', payload);
+          if (payload.new.paid === true) {
+            setIsPaid(true);
+            setIsWaitingConfirmation(false);
+            // Reproducir sonido cuando el admin acepta el pago en transferencia
+            const paymentMethod = payload.new.payment_method;
+            if (paymentMethod === 'transferencia' || paymentMethod === 'transfer') {
+              const audio = new Audio('https://hqaiuywzklrwywdhmqxw.supabase.co/storage/v1/object/public/sounds/pagado.wav');
+              audio.play().catch(e => console.log("[TransferPaymentView] Audio bloqueado", e));
+              if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    channelRef.current = channel;
+
+    return () => {
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+      }
+    };
+  }, [guestId, orderId]);
+
   const copyToClipboard = (text: string) => {
     if (navigator.clipboard && window.isSecureContext) {
       navigator.clipboard.writeText(text)
@@ -61,6 +135,59 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
     }
   };
 
+  const handleConfirmTransfer = async () => {
+    if (!supabase || !guestId || !orderId || isTransferConfirmed) return;
+
+    try {
+      setIsWaitingConfirmation(true);
+      
+      // Actualizar payment_method a 'transferencia' en order_guests
+      const { error } = await supabase
+        .from('order_guests')
+        .update({ payment_method: 'transferencia' })
+        .eq('id', guestId);
+
+      if (error) {
+        console.error('[TransferPaymentView] Error al confirmar transferencia:', error);
+        alert('Error al confirmar la transferencia. Intenta nuevamente.');
+        setIsWaitingConfirmation(false);
+        return;
+      }
+
+      console.log('[TransferPaymentView] Transferencia confirmada, esperando confirmación del admin');
+      setIsTransferConfirmed(true);
+    } catch (error) {
+      console.error('[TransferPaymentView] Error al confirmar transferencia:', error);
+      alert('Error al confirmar la transferencia. Intenta nuevamente.');
+      setIsWaitingConfirmation(false);
+    }
+  };
+
+  const handleNavigateToTip = () => {
+    if (orderId && guestId) {
+      navigate(`/cash-payment?orderId=${orderId}&guestId=${guestId}`);
+    }
+  };
+
+  // Determinar el texto y acción del botón según el estado
+  const getButtonText = () => {
+    if (isPaid) {
+      return 'Avanzar a la propina';
+    }
+    if (isWaitingConfirmation) {
+      return 'Esperando confirmación';
+    }
+    return 'Confirmar transferencia';
+  };
+
+  const handleButtonClick = () => {
+    if (isPaid) {
+      handleNavigateToTip();
+    } else if (!isTransferConfirmed && !isWaitingConfirmation) {
+      handleConfirmTransfer();
+    }
+  };
+
   return (
     <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background-dark text-white font-display antialiased">
       <header className="sticky top-0 z-40 flex items-center justify-between bg-background-dark/90 px-4 py-4 backdrop-blur-md border-b border-white/5">
@@ -72,13 +199,27 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
       </header>
 
       <div className="flex flex-col items-center justify-center pt-8 pb-6 animate-fade-in-up">
-        <div className="size-20 rounded-full bg-primary/20 flex items-center justify-center mb-4 ring-2 ring-primary/30">
-          <span className="material-symbols-outlined text-primary text-5xl" style={{ fontVariationSettings: "'wght' 600" }}>account_balance</span>
-        </div>
-        <h2 className="text-2xl font-black tracking-tight text-center px-4">Transferencia Bancaria</h2>
-        <p className="text-text-secondary text-sm mt-2 text-center px-4">
-          Realiza la transferencia por el monto indicado
-        </p>
+        {isPaid ? (
+          <>
+            <div className="size-20 rounded-full bg-primary/20 flex items-center justify-center mb-4 ring-2 ring-primary/30 animate-bounce">
+              <span className="material-symbols-outlined text-primary text-5xl filled" style={{ fontVariationSettings: "'wght' 600" }}>check_circle</span>
+            </div>
+            <h2 className="text-2xl font-black tracking-tight text-center px-4 text-primary">¡Pago recibido exitosamente!</h2>
+            <p className="text-text-secondary text-sm mt-2 text-center px-4">
+              Tu transferencia ha sido confirmada
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="size-20 rounded-full bg-primary/20 flex items-center justify-center mb-4 ring-2 ring-primary/30">
+              <span className="material-symbols-outlined text-primary text-5xl" style={{ fontVariationSettings: "'wght' 600" }}>account_balance</span>
+            </div>
+            <h2 className="text-2xl font-black tracking-tight text-center px-4">Transferencia Bancaria</h2>
+            <p className="text-text-secondary text-sm mt-2 text-center px-4">
+              Realiza la transferencia por el monto indicado
+            </p>
+          </>
+        )}
       </div>
 
       <div className="px-5 space-y-4 pb-40">
@@ -162,6 +303,33 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
             </div>
           </div>
         </section>
+      </div>
+
+      {/* Footer con botón de confirmación */}
+      <div className="fixed bottom-0 z-50 w-full border-t border-white/5 bg-background-dark/95 backdrop-blur-xl p-6 pb-10 shadow-[0_-10px_50px_rgba(0,0,0,0.6)]">
+        <button 
+          onClick={handleButtonClick}
+          disabled={isWaitingConfirmation && !isPaid}
+          className={`group relative flex w-full items-center justify-center gap-3 rounded-2xl h-16 transition-all shadow-xl ${
+            (isWaitingConfirmation && !isPaid) 
+              ? 'bg-white/5 grayscale cursor-not-allowed border border-white/10' 
+              : 'bg-primary hover:scale-[1.02] active:scale-[0.98] shadow-primary/20'
+          }`}
+        >
+          {isWaitingConfirmation && !isPaid ? (
+            <div className="flex items-center gap-3">
+              <div className="size-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+              <span className="text-sm font-black text-white uppercase tracking-widest">{getButtonText()}</span>
+            </div>
+          ) : (
+            <>
+              <span className="text-xl font-black text-background-dark uppercase tracking-tighter">{getButtonText()}</span>
+              {!isPaid && (
+                <span className="material-symbols-outlined text-background-dark font-black group-hover:translate-x-1 transition-transform">arrow_forward</span>
+              )}
+            </>
+          )}
+        </button>
       </div>
     </div>
   );

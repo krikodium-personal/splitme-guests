@@ -1,5 +1,6 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Guest, OrderItem, MenuItem } from '../types';
 import { formatPrice } from './MenuView';
 import { supabase } from '../lib/supabase';
@@ -18,14 +19,23 @@ interface IndividualShareViewProps {
 }
 
 const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay, onShowTransfer, onShowCash, onUpdatePaymentMethod, cart, menuItems, splitData, restaurant, guests = [] }) => {
+  const location = useLocation();
   const [paymentMethod, setPaymentMethod] = useState<'mercadopago' | 'transfer' | 'cash'>('mercadopago');
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Obtener guestId de la URL si existe, sino usar '1' como default
+  // Obtener guestId de la URL si existe, sino usar el primer guest o '1' como default
   const targetGuestId = useMemo(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    return urlParams.get('guestId') || '1';
-  }, []);
+    const urlParams = new URLSearchParams(location.search);
+    const guestIdFromUrl = urlParams.get('guestId');
+    if (guestIdFromUrl) {
+      return guestIdFromUrl;
+    }
+    // Si no hay guestId en la URL, usar el primer guest disponible
+    if (guests.length > 0) {
+      return guests[0].id;
+    }
+    return '1';
+  }, [location.search, guests]);
 
   // El comensal actual puede venir de la URL o ser el default '1'
   const myDataFromSplit = useMemo(() => {
@@ -45,37 +55,51 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
 
   // Calcular subtotal: prioridad individualAmount desde BD, luego splitData, luego calcular desde items
   const subtotal = useMemo(() => {
+    console.log('[IndividualShareView] Calculando subtotal para guestId:', targetGuestId);
+    console.log('[IndividualShareView] targetGuest:', targetGuest);
+    console.log('[IndividualShareView] targetGuest.individualAmount:', targetGuest?.individualAmount);
+    console.log('[IndividualShareView] splitData:', splitData);
+    console.log('[IndividualShareView] myDataFromSplit:', myDataFromSplit);
+    console.log('[IndividualShareView] myCartItems:', myCartItems);
+    console.log('[IndividualShareView] cart total:', cart.length);
+    
     // Primero verificar si el guest tiene individualAmount guardado en BD
     if (targetGuest?.individualAmount !== null && targetGuest?.individualAmount !== undefined) {
+      console.log('[IndividualShareView] Usando individualAmount desde BD:', targetGuest.individualAmount);
       return targetGuest.individualAmount;
     }
     
     // Si hay splitData, usar los totales ya calculados
     if (myDataFromSplit?.total) {
+      console.log('[IndividualShareView] Usando total desde splitData:', myDataFromSplit.total);
       return myDataFromSplit.total;
     }
     
     // Si no hay splitData ni individualAmount, calcular desde los items del comensal
-    return myCartItems.reduce((sum, item) => {
+    const calculated = myCartItems.reduce((sum, item) => {
       const menuItem = menuItems.find(m => m.id === item.itemId);
-      return sum + (menuItem ? Number(menuItem.price) * item.quantity : 0);
+      const itemTotal = menuItem ? Number(menuItem.price) * item.quantity : 0;
+      console.log('[IndividualShareView] Item:', item.itemId, 'quantity:', item.quantity, 'price:', menuItem?.price, 'total:', itemTotal);
+      return sum + itemTotal;
     }, 0);
-  }, [targetGuest, myDataFromSplit, myCartItems, menuItems]);
+    console.log('[IndividualShareView] Subtotal calculado desde items:', calculated);
+    return calculated;
+  }, [targetGuest, myDataFromSplit, myCartItems, menuItems, targetGuestId, splitData, cart.length]);
 
   const finalTotal = subtotal;
 
   const handleProcessPayment = async () => {
     if (isProcessing) return;
     
-    // GUARDAR el método de pago cuando el usuario hace click en el CTA
-    if (onUpdatePaymentMethod) {
-      await onUpdatePaymentMethod(targetGuestId, paymentMethod);
-    }
-    
-    // Si es transferencia, mostrar vista de transferencia con el monto final
+    // Si es transferencia, mostrar vista de transferencia con el monto final (NO actualizar payment_method todavía)
     if (paymentMethod === 'transfer' && onShowTransfer) {
       onShowTransfer(Number(finalTotal.toFixed(2)));
       return;
+    }
+    
+    // GUARDAR el método de pago cuando el usuario hace click en el CTA (solo para efectivo y mercadopago)
+    if (onUpdatePaymentMethod && paymentMethod !== 'transfer') {
+      await onUpdatePaymentMethod(targetGuestId, paymentMethod);
     }
     
     // Si es efectivo, mostrar vista de efectivo con el monto final y nombre del comensal

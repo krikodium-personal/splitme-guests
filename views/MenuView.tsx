@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Guest, MenuItem, OrderItem } from '../types';
 import { getInitials, getGuestColor } from './GuestInfoView';
 
@@ -23,6 +23,7 @@ interface MenuViewProps {
   table?: any;
   restaurant?: any;
   onSaveGuestChanges?: (updatedGuests: Guest[], newGuests: Guest[]) => Promise<boolean>;
+  activeOrderId?: string | null;
 }
 
 export const formatPrice = (price: number) => {
@@ -143,10 +144,11 @@ const MenuView: React.FC<MenuViewProps> = ({
   guests, setGuests, cart, onAddToCart, onUpdateCartItem, onNext, 
   selectedGuestId, onSelectGuest, initialCategory, onCategoryChange, 
   editingCartItem, onCancelEdit, menuItems, categories: supabaseCategories,
-  table, restaurant, onSaveGuestChanges
+  table, restaurant, onSaveGuestChanges, activeOrderId
 }) => {
   const { category: categorySlug, subcategory: subcategorySlug } = useParams<{ category?: string; subcategory?: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   
   const [showDetail, setShowDetail] = useState<MenuItem | null>(null);
   const [isManageGuestsOpen, setIsManageGuestsOpen] = useState(false);
@@ -391,6 +393,71 @@ const MenuView: React.FC<MenuViewProps> = ({
         handleUpdateGuestName(id, originalGuest.name);
       }
     }
+  };
+
+  // Función para compartir el link para que otro comensal seleccione sus platos
+  const handleShareGuestMenu = async (guestId: string) => {
+    try {
+      const orderIdToUse = activeOrderId || '';
+      const baseUrl = window.location.origin;
+      const menuUrl = orderIdToUse 
+        ? `${baseUrl}/menu?orderId=${orderIdToUse}&guestId=${guestId}`
+        : `${baseUrl}/menu?guestId=${guestId}`;
+      
+      const guest = guests.find(g => g.id === guestId);
+      const guestName = guest?.name || 'Comensal';
+      const text = `¡Hola ${guestName}! Puedes seleccionar tus platos aquí: ${menuUrl}`;
+      
+      if (navigator.share) {
+        try {
+          await navigator.share({
+            title: 'SplitMe - Seleccionar platos',
+            text: text,
+            url: menuUrl,
+          });
+        } catch (err: any) {
+          if (err.name !== 'AbortError') {
+            console.error("Error al compartir:", err);
+            copyToClipboard(text);
+          }
+        }
+      } else {
+        copyToClipboard(text);
+      }
+    } catch (error) {
+      console.error('Error al compartir:', error);
+    }
+  };
+
+  // Función para copiar al portapapeles
+  const copyToClipboard = (text: string) => {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text)
+        .then(() => alert('Enlace copiado al portapapeles'))
+        .catch(err => {
+          console.error("Error al copiar:", err);
+          fallbackCopyTextToClipboard(text);
+        });
+    } else {
+      fallbackCopyTextToClipboard(text);
+    }
+  };
+
+  const fallbackCopyTextToClipboard = (text: string) => {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.style.position = "fixed";
+    textArea.style.left = "-9999px";
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    try {
+      document.execCommand('copy');
+      alert('Enlace copiado al portapapeles');
+    } catch (err) {
+      console.error('Fallback: Error al copiar', err);
+    }
+    document.body.removeChild(textArea);
   };
 
   const handleAddGuest = () => {
@@ -928,17 +995,33 @@ const MenuView: React.FC<MenuViewProps> = ({
                     >
                       {getInitials(g.name || backupNames[g.id] || '?')}
                     </div>
-                    <div className="flex-1 min-w-0 pr-2 relative flex items-center">
+                    <div className="flex-1 min-w-0 relative flex items-center gap-2">
                        <input 
                          ref={el => { inputRefs.current[g.id] = el; }}
                          type="text" 
                          value={g.name} 
                          onChange={(e) => handleUpdateGuestName(g.id, e.target.value)}
+                         onFocus={(e) => {
+                           // Seleccionar todo el texto cuando se hace focus para que se borre al escribir
+                           e.target.select();
+                         }}
                          onBlur={() => handleBlurName(g.id, g.name)}
                          onClick={(e) => e.stopPropagation()}
-                         className="flex-1 bg-transparent border-none p-0 font-bold text-white focus:ring-0 focus:outline-none placeholder:opacity-30 cursor-text"
+                         className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 font-bold text-white focus:ring-2 focus:ring-primary focus:border-primary focus:outline-none placeholder:opacity-30 cursor-text transition-all"
                          placeholder="Nombre del comensal..."
                        />
+                       {!g.isHost && (
+                         <button
+                           onClick={(e) => {
+                             e.stopPropagation();
+                             handleShareGuestMenu(g.id);
+                           }}
+                           className="size-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-white/60 hover:text-primary hover:bg-primary/20 hover:border-primary/40 active:scale-95 transition-all shrink-0"
+                           title="Compartir para seleccionar platos"
+                         >
+                           <span className="material-symbols-outlined text-[20px]">ios_share</span>
+                         </button>
+                       )}
                     </div>
                   </div>
                   {selectedGuestId === g.id && <span className="material-symbols-outlined text-primary ml-2">check_circle</span>}
