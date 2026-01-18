@@ -1,9 +1,9 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { Guest } from '../types';
 import { getInitials, getGuestColor } from './GuestInfoView';
 import { formatPrice } from './MenuView';
 import { supabase } from '../lib/supabase';
+import { clearSession } from '../lib/sessionCookies';
 
 interface ConfirmationViewProps {
   onRestart: () => void;
@@ -266,7 +266,7 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
         {currentUserPaid ? (
           <button 
             onClick={onBackToStart || (() => {
-              localStorage.clear();
+              clearSession();
               window.location.href = '/scan';
             })} 
             className="w-full bg-primary hover:bg-green-400 text-background-dark font-bold text-lg h-14 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-primary/20 group"

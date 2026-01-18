@@ -15,9 +15,8 @@ import CashPaymentView from './views/CashPaymentView';
 import CheckoutView from './views/CheckoutView';
 import FeedbackView from './views/FeedbackView';
 import ConfirmationView from './views/ConfirmationView';
+import { getSession, setSession, getOrderId, setOrderId, removeOrderId, clearSession } from './lib/sessionCookies';
 
-const SESSION_KEY = 'dinesplit_active_session';
-const ACTIVE_ORDER_KEY = 'dinesplit_active_order_id';
 const READY_SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3';
 
 const App: React.FC = () => {
@@ -294,8 +293,8 @@ const App: React.FC = () => {
       }
       if (!tableData) throw new Error(`Mesa ${tableNum} no encontrada en este local.`);
 
-      // PERSISTENCIA
-      localStorage.setItem(SESSION_KEY, JSON.stringify({ res: accessCode.toUpperCase(), table: tableNum.toString() }));
+      // PERSISTENCIA (cookies para sobrevivir a recargas)
+      setSession({ res: accessCode.toUpperCase(), table: tableNum.toString() });
 
       // Cargar datos complementarios
       // Buscar el mesero asignado a la mesa usando waiter_id
@@ -345,14 +344,14 @@ const App: React.FC = () => {
         
         if (orderCheckError) {
           console.error("[DineSplit] Error al verificar orden:", orderCheckError);
-          localStorage.removeItem(ACTIVE_ORDER_KEY);
+          removeOrderId();
           setActiveOrderId(null);
           setCart([]);
           setBatches([]);
           navigateToView('GUEST_INFO');
         } else if (orderCheck && orderCheck.status !== 'PAGADO' && orderCheck.status !== 'CANCELADO') {
           console.log("[DineSplit] ✅ Orden activa validada. Cargando datos...");
-          localStorage.setItem(ACTIVE_ORDER_KEY, activeTableOrder.id);
+          setOrderId(activeTableOrder.id);
           setActiveOrderId(activeTableOrder.id);
           // Cargar guests primero para tener los IDs correctos
           await fetchOrderGuests(activeTableOrder.id);
@@ -362,7 +361,7 @@ const App: React.FC = () => {
         } else {
           // La orden ya fue cerrada, limpiar y empezar de nuevo
           console.log("[DineSplit] ❌ La orden encontrada ya está cerrada (status:", orderCheck?.status || 'NO EXISTE', "). Limpiando sesión completamente.");
-          localStorage.clear(); // Limpiar todo, no solo ACTIVE_ORDER_KEY
+          clearSession();
           setActiveOrderId(null);
           setCart([]);
           setBatches([]);
@@ -372,7 +371,7 @@ const App: React.FC = () => {
         }
       } else {
         console.log("[DineSplit] No hay orden activa. Empezando nueva sesión.");
-        localStorage.removeItem(ACTIVE_ORDER_KEY);
+        removeOrderId();
         setActiveOrderId(null);
         setCart([]);
         setBatches([]);
@@ -439,7 +438,7 @@ const App: React.FC = () => {
 
       setGuests(updatedGuests);
       setActiveOrderId(newOrder.id);
-      localStorage.setItem(ACTIVE_ORDER_KEY, newOrder.id);
+      setOrderId(newOrder.id);
       
       // Crear el PRIMER batch para esta orden
       console.log("[DineSplit] Creando primer batch para la orden:", newOrder.id);
@@ -935,15 +934,7 @@ const App: React.FC = () => {
   }, [supabase, activeOrderId]);
 
   useEffect(() => {
-    // Verificación ANTES de definir initApp: si hay sesión activa y estamos en ruta que la requiere, no ejecutar nada
     const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/checkout', '/individual-share', '/transfer-payment', '/cash-payment', '/feedback', '/confirmation', '/guest-selection'];
-    const hasActiveSession = activeOrderId || localStorage.getItem(ACTIVE_ORDER_KEY);
-    
-    if (hasActiveSession && routesRequiringSession.includes(location.pathname) && !orderIdParam && !resParam && !tableParam) {
-      console.log("[DineSplit] ✅ Sesión activa detectada, saltando initApp completamente. Path:", location.pathname, "OrderId:", activeOrderId || localStorage.getItem(ACTIVE_ORDER_KEY));
-      setLoading(false);
-      return;
-    }
 
     const initApp = async () => {
 
@@ -982,7 +973,7 @@ const App: React.FC = () => {
           setCategories(categoriesRes.data || []);
           setMenuItems(menuItemsRes.data || []);
           setActiveOrderId(orderIdParam);
-          localStorage.setItem(ACTIVE_ORDER_KEY, orderIdParam);
+          setOrderId(orderIdParam);
 
           // Cargar guests con sus montos individuales y estado de pago
           if (guestsRes.data) {
@@ -1026,19 +1017,116 @@ const App: React.FC = () => {
         await handleStartSession(resParam, tableParam);
         window.history.replaceState({}, '', window.location.pathname);
       } else {
-        // Si no hay parámetros en la URL (URL raíz), verificar si hay una sesión activa
-        // Si hay una sesión activa y estamos en una ruta que la requiere, NO limpiar la sesión
-        if (hasActiveSession && routesRequiringSession.includes(location.pathname)) {
-          console.log("[DineSplit] Sesión activa detectada en ruta que la requiere, NO limpiando sesión. Path:", location.pathname, "OrderId:", activeOrderId || localStorage.getItem(ACTIVE_ORDER_KEY));
+        // Sin parámetros en URL: intentar restaurar sesión desde cookies
+        const orderId = getOrderId();
+        const session = getSession();
+
+        if (orderId) {
+          // Restaurar desde orden guardada en cookie (p. ej. tras recargar en /menu)
+          setLoading(true);
+          try {
+            const { data: orderData } = await supabase
+              .from('orders')
+              .select('*, tables!inner(restaurant_id)')
+              .eq('id', orderId)
+              .maybeSingle();
+
+            if (!orderData) {
+              clearSession();
+              setRestaurant(null);
+              setCurrentTable(null);
+              setCurrentWaiter(null);
+              setMenuItems([]);
+              setCategories([]);
+              setActiveOrderId(null);
+              setCart([]);
+              setBatches([]);
+              setGuests([{ id: '1', name: 'Invitado 1 (Tú)', isHost: true }]);
+              setActiveGuestId('1');
+              navigate('/scan');
+              setLoading(false);
+              return;
+            }
+
+            const { data: orderCheck } = await supabase
+              .from('orders')
+              .select('id, status')
+              .eq('id', orderId)
+              .maybeSingle();
+
+            if (orderCheck && (orderCheck.status === 'PAGADO' || orderCheck.status === 'CANCELADO')) {
+              clearSession();
+              setRestaurant(null);
+              setCurrentTable(null);
+              setCurrentWaiter(null);
+              setMenuItems([]);
+              setCategories([]);
+              setActiveOrderId(null);
+              setCart([]);
+              setBatches([]);
+              setGuests([{ id: '1', name: 'Invitado 1 (Tú)', isHost: true }]);
+              setActiveGuestId('1');
+              navigate('/scan');
+              setLoading(false);
+              return;
+            }
+
+            const restaurantId = orderData.tables.restaurant_id;
+            const [restaurantRes, categoriesRes, menuItemsRes, guestsRes, tableRes] = await Promise.all([
+              supabase.from('restaurants').select('*').eq('id', restaurantId).maybeSingle(),
+              supabase.from('categories').select('*').eq('restaurant_id', restaurantId).order('sort_order'),
+              supabase.from('menu_items').select('*').eq('restaurant_id', restaurantId).order('sort_order'),
+              supabase.from('order_guests').select('*').eq('order_id', orderId).order('position', { ascending: true }),
+              supabase.from('tables').select('*').eq('id', orderData.table_id).maybeSingle()
+            ]);
+
+            setCurrentTable(tableRes?.data || null);
+
+            if (restaurantRes.error || !restaurantRes.data) {
+              clearSession();
+              setError("No se pudo cargar el restaurante.");
+              navigate('/scan');
+              setLoading(false);
+              return;
+            }
+
+            setRestaurant(restaurantRes.data);
+            setCategories(categoriesRes.data || []);
+            setMenuItems(menuItemsRes.data || []);
+            setActiveOrderId(orderId);
+            if (guestsRes.data) {
+              const guestsFromDB: Guest[] = guestsRes.data.map(og => ({
+                id: og.id,
+                name: og.name,
+                isHost: og.is_host || false,
+                individualAmount: og.individual_amount || null,
+                paid: og.paid || false,
+                payment_id: og.payment_id || null,
+                payment_method: og.payment_method || null
+              }));
+              setGuests(guestsFromDB);
+            }
+            await fetchOrderItemsFromDB(orderId);
+
+            if (location.pathname === '/' || location.pathname === '/scan') {
+              navigate('/menu');
+            }
+            setLoading(false);
+          } catch (e: any) {
+            console.error("[DineSplit] Error al restaurar sesión desde cookie:", e);
+            clearSession();
+            setError("No se pudo restaurar la sesión.");
+            navigate('/scan');
+            setLoading(false);
+          }
+        } else if (session?.res && session?.table) {
+          // Restaurar desde sesión (res+table) en cookie
+          console.log("[DineSplit] Restaurando sesión desde cookie:", session.res, session.table);
+          await handleStartSession(session.res, session.table);
           setLoading(false);
-          return;
-        }
-        
-        // Solo limpiar si estamos en /scan o no hay sesión activa
-        if (location.pathname === '/scan' || !hasActiveSession) {
-          console.log("[DineSplit] URL raíz detectada. Mostrando pantalla de inicio (SCAN) sin restaurar sesión.");
-          // Limpiar completamente el estado, incluyendo restaurante y mesa
-          localStorage.removeItem(ACTIVE_ORDER_KEY);
+        } else {
+          // Sin cookies válidas: ir a escanear
+          clearSession();
           setRestaurant(null);
           setCurrentTable(null);
           setCurrentWaiter(null);
@@ -1050,10 +1138,6 @@ const App: React.FC = () => {
           setGuests([{ id: '1', name: 'Invitado 1 (Tú)', isHost: true }]);
           setActiveGuestId('1');
           navigate('/scan');
-          setLoading(false);
-        } else {
-          // Si hay sesión activa pero no estamos en /scan, solo marcar como no cargando
-          console.log("[DineSplit] Sesión activa detectada, manteniendo sesión. Path:", location.pathname);
           setLoading(false);
         }
       }
@@ -1193,7 +1277,7 @@ const App: React.FC = () => {
           paymentId || undefined
         ).then(success => {
           if (success) {
-            localStorage.clear();
+            clearSession();
             navigateToView('FEEDBACK');
           } else {
             alert("Hubo un error al registrar el pago. Por favor, contacta al restaurante.");
@@ -1201,7 +1285,7 @@ const App: React.FC = () => {
         });
       } else {
         console.warn("[DineSplit] No se pudo procesar el pago: guestId o amount faltante");
-        localStorage.clear();
+        clearSession();
         navigateToView('FEEDBACK');
       }
     }
@@ -1488,7 +1572,7 @@ const App: React.FC = () => {
       if (guestId) {
         await handlePaymentSuccess(guestId, paymentData.amount, paymentData.method);
       }
-      localStorage.clear();
+      clearSession();
       navigateToView('FEEDBACK'); 
     }
   };
@@ -2263,7 +2347,7 @@ const App: React.FC = () => {
           <CashPaymentView 
             onBack={() => navigateToView('INDIVIDUAL_SHARE')}
             onNext={() => {
-              localStorage.clear();
+              clearSession();
               navigateToView('CONFIRMATION');
             }}
             amount={(() => {
@@ -2317,11 +2401,11 @@ const App: React.FC = () => {
         <Route path="/confirmation" element={
           <ConfirmationView 
             onRestart={() => { 
-              localStorage.clear(); 
+              clearSession(); 
               navigate('/scan'); 
             }}
             onBackToStart={() => {
-              localStorage.clear();
+              clearSession();
               navigate('/scan');
             }}
             guests={guests} 

@@ -233,76 +233,80 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
           </div>
         </section>
 
-        {/* Datos bancarios */}
-        <section className="animate-fade-in-up" style={{ animationDelay: '0.2s' }}>
-          <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-text-secondary mb-4 px-1">Datos de la Cuenta</h3>
-          
-          {/* Alias */}
-          <div className="bg-surface-dark rounded-2xl p-5 border border-white/5 mb-3">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-text-secondary text-xs font-bold uppercase tracking-widest">Alias</p>
-              <button
-                onClick={() => copyToClipboard(bankData.alias)}
-                className="text-primary text-xs font-black uppercase tracking-wider hover:opacity-80 transition-opacity"
-              >
-                Copiar
-              </button>
-            </div>
-            <p className="text-xl font-black tracking-tight break-all">{bankData.alias}</p>
-          </div>
-
-          {/* CBU */}
-          <div className="bg-surface-dark rounded-2xl p-5 border border-white/5 mb-3">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-text-secondary text-xs font-bold uppercase tracking-widest">CBU</p>
-              <button
-                onClick={() => copyToClipboard(bankData.cbu)}
-                className="text-primary text-xs font-black uppercase tracking-wider hover:opacity-80 transition-opacity"
-              >
-                Copiar
-              </button>
-            </div>
-            <p className="text-xl font-black tracking-tight break-all">{bankData.cbu || 'No disponible'}</p>
-          </div>
-
-          {/* Nro de Cuenta */}
-          <div className="bg-surface-dark rounded-2xl p-5 border border-white/5 mb-3">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-text-secondary text-xs font-bold uppercase tracking-widest">Nro de Cuenta</p>
-              {bankData.accountNumber && (
-                <button
-                  onClick={() => copyToClipboard(bankData.accountNumber)}
-                  className="text-primary text-xs font-black uppercase tracking-wider hover:opacity-80 transition-opacity"
-                >
-                  Copiar
-                </button>
-              )}
-            </div>
-            <p className="text-xl font-black tracking-tight break-all">{bankData.accountNumber || 'No disponible'}</p>
-          </div>
-
-          {/* Banco */}
-          <div className="bg-surface-dark rounded-2xl p-5 border border-white/5">
-            <p className="text-text-secondary text-xs font-bold uppercase tracking-widest mb-2">Banco</p>
-            <p className="text-base font-bold capitalize">{bankData.bankName || 'No disponible'}</p>
-          </div>
-        </section>
-
-        {/* Instrucciones */}
-        <section className="animate-fade-in-up" style={{ animationDelay: '0.3s' }}>
-          <div className="bg-primary/10 rounded-2xl p-5 border border-primary/20">
-            <div className="flex items-start gap-3">
-              <span className="material-symbols-outlined text-primary text-xl font-black">info</span>
-              <div className="flex-1">
-                <p className="text-primary font-black text-xs uppercase tracking-widest mb-2">Importante</p>
-                <p className="text-text-secondary text-sm leading-relaxed">
-                  Una vez realizada la transferencia, el restaurante recibirá una notificación y marcará tu pago como confirmado. 
-                  El proceso puede tardar unos minutos.
-                </p>
+        {/* Datos bancarios - Solo mostrar si el pago no está confirmado */}
+        {!isPaid && (
+          <>
+            <section className="animate-fade-in-up" style={{ animationDelay: '0.2s' }}>
+              <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-text-secondary mb-4 px-1">Datos de la Cuenta</h3>
+              
+              {/* Alias */}
+              <div className="bg-surface-dark rounded-2xl p-5 border border-white/5 mb-3">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-text-secondary text-xs font-bold uppercase tracking-widest">Alias</p>
+                  <button
+                    onClick={() => copyToClipboard(bankData.alias)}
+                    className="text-primary text-xs font-black uppercase tracking-wider hover:opacity-80 transition-opacity"
+                  >
+                    Copiar
+                  </button>
+                </div>
+                <p className="text-xl font-black tracking-tight break-all">{bankData.alias}</p>
               </div>
-            </div>
-          </div>
-        </section>
+
+              {/* CBU */}
+              <div className="bg-surface-dark rounded-2xl p-5 border border-white/5 mb-3">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-text-secondary text-xs font-bold uppercase tracking-widest">CBU</p>
+                  <button
+                    onClick={() => copyToClipboard(bankData.cbu)}
+                    className="text-primary text-xs font-black uppercase tracking-wider hover:opacity-80 transition-opacity"
+                  >
+                    Copiar
+                  </button>
+                </div>
+                <p className="text-xl font-black tracking-tight break-all">{bankData.cbu || 'No disponible'}</p>
+              </div>
+
+              {/* Nro de Cuenta */}
+              <div className="bg-surface-dark rounded-2xl p-5 border border-white/5 mb-3">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-text-secondary text-xs font-bold uppercase tracking-widest">Nro de Cuenta</p>
+                  {bankData.accountNumber && (
+                    <button
+                      onClick={() => copyToClipboard(bankData.accountNumber)}
+                      className="text-primary text-xs font-black uppercase tracking-wider hover:opacity-80 transition-opacity"
+                    >
+                      Copiar
+                    </button>
+                  )}
+                </div>
+                <p className="text-xl font-black tracking-tight break-all">{bankData.accountNumber || 'No disponible'}</p>
+              </div>
+
+              {/* Banco */}
+              <div className="bg-surface-dark rounded-2xl p-5 border border-white/5">
+                <p className="text-text-secondary text-xs font-bold uppercase tracking-widest mb-2">Banco</p>
+                <p className="text-base font-bold capitalize">{bankData.bankName || 'No disponible'}</p>
+              </div>
+            </section>
+
+            {/* Instrucciones - Solo mostrar si el pago no está confirmado */}
+            <section className="animate-fade-in-up" style={{ animationDelay: '0.3s' }}>
+              <div className="bg-primary/10 rounded-2xl p-5 border border-primary/20">
+                <div className="flex items-start gap-3">
+                  <span className="material-symbols-outlined text-primary text-xl font-black">info</span>
+                  <div className="flex-1">
+                    <p className="text-primary font-black text-xs uppercase tracking-widest mb-2">Importante</p>
+                    <p className="text-text-secondary text-sm leading-relaxed">
+                      Una vez realizada la transferencia, el restaurante recibirá una notificación y marcará tu pago como confirmado. 
+                      El proceso puede tardar unos minutos.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </>
+        )}
       </div>
 
       {/* Footer con botón de confirmación */}
