@@ -6,6 +6,7 @@
 
 const SESSION_NAME = 'splitme_session';
 const ORDER_NAME = 'splitme_order';
+const ACTIVE_GUEST_NAME = 'splitme_active_guest';
 const MAX_AGE = 60 * 60 * 24; // 24 horas
 
 function get(name: string): string | null {
@@ -61,8 +62,23 @@ export function removeOrderId(): void {
   remove(ORDER_NAME);
 }
 
-/** Limpia sesión y orden (usar al salir de mesa o tras pago completo). */
+/** ID del comensal con el que esta sesión se identifica (para restaurar tras refresh y alertar al agregar a otro). */
+export function getActiveGuestId(): string | null {
+  const v = get(ACTIVE_GUEST_NAME);
+  return v && v.length > 0 ? v : null;
+}
+
+export function setActiveGuestIdCookie(guestId: string): void {
+  set(ACTIVE_GUEST_NAME, guestId);
+}
+
+export function removeActiveGuestId(): void {
+  remove(ACTIVE_GUEST_NAME);
+}
+
+/** Limpia sesión, orden y comensal identificado (usar al salir de mesa o tras pago completo). */
 export function clearSession(): void {
   removeSession();
   removeOrderId();
+  removeActiveGuestId();
 }

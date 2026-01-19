@@ -24,6 +24,12 @@ interface MenuViewProps {
   restaurant?: any;
   onSaveGuestChanges?: (updatedGuests: Guest[], newGuests: Guest[]) => Promise<boolean>;
   activeOrderId?: string | null;
+  /** ID del comensal con el que esta sesión se identifica (cookie). Si se agrega a otro, se muestra alerta. */
+  identifiedGuestId?: string | null;
+  /** Si es true, se abre Administrar comensales para que el usuario elija quién es (p. ej. tras refresh sin cookie válida). */
+  pendingGuestSelection?: boolean;
+  /** Se llama cuando el usuario elige su comensal en el modal (junto con onSelectGuest). Actualiza cookie y limpia pending. */
+  onGuestIdentified?: (guestId: string) => void;
 }
 
 export const formatPrice = (price: number) => {
@@ -144,7 +150,7 @@ const MenuView: React.FC<MenuViewProps> = ({
   guests, setGuests, cart, onAddToCart, onUpdateCartItem, onNext, 
   selectedGuestId, onSelectGuest, initialCategory, onCategoryChange, 
   editingCartItem, onCancelEdit, menuItems, categories: supabaseCategories,
-  table, restaurant, onSaveGuestChanges, activeOrderId
+  table, restaurant, onSaveGuestChanges, activeOrderId, identifiedGuestId, pendingGuestSelection, onGuestIdentified
 }) => {
   const { category: categorySlug, subcategory: subcategorySlug } = useParams<{ category?: string; subcategory?: string }>();
   const navigate = useNavigate();
@@ -157,36 +163,31 @@ const MenuView: React.FC<MenuViewProps> = ({
   const [newGuestName, setNewGuestName] = useState('');
   const [selectedSubcategory, setSelectedSubcategory] = useState<string | null>(null);
   
-  // Sincronizar categoría desde la URL
+  // Sincronizar categoría desde la URL solo cuando cambia la URL (no al hacer click en categoría)
+  // Dependemos solo de categorySlug para no re-ejecutar cuando el usuario cambia por estado.
   useEffect(() => {
     if (categorySlug) {
       const categoryName = slugToCategory(categorySlug, supabaseCategories);
-      if (categoryName && categoryName !== initialCategory) {
-        onCategoryChange(categoryName);
-      }
+      if (categoryName) onCategoryChange(categoryName);
     } else {
-      // Si no hay slug en la URL, redirigir a "Destacados" por defecto
-      if (initialCategory === 'Destacados') {
-        navigate('/menu/destacados', { replace: true });
-      } else {
-        navigate(`/menu/${categoryToSlug(initialCategory)}`, { replace: true });
-      }
+      // Solo al cargar /menu sin categoría: redirigir a Destacados
+      navigate('/menu/destacados', { replace: true });
     }
-  }, [categorySlug, supabaseCategories, initialCategory, onCategoryChange, navigate]);
-  
-  // Sincronizar subcategoría desde la URL
+  }, [categorySlug, supabaseCategories, onCategoryChange, navigate]);
+
+  // Sincronizar subcategoría desde la URL solo cuando cambia la URL
   useEffect(() => {
     if (subcategorySlug && initialCategory) {
       const subcategoryId = subcategorySlugToId(subcategorySlug, supabaseCategories, initialCategory);
-      if (subcategoryId && subcategoryId !== selectedSubcategory) {
-        setSelectedSubcategory(subcategoryId);
-      }
-    } else if (!subcategorySlug && selectedSubcategory) {
+      if (subcategoryId) setSelectedSubcategory(subcategoryId);
+    } else if (!subcategorySlug) {
       setSelectedSubcategory(null);
     }
-  }, [subcategorySlug, initialCategory, supabaseCategories, selectedSubcategory]);
+  }, [subcategorySlug, initialCategory, supabaseCategories]);
 
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const mainScrollRef = useRef<HTMLElement | null>(null);
+  const guestsRowRef = useRef<HTMLDivElement | null>(null);
   const [backupNames, setBackupNames] = useState<Record<string, string>>({});
   const [originalGuests, setOriginalGuests] = useState<Guest[]>([]);
   const [pendingNewGuests, setPendingNewGuests] = useState<Guest[]>([]);
@@ -238,6 +239,23 @@ const MenuView: React.FC<MenuViewProps> = ({
   useEffect(() => {
     setSelectedSubcategory(null);
   }, [initialCategory]);
+
+  // Scroll al inicio del contenido al cambiar categoría o subcategoría
+  useEffect(() => {
+    mainScrollRef.current?.scrollTo(0, 0);
+  }, [initialCategory, selectedSubcategory]);
+
+  // Hacer scroll al comensal seleccionado en la fila de guests (p. ej. tras recuperar sesión al refrescar)
+  useEffect(() => {
+    if (!selectedGuestId || guests.length === 0) return;
+    const el = guestsRowRef.current?.querySelector<HTMLElement>(`[data-guest-id="${selectedGuestId}"]`);
+    el?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+  }, [selectedGuestId, guests]);
+
+  // Abrir Administrar comensales cuando se debe elegir quién es (p. ej. tras refresh sin cookie válida)
+  useEffect(() => {
+    if (pendingGuestSelection) setIsManageGuestsOpen(true);
+  }, [pendingGuestSelection]);
 
   const categoriesList = useMemo(() => {
     const dbCategories = (supabaseCategories || [])
@@ -300,8 +318,12 @@ const MenuView: React.FC<MenuViewProps> = ({
   const handleIncrement = async (e: React.MouseEvent, item: MenuItem) => {
     e.stopPropagation();
     
-    // Si ya está agregando este item, no hacer nada
     if (addingItems.has(item.id)) return;
+    
+    if (identifiedGuestId && selectedGuestId !== identifiedGuestId) {
+      const name = guests.find(g => g.id === selectedGuestId)?.name || 'otra persona';
+      if (!window.confirm(`Estás sumando platos a ${name}, que no es tu sesión. ¿Continuar?`)) return;
+    }
     
     const simpleItem = getSimpleCartItemForGuest(item.id);
     if (simpleItem) {
@@ -344,8 +366,12 @@ const MenuView: React.FC<MenuViewProps> = ({
   const handleAddNew = async () => {
     if (!showDetail) return;
     
-    // Si ya está agregando este item, no hacer nada
     if (addingItems.has(showDetail.id)) return;
+    
+    if (identifiedGuestId && selectedGuestId !== identifiedGuestId) {
+      const name = guests.find(g => g.id === selectedGuestId)?.name || 'otra persona';
+      if (!window.confirm(`Estás sumando platos a ${name}, que no es tu sesión. ¿Continuar?`)) return;
+    }
     
     // Marcar como agregando
     setAddingItems(prev => new Set(prev).add(showDetail.id));
@@ -547,6 +573,18 @@ const MenuView: React.FC<MenuViewProps> = ({
   // Verificar si la categoría tiene subcategorías
   const hasSubcategories = availableSubcategories.length > 0;
 
+  // Cantidad por subcategoría del comensal seleccionado (igual que categoryCounts)
+  const subcategoryCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    availableSubcategories.forEach(subcat => {
+      counts[subcat.id] = guestSpecificCart.reduce((sum, cartItem) => {
+        const menuItem = menuItems.find(m => m.id === cartItem.itemId);
+        return menuItem?.subcategory_id === subcat.id ? sum + cartItem.quantity : sum;
+      }, 0);
+    });
+    return counts;
+  }, [guestSpecificCart, availableSubcategories, menuItems]);
+
   const filteredItems = useMemo(() => {
     if (initialCategory === 'Destacados') return menuItems.filter(item => item.is_featured);
     
@@ -588,9 +626,9 @@ const MenuView: React.FC<MenuViewProps> = ({
           </div>
         </div>
 
-        <div className="flex gap-4 overflow-x-auto no-scrollbar px-6 pt-2 pb-2 items-start flex-nowrap snap-x touch-pan-x">
+        <div ref={guestsRowRef} className="flex gap-4 overflow-x-auto no-scrollbar px-6 pt-2 pb-2 items-start flex-nowrap snap-x touch-pan-x">
           {guests.map((g) => (
-            <div key={g.id} className="flex flex-col items-center gap-2 shrink-0 max-w-[60px] snap-start">
+            <div key={g.id} data-guest-id={g.id} className="flex flex-col items-center gap-2 shrink-0 max-w-[60px] snap-start">
               <button
                 onClick={() => onSelectGuest(g.id)}
                 className={`relative size-10 rounded-full transition-all duration-300 ${
@@ -636,8 +674,8 @@ const MenuView: React.FC<MenuViewProps> = ({
             key={cat}
             onClick={() => {
               const slug = cat === 'Destacados' ? 'destacados' : categoryToSlug(cat);
-              navigate(`/menu/${slug}`);
               onCategoryChange(cat);
+              window.history.replaceState(null, '', `/menu/${slug}`);
             }}
               className={`px-4 py-2 rounded-full whitespace-nowrap text-sm font-bold transition-colors ${
                 isSelected 
@@ -658,8 +696,8 @@ const MenuView: React.FC<MenuViewProps> = ({
           <button
             onClick={() => {
               const categorySlug = initialCategory === 'Destacados' ? 'destacados' : categoryToSlug(initialCategory);
-              navigate(`/menu/${categorySlug}`);
               setSelectedSubcategory(null);
+              window.history.replaceState(null, '', `/menu/${categorySlug}`);
             }}
             className={`px-3 py-1.5 rounded-full whitespace-nowrap text-xs font-bold transition-colors shrink-0 ${
               selectedSubcategory === null
@@ -667,18 +705,19 @@ const MenuView: React.FC<MenuViewProps> = ({
                 : 'bg-white/5 text-text-secondary border border-white/5'
             }`}
           >
-            Todos
+            Todos {categoryCounts[initialCategory] > 0 && <span className="ml-1 opacity-60">({categoryCounts[initialCategory]})</span>}
           </button>
           {availableSubcategories.map(subcat => {
             const isSelected = selectedSubcategory === subcat.id;
+            const count = subcategoryCounts[subcat.id] ?? 0;
             return (
               <button
                 key={subcat.id}
                 onClick={() => {
                   const categorySlug = initialCategory === 'Destacados' ? 'destacados' : categoryToSlug(initialCategory);
                   const subcategorySlug = categoryToSlug(subcat.name);
-                  navigate(`/menu/${categorySlug}/${subcategorySlug}`);
                   setSelectedSubcategory(subcat.id);
+                  window.history.replaceState(null, '', `/menu/${categorySlug}/${subcategorySlug}`);
                 }}
                 className={`px-3 py-1.5 rounded-full whitespace-nowrap text-xs font-bold transition-colors shrink-0 ${
                   isSelected
@@ -686,14 +725,14 @@ const MenuView: React.FC<MenuViewProps> = ({
                     : 'bg-white/5 text-text-secondary border border-white/5'
                 }`}
               >
-                {subcat.name}
+                {subcat.name} {count > 0 && <span className="ml-1 opacity-60">({count})</span>}
               </button>
             );
           })}
         </nav>
       )}
 
-      <main className="flex-1 overflow-y-auto p-4 pb-32 no-scrollbar">
+      <main ref={mainScrollRef} className="flex-1 overflow-y-auto p-4 pb-32 no-scrollbar">
         <div className="grid grid-cols-1 gap-4">
           {filteredItems.map(item => {
             const totalQty = getDishQuantityForGuest(item.id);
@@ -978,20 +1017,25 @@ const MenuView: React.FC<MenuViewProps> = ({
 
       {isManageGuestsOpen && (
         <div className="fixed inset-0 z-[110] flex flex-col justify-end animate-fade-in">
-          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setIsManageGuestsOpen(false)}></div>
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => !pendingGuestSelection && setIsManageGuestsOpen(false)}></div>
           <div className="bg-surface-dark w-full rounded-t-[40px] p-8 pb-12 border-t border-white/10 relative z-10 shadow-2xl animate-fade-in-up">
             <div className="flex justify-center mb-6"><div className="w-12 h-1.5 bg-white/10 rounded-full"></div></div>
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-black text-white tracking-tight">Gestionar Comensales</h2>
-              <span className="text-[10px] font-black text-primary uppercase bg-primary/10 px-3 py-1 rounded-full">Capacidad {guests.length}/{tableCapacity}</span>
+              <h2 className="text-2xl font-black text-white tracking-tight">{pendingGuestSelection ? '¿Quién sos?' : 'Gestionar Comensales'}</h2>
+              {!pendingGuestSelection && <span className="text-[10px] font-black text-primary uppercase bg-primary/10 px-3 py-1 rounded-full">Capacidad {guests.length}/{tableCapacity}</span>}
             </div>
+            {pendingGuestSelection && <p className="text-text-secondary text-sm mb-4">Tocá tu nombre para continuar.</p>}
             <div className="space-y-4 mb-8 max-h-64 overflow-y-auto no-scrollbar">
               {guests.map(g => (
-                <div key={g.id} className={`flex items-center justify-between p-4 rounded-2xl border transition-all ${selectedGuestId === g.id ? 'bg-primary/10 border-primary/40 shadow-lg' : 'bg-white/5 border-white/5'}`}>
+                <div 
+                  key={g.id} 
+                  className={`flex items-center justify-between p-4 rounded-2xl border transition-all ${selectedGuestId === g.id ? 'bg-primary/10 border-primary/40 shadow-lg' : 'bg-white/5 border-white/5'} ${pendingGuestSelection ? 'cursor-pointer active:bg-white/10' : ''}`}
+                  onClick={pendingGuestSelection ? () => { onSelectGuest(g.id); onGuestIdentified?.(g.id); setIsManageGuestsOpen(false); } : undefined}
+                >
                   <div className="flex items-center gap-3 flex-1 min-w-0">
                     <div 
                       className={`size-10 rounded-full flex items-center justify-center font-black text-xs shrink-0 cursor-pointer ${getGuestColor(g.id)}`}
-                      onClick={() => onSelectGuest(g.id)}
+                      onClick={(e) => { e.stopPropagation(); onSelectGuest(g.id); if (pendingGuestSelection && onGuestIdentified) { onGuestIdentified(g.id); setIsManageGuestsOpen(false); } }}
                     >
                       {getInitials(g.name || backupNames[g.id] || '?')}
                     </div>
@@ -1002,15 +1046,15 @@ const MenuView: React.FC<MenuViewProps> = ({
                          value={g.name} 
                          onChange={(e) => handleUpdateGuestName(g.id, e.target.value)}
                          onFocus={(e) => {
-                           // Seleccionar todo el texto cuando se hace focus para que se borre al escribir
                            e.target.select();
                          }}
                          onBlur={() => handleBlurName(g.id, g.name)}
-                         onClick={(e) => e.stopPropagation()}
-                         className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 font-bold text-white focus:ring-2 focus:ring-primary focus:border-primary focus:outline-none placeholder:opacity-30 cursor-text transition-all"
+                         onClick={(e) => { if (!pendingGuestSelection) e.stopPropagation(); }}
+                         readOnly={!!pendingGuestSelection}
+                         className={`flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 font-bold text-white focus:ring-2 focus:ring-primary focus:border-primary focus:outline-none placeholder:opacity-30 transition-all ${pendingGuestSelection ? 'cursor-pointer' : 'cursor-text'}`}
                          placeholder="Nombre del comensal..."
                        />
-                       {!g.isHost && (
+                       {!g.isHost && !pendingGuestSelection && (
                          <button
                            onClick={(e) => {
                              e.stopPropagation();
@@ -1028,7 +1072,7 @@ const MenuView: React.FC<MenuViewProps> = ({
                 </div>
               ))}
             </div>
-            {guests.length < tableCapacity ? (
+            {!pendingGuestSelection && (guests.length < tableCapacity ? (
               <div className="flex gap-3">
                 <input type="text" value={newGuestName} onChange={e => setNewGuestName(e.target.value)} placeholder="Nuevo invitado..." className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-4 text-white font-bold outline-none focus:ring-2 focus:ring-primary transition-all" />
                 <button onClick={handleAddGuest} className="bg-primary text-background-dark px-6 rounded-2xl font-black active:scale-95 transition-all">Añadir</button>
@@ -1038,8 +1082,8 @@ const MenuView: React.FC<MenuViewProps> = ({
                 <span className="material-symbols-outlined text-amber-500">warning</span>
                 <p className="text-xs font-bold text-amber-500 uppercase">Se ha alcanzado la capacidad máxima de la mesa.</p>
               </div>
-            )}
-            {hasChanges ? (
+            ))}
+            {!pendingGuestSelection && (hasChanges ? (
               <button 
                 onClick={handleSaveChanges} 
                 className="w-full h-14 bg-primary text-background-dark rounded-2xl mt-6 font-black text-lg shadow-xl shadow-primary/20 active:scale-[0.98] transition-all"
@@ -1053,7 +1097,7 @@ const MenuView: React.FC<MenuViewProps> = ({
               >
                 Cerrar
               </button>
-            )}
+            ))}
           </div>
         </div>
       )}

@@ -14,7 +14,7 @@ import TransferPaymentView from './views/TransferPaymentView';
 import CashPaymentView from './views/CashPaymentView';
 import CheckoutView from './views/CheckoutView';
 import ConfirmationView from './views/ConfirmationView';
-import { getSession, setSession, getOrderId, setOrderId, removeOrderId, clearSession } from './lib/sessionCookies';
+import { getSession, setSession, getOrderId, setOrderId, removeOrderId, clearSession, getActiveGuestId, setActiveGuestIdCookie } from './lib/sessionCookies';
 
 const READY_SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3';
 
@@ -57,11 +57,13 @@ const App: React.FC = () => {
   const [showReadyToast, setShowReadyToast] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState<number>(0);
   const [paymentGuestName, setPaymentGuestName] = useState<string>('');
+  const [pendingGuestSelection, setPendingGuestSelection] = useState(false);
 
   const batchChannelRef = useRef<any>(null);
   const cartChannelRef = useRef<any>(null);
   const guestsChannelRef = useRef<any>(null);
   const activeGuestIdRef = useRef<string>('1');
+  const prevPathRef = useRef<string | null>(null);
 
   const fetchOrderItemsFromDB = useCallback(async (orderId: string) => {
     if (!supabase) return;
@@ -262,7 +264,7 @@ const App: React.FC = () => {
    * 1. Busca restaurante por access_code
    * 2. Busca mesa por table_number (String)
    */
-  const handleStartSession = useCallback(async (accessCode: string, tableNum: string) => {
+  const handleStartSession = useCallback(async (accessCode: string, tableNum: string, preferredGuestId?: string) => {
     setLoading(true);
     setError(null);
     try {
@@ -353,8 +355,8 @@ const App: React.FC = () => {
           console.log("[DineSplit] ✅ Orden activa validada. Cargando datos...");
           setOrderId(activeTableOrder.id);
           setActiveOrderId(activeTableOrder.id);
-          // Cargar guests primero para tener los IDs correctos
-          await fetchOrderGuests(activeTableOrder.id);
+          // Cargar guests primero (preferredGuestId: URL > cookie para restaurar comensal tras refresh)
+          await fetchOrderGuests(activeTableOrder.id, preferredGuestId);
           // Luego cargar items (que pueden referenciar guest_id)
           await fetchOrderItemsFromDB(activeTableOrder.id);
           navigateToView('MENU');
@@ -439,6 +441,8 @@ const App: React.FC = () => {
       setGuests(updatedGuests);
       setActiveOrderId(newOrder.id);
       setOrderId(newOrder.id);
+      setActiveGuestId(savedGuests[0].id);
+      setActiveGuestIdCookie(savedGuests[0].id);
       
       // Crear el PRIMER batch para esta orden
       console.log("[DineSplit] Creando primer batch para la orden:", newOrder.id);
@@ -493,10 +497,9 @@ const App: React.FC = () => {
   const fetchOrderGuests = useCallback(async (orderId: string, preferredGuestId?: string) => {
     if (!supabase) return;
     
-    // Leer guestId directamente de searchParams para obtener siempre el valor más reciente
-    // Si no se proporciona preferredGuestId, verificar si hay uno en la URL
+    // Prioridad: preferredGuestId (caller) > URL > cookie (para restaurar comensal tras refresh)
     const guestIdFromUrl = searchParams.get('guestId');
-    const guestIdToPreserve = preferredGuestId || guestIdFromUrl || undefined;
+    const guestIdToPreserve = preferredGuestId || guestIdFromUrl || getActiveGuestId() || undefined;
     
     console.log("[DineSplit] fetchOrderGuests - Buscando guests para order_id:", orderId, "preferredGuestId:", preferredGuestId, "guestIdFromUrl:", guestIdFromUrl, "guestIdToPreserve:", guestIdToPreserve);
     
@@ -606,19 +609,20 @@ const App: React.FC = () => {
           console.log("[DineSplit] Preservando activeGuestId actual:", currentActiveGuestId);
           // No necesitamos llamar setActiveGuestId porque ya está establecido
         } else {
-          // Si el activeGuestId actual no existe en la lista, establecerlo al primer guest
           setActiveGuestId(guestsFromDB[0].id);
+          setActiveGuestIdCookie(guestsFromDB[0].id);
           console.log("[DineSplit] ActiveGuestId establecido a (nuevo):", guestsFromDB[0].id);
         }
       } else if (guestIdToPreserve) {
-        // Verificar que el guestIdToPreserve existe en la lista de guests cargados
         const guestExists = guestsFromDB.some(g => g.id === guestIdToPreserve);
         if (guestExists) {
           setActiveGuestId(guestIdToPreserve);
+          setActiveGuestIdCookie(guestIdToPreserve);
           console.log("[DineSplit] ActiveGuestId establecido a guestIdToPreserve:", guestIdToPreserve);
         } else {
           console.warn("[DineSplit] guestIdToPreserve no existe en guests cargados, usando primer guest:", guestIdToPreserve);
           setActiveGuestId(guestsFromDB[0].id);
+          setActiveGuestIdCookie(guestsFromDB[0].id);
         }
       }
     } else {
@@ -675,16 +679,19 @@ const App: React.FC = () => {
                 console.log("[DineSplit] Preservando activeGuestId actual (fallback):", currentActiveGuestId);
               } else {
                 setActiveGuestId(guestsFromDB[0].id);
+                setActiveGuestIdCookie(guestsFromDB[0].id);
                 console.log("[DineSplit] ActiveGuestId establecido a (fallback):", guestsFromDB[0].id);
               }
             } else if (guestIdToPreserve) {
               const guestExists = guestsFromDB.some(g => g.id === guestIdToPreserve);
               if (guestExists) {
                 setActiveGuestId(guestIdToPreserve);
+                setActiveGuestIdCookie(guestIdToPreserve);
                 console.log("[DineSplit] ActiveGuestId establecido a guestIdToPreserve (fallback):", guestIdToPreserve);
               } else {
                 console.warn("[DineSplit] guestIdToPreserve no existe en guests (fallback), usando primer guest:", guestIdToPreserve);
                 setActiveGuestId(guestsFromDB[0].id);
+                setActiveGuestIdCookie(guestsFromDB[0].id);
               }
             }
           } else {
@@ -722,16 +729,19 @@ const App: React.FC = () => {
                     console.log("[DineSplit] Preservando activeGuestId actual (directQuery):", currentActiveGuestId);
                   } else {
                     setActiveGuestId(guestsFromDB[0].id);
+                    setActiveGuestIdCookie(guestsFromDB[0].id);
                     console.log("[DineSplit] ActiveGuestId establecido a (directQuery):", guestsFromDB[0].id);
                   }
                 } else if (guestIdToPreserve) {
                   const guestExists = guestsFromDB.some(g => g.id === guestIdToPreserve);
                   if (guestExists) {
                     setActiveGuestId(guestIdToPreserve);
+                    setActiveGuestIdCookie(guestIdToPreserve);
                     console.log("[DineSplit] ActiveGuestId establecido a guestIdToPreserve (directQuery):", guestIdToPreserve);
                   } else {
                     console.warn("[DineSplit] guestIdToPreserve no existe en guests (directQuery), usando primer guest:", guestIdToPreserve);
                     setActiveGuestId(guestsFromDB[0].id);
+                    setActiveGuestIdCookie(guestsFromDB[0].id);
                   }
                 }
               }
@@ -999,25 +1009,25 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
               id: og.id,
               name: og.name,
               isHost: og.is_host || false,
-              individualAmount: og.individual_amount || null, // CRÍTICO: Incluir individual_amount para que IndividualShareView lo use
-              paid: og.paid || false, // Estado de pago
-              payment_id: og.payment_id || null, // ID del pago relacionado
-              payment_method: og.payment_method || null // Método de pago seleccionado
+              individualAmount: og.individual_amount || null,
+              paid: og.paid || false,
+              payment_id: og.payment_id || null,
+              payment_method: og.payment_method || null
             }));
             console.log("[DineSplit] Guests cargados desde link QR:", guestsFromDB.map(g => ({ id: g.id, name: g.name, individualAmount: g.individualAmount, paid: g.paid, payment_id: g.payment_id })));
             setGuests(guestsFromDB);
+            if (guestIdParam && guestsFromDB.some(g => g.id === guestIdParam)) {
+              setActiveGuestId(guestIdParam);
+              setActiveGuestIdCookie(guestIdParam);
+            }
           }
 
-          // Cargar items y batches
           await fetchOrderItemsFromDB(orderIdParam);
           
-          // Solo navegar si no estamos ya en una ruta que requiere sesión
           const currentPath = location.pathname;
           const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/checkout', '/individual-share', '/transfer-payment', '/cash-payment', '/confirmation', '/guest-selection'];
           
           if (!routesRequiringSession.includes(currentPath)) {
-            // Si hay guestId, navegar directamente a INDIVIDUAL_SHARE
-            // Si no hay guestId, navegar a GUEST_SELECTION para que el usuario elija
             if (guestIdParam) {
               navigate('/individual-share');
             } else {
@@ -1031,8 +1041,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
           setLoading(false);
         }
       } else if (resParam && tableParam) {
-        // Si hay parámetros res y table en la URL, iniciar sesión
-        await handleStartSession(resParam, tableParam);
+        await handleStartSession(resParam, tableParam, guestIdParam || getActiveGuestId() || undefined);
         window.history.replaceState({}, '', window.location.pathname);
       } else {
         // Sin parámetros en URL: intentar restaurar sesión desde cookies
@@ -1123,6 +1132,14 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
                 payment_method: og.payment_method || null
               }));
               setGuests(guestsFromDB);
+              const preferred = getActiveGuestId();
+              const toSelect = (preferred && guestsFromDB.some(g => g.id === preferred)) ? preferred : null;
+              if (toSelect) {
+                setActiveGuestId(toSelect);
+                setActiveGuestIdCookie(toSelect);
+              } else {
+                setPendingGuestSelection(true);
+              }
             }
             await fetchOrderItemsFromDB(orderId);
 
@@ -1138,9 +1155,8 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             setLoading(false);
           }
         } else if (session?.res && session?.table) {
-          // Restaurar desde sesión (res+table) en cookie
           console.log("[DineSplit] Restaurando sesión desde cookie:", session.res, session.table);
-          await handleStartSession(session.res, session.table);
+          await handleStartSession(session.res, session.table, getActiveGuestId() || undefined);
           setLoading(false);
         } else {
           // Sin cookies válidas: ir a escanear
@@ -1343,23 +1359,26 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
     }
   }, [supabase, activeOrderId]);
 
-  // Recargar guests cuando se navega al MENU, SPLIT_BILL o INDIVIDUAL_SHARE si hay una orden activa
-  // También seleccionar el guest si hay guestIdParam en la URL
+  // Recargar guests cuando se ENTRÁ al MENU (no al cambiar categoría/subcategoría), SPLIT_BILL o INDIVIDUAL_SHARE
   useEffect(() => {
     const path = location.pathname;
-    if ((path === '/menu' || path.startsWith('/menu/')) && activeOrderId && supabase) {
-      // Si hay un guestIdParam, pasarlo a fetchOrderGuests para que no sobrescriba la selección
-      fetchOrderGuests(activeOrderId, guestIdParam || undefined).then(() => {
-        // Si hay un guestIdParam en la URL, seleccionar ese guest (por si acaso)
-        if (guestIdParam) {
-          console.log('[App] Seleccionando guest desde URL:', guestIdParam);
-          setActiveGuestId(guestIdParam);
-        }
-      });
+    const prev = prevPathRef.current;
+    prevPathRef.current = path;
+
+    const wasOnMenu = prev === '/menu' || (prev != null && prev.startsWith('/menu/'));
+    const isOnMenu = path === '/menu' || path.startsWith('/menu/');
+
+    if (isOnMenu && activeOrderId && supabase) {
+      if (!wasOnMenu && !pendingGuestSelection) {
+        fetchOrderGuests(activeOrderId, guestIdParam || getActiveGuestId() || undefined);
+      } else if (guestIdParam) {
+        setActiveGuestId(guestIdParam);
+        setActiveGuestIdCookie(guestIdParam);
+      }
     } else if ((path === '/split-bill' || path === '/individual-share') && activeOrderId && supabase) {
       fetchOrderGuests(activeOrderId);
     }
-  }, [location.pathname, activeOrderId, fetchOrderGuests, guestIdParam]);
+  }, [location.pathname, activeOrderId, fetchOrderGuests, guestIdParam, pendingGuestSelection]);
 
   // Reconstruir splitData desde guests cuando se navega a individual-share y splitData está vacío
   useEffect(() => {
@@ -1805,7 +1824,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
       '/confirmation': 'CONFIRMATION'
     };
     
-    const view = viewMap[path] || 'SCAN';
+    const view = viewMap[path] || (path.startsWith('/menu') ? 'MENU' : 'SCAN');
     if (view !== currentView) {
       setCurrentView(view);
     }
@@ -2140,7 +2159,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             restaurant={restaurant} 
           />
         } />
-        <Route path="/menu" element={
+        <Route path="/menu/:category?/:subcategory?" element={
           <MenuView 
             onNext={() => navigateToView('ORDER_SUMMARY')} 
             guests={guests} 
@@ -2161,52 +2180,9 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             table={currentTable} 
             onSaveGuestChanges={handleSaveGuestChanges}
             activeOrderId={activeOrderId}
-          />
-        } />
-        <Route path="/menu/:category" element={
-          <MenuView 
-            onNext={() => navigateToView('ORDER_SUMMARY')} 
-            guests={guests} 
-            setGuests={setGuests} 
-            cart={cart} 
-            onAddToCart={handleAddToCart} 
-            onUpdateCartItem={handleUpdateCartItem} 
-            onIndividualShare={() => navigateToView('INDIVIDUAL_SHARE')} 
-            selectedGuestId={activeGuestId} 
-            onSelectGuest={setActiveGuestId} 
-            initialCategory={activeCategory} 
-            onCategoryChange={setActiveCategory} 
-            editingCartItem={editingCartItem} 
-            onCancelEdit={() => setEditingCartItem(null)} 
-            menuItems={menuItems} 
-            categories={categories} 
-            restaurant={restaurant} 
-            table={currentTable} 
-            onSaveGuestChanges={handleSaveGuestChanges}
-            activeOrderId={activeOrderId}
-          />
-        } />
-        <Route path="/menu/:category/:subcategory" element={
-          <MenuView 
-            onNext={() => navigateToView('ORDER_SUMMARY')} 
-            guests={guests} 
-            setGuests={setGuests} 
-            cart={cart} 
-            onAddToCart={handleAddToCart} 
-            onUpdateCartItem={handleUpdateCartItem} 
-            onIndividualShare={() => navigateToView('INDIVIDUAL_SHARE')} 
-            selectedGuestId={activeGuestId} 
-            onSelectGuest={setActiveGuestId} 
-            initialCategory={activeCategory} 
-            onCategoryChange={setActiveCategory} 
-            editingCartItem={editingCartItem} 
-            onCancelEdit={() => setEditingCartItem(null)} 
-            menuItems={menuItems} 
-            categories={categories} 
-            restaurant={restaurant} 
-            table={currentTable} 
-            onSaveGuestChanges={handleSaveGuestChanges}
-            activeOrderId={activeOrderId}
+            identifiedGuestId={getActiveGuestId()}
+            pendingGuestSelection={pendingGuestSelection}
+            onGuestIdentified={(id) => { setActiveGuestIdCookie(id); setPendingGuestSelection(false); }}
           />
         } />
         <Route path="/order-summary" element={
