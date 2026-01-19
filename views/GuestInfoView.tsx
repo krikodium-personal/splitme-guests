@@ -68,6 +68,7 @@ const GuestInfoView: React.FC<GuestInfoViewProps> = ({ guests, setGuests, onBack
   const [names, setNames] = useState<string[]>(() => 
     guests.map((g, i) => isDefaultName(g.name, i) ? "" : g.name)
   );
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setNames(prev => {
@@ -84,17 +85,36 @@ const GuestInfoView: React.FC<GuestInfoViewProps> = ({ guests, setGuests, onBack
   }, [guestCount]);
 
   const adjustCount = (delta: number) => {
+    setError(null);
     const newCount = Math.max(1, Math.min(tableCapacity, guestCount + delta));
     setGuestCount(newCount);
   };
 
   const handleNameChange = (index: number, value: string) => {
+    setError(null);
     const newNames = [...names];
     newNames[index] = value;
     setNames(newNames);
   };
 
   const handleContinue = () => {
+    setError(null);
+
+    if (guestCount > 1) {
+      const trimmed = names.slice(0, guestCount).map((n) => n.trim());
+      const vacios = trimmed.some((t) => !t);
+      if (vacios) {
+        setError('Cada comensal debe tener un nombre.');
+        return;
+      }
+      const lower = trimmed.map((t) => t.toLowerCase());
+      const unicos = new Set(lower);
+      if (unicos.size !== lower.length) {
+        setError('Cada comensal debe tener un nombre distinto.');
+        return;
+      }
+    }
+
     const finalGuests: Guest[] = Array.from({ length: guestCount }).map((_, i) => ({
       id: (i + 1).toString(),
       name: names[i].trim() || (i === 0 ? "Invitado 1 (Tú)" : `Invitado ${i + 1}`),
@@ -211,7 +231,7 @@ const GuestInfoView: React.FC<GuestInfoViewProps> = ({ guests, setGuests, onBack
 
         <div className="flex flex-col gap-4 animate-fade-in">
           <div className="flex items-center justify-between px-2">
-            <h3 className="text-slate-900 dark:text-white text-lg font-bold leading-tight">Nombres de los invitados</h3>
+            <h3 className="text-slate-900 dark:text-white text-lg font-bold leading-tight">Nombres de los invitados<span className="text-red-500 dark:text-red-400">*</span></h3>
           </div>
           <div className="space-y-3">
             {names.map((name, i) => {
@@ -239,6 +259,16 @@ const GuestInfoView: React.FC<GuestInfoViewProps> = ({ guests, setGuests, onBack
       </div>
 
       <div className="absolute bottom-0 left-0 w-full p-4 bg-gradient-to-t from-background-light via-background-light to-transparent dark:from-background-dark dark:via-background-dark dark:to-transparent pt-12">
+        {error && (
+          <p className="text-red-500 dark:text-red-400 text-sm font-medium mb-3 text-center" role="alert">
+            <span className="text-red-500 dark:text-red-400">* </span>{error}
+          </p>
+        )}
+        {guestCount > 1 && !error && (
+          <p className="text-slate-500 dark:text-slate-400 text-xs mb-3 text-center">
+            Cada comensal debe tener un nombre distinto.
+          </p>
+        )}
         <button onClick={handleContinue} className="w-full bg-primary hover:bg-[#0fd660] active:scale-[0.98] transition-all text-black font-bold text-lg h-14 rounded-xl flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(19,236,106,0.3)]">
           <span>Ir al Menú</span>
           <span className="material-symbols-outlined text-xl font-bold">arrow_forward</span>

@@ -438,7 +438,7 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
               }} 
               className="w-full bg-primary hover:bg-green-400 active:scale-[0.98] text-background-dark font-black text-lg h-16 rounded-2xl flex items-center justify-center gap-3 transition-all shadow-xl shadow-primary/20 group"
             >
-              <span>Avanzar a la propina</span>
+              <span>Finalizar</span>
               <span className="material-symbols-outlined font-black group-hover:translate-x-1 transition-transform">arrow_forward</span>
             </button>
           ) : (

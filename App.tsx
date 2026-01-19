@@ -13,7 +13,6 @@ import IndividualShareView from './views/IndividualShareView';
 import TransferPaymentView from './views/TransferPaymentView';
 import CashPaymentView from './views/CashPaymentView';
 import CheckoutView from './views/CheckoutView';
-import FeedbackView from './views/FeedbackView';
 import ConfirmationView from './views/ConfirmationView';
 import { getSession, setSession, getOrderId, setOrderId, removeOrderId, clearSession } from './lib/sessionCookies';
 
@@ -29,6 +28,7 @@ const App: React.FC = () => {
   const paymentStatus = searchParams.get('status');
   const guestIdParam = searchParams.get('guestId');
   const orderIdParam = searchParams.get('orderId');
+  const clearParam = searchParams.get('clear');
 
   const [currentView, setCurrentView] = useState<AppView>('INIT');
   const [loading, setLoading] = useState(true);
@@ -934,9 +934,27 @@ const App: React.FC = () => {
   }, [supabase, activeOrderId]);
 
   useEffect(() => {
-    const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/checkout', '/individual-share', '/transfer-payment', '/cash-payment', '/feedback', '/confirmation', '/guest-selection'];
-
+const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/checkout', '/individual-share', '/transfer-payment', '/cash-payment', '/confirmation', '/guest-selection'];
+    
     const initApp = async () => {
+      // ?clear=1: limpia cookies de sesión/mesa y muestra la pantalla de scan
+      if (clearParam) {
+        clearSession();
+        setRestaurant(null);
+        setCurrentTable(null);
+        setCurrentWaiter(null);
+        setMenuItems([]);
+        setCategories([]);
+        setActiveOrderId(null);
+        setCart([]);
+        setBatches([]);
+        setGuests([{ id: '1', name: 'Invitado 1 (Tú)', isHost: true }]);
+        setActiveGuestId('1');
+        setError(null);
+        setLoading(false);
+        navigate('/scan');
+        return;
+      }
 
       // Si hay orderId en la URL (con o sin guestId), cargar datos para el link compartido
       if (orderIdParam) {
@@ -995,7 +1013,7 @@ const App: React.FC = () => {
           
           // Solo navegar si no estamos ya en una ruta que requiere sesión
           const currentPath = location.pathname;
-          const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/checkout', '/individual-share', '/transfer-payment', '/cash-payment', '/feedback', '/confirmation', '/guest-selection'];
+          const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/checkout', '/individual-share', '/transfer-payment', '/cash-payment', '/confirmation', '/guest-selection'];
           
           if (!routesRequiringSession.includes(currentPath)) {
             // Si hay guestId, navegar directamente a INDIVIDUAL_SHARE
@@ -1144,7 +1162,7 @@ const App: React.FC = () => {
     };
     
     initApp();
-  }, [resParam, tableParam, orderIdParam, guestIdParam, handleStartSession, fetchOrderItemsFromDB]);
+  }, [resParam, tableParam, orderIdParam, guestIdParam, clearParam, handleStartSession, fetchOrderItemsFromDB, navigate]);
 
   // Función para procesar el pago exitoso
   const handlePaymentSuccess = useCallback(async (guestId: string, paymentAmount: number, paymentMethod: string, mpTransactionId?: string) => {
@@ -1278,7 +1296,7 @@ const App: React.FC = () => {
         ).then(success => {
           if (success) {
             clearSession();
-            navigateToView('FEEDBACK');
+            navigateToView('CONFIRMATION');
           } else {
             alert("Hubo un error al registrar el pago. Por favor, contacta al restaurante.");
           }
@@ -1286,7 +1304,7 @@ const App: React.FC = () => {
       } else {
         console.warn("[DineSplit] No se pudo procesar el pago: guestId o amount faltante");
         clearSession();
-        navigateToView('FEEDBACK');
+        navigateToView('CONFIRMATION');
       }
     }
   }, [paymentStatus, activeOrderId, guests, handlePaymentSuccess]);
@@ -1573,7 +1591,7 @@ const App: React.FC = () => {
         await handlePaymentSuccess(guestId, paymentData.amount, paymentData.method);
       }
       clearSession();
-      navigateToView('FEEDBACK'); 
+      navigateToView('CONFIRMATION'); 
     }
   };
 
@@ -1784,7 +1802,6 @@ const App: React.FC = () => {
       '/individual-share': 'INDIVIDUAL_SHARE',
       '/transfer-payment': 'TRANSFER_PAYMENT',
       '/cash-payment': 'CASH_PAYMENT',
-      '/feedback': 'FEEDBACK',
       '/confirmation': 'CONFIRMATION'
     };
     
@@ -1808,7 +1825,6 @@ const App: React.FC = () => {
       'INDIVIDUAL_SHARE': '/individual-share',
       'TRANSFER_PAYMENT': '/transfer-payment',
       'CASH_PAYMENT': '/cash-payment',
-      'FEEDBACK': '/feedback',
       'CONFIRMATION': '/confirmation'
     };
     
@@ -2235,7 +2251,7 @@ const App: React.FC = () => {
             activeOrderId={activeOrderId} 
             onNext={() => navigateToView('SPLIT_BILL')} 
             onBack={() => navigateToView('MENU')} 
-            onRedirectToFeedback={() => navigateToView('FEEDBACK')} 
+            onRedirectToFeedback={() => navigateToView('CONFIRMATION')} 
             tableNumber={currentTable?.table_number} 
             menuItems={menuItems} 
           />
@@ -2280,12 +2296,7 @@ const App: React.FC = () => {
                 navigateToView('INDIVIDUAL_SHARE');
               }
             }}
-            onNavigateToTip={() => {
-              const guestIdToUse = guestIdParam || activeGuestId;
-              if (activeOrderId && guestIdToUse) {
-                navigate(`/cash-payment?orderId=${activeOrderId}&guestId=${guestIdToUse}`);
-              }
-            }}
+            onNavigateToTip={() => navigateToView('CONFIRMATION')}
             cart={cart} 
             guests={guests} 
             menuItems={menuItems} 
@@ -2386,16 +2397,6 @@ const App: React.FC = () => {
             menuItems={menuItems}
             waiter={currentWaiter}
             restaurant={restaurant}
-          />
-        } />
-        <Route path="/feedback" element={
-          <FeedbackView 
-            onNext={() => navigateToView('CONFIRMATION')} 
-            onSkip={() => navigateToView('CONFIRMATION')} 
-            cart={cart} 
-            menuItems={menuItems} 
-            waiter={currentWaiter} 
-            restaurant={restaurant} 
           />
         } />
         <Route path="/confirmation" element={

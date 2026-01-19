@@ -208,10 +208,6 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
           <p className="text-slate-900 dark:text-white tracking-tight text-2xl font-bold leading-tight">${formatPrice(105.50)}</p>
           <div className="flex items-center gap-1.5"><span className="material-symbols-outlined text-slate-400 dark:text-text-secondary text-sm">receipt_long</span><p className="text-slate-500 dark:text-text-secondary text-sm font-medium">Total Cuenta</p></div>
         </div>
-        <div className="flex min-w-[111px] flex-1 basis-[fit-content] flex-col gap-1 rounded-2xl bg-white dark:bg-surface-dark border border-slate-200 dark:border-border-dark p-4 items-center text-center shadow-sm">
-          <p className="text-slate-900 dark:text-white tracking-tight text-2xl font-bold leading-tight">18%</p>
-          <div className="flex items-center gap-1.5"><span className="material-symbols-outlined text-slate-400 dark:text-text-secondary text-sm">volunteer_activism</span><p className="text-slate-500 dark:text-text-secondary text-sm font-medium">Propina Promedio</p></div>
-        </div>
       </div>
 
       {!allGuestsPaid && (

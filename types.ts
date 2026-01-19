@@ -12,7 +12,6 @@ export type AppView =
   | 'TRANSFER_PAYMENT'
   | 'CASH_PAYMENT'
   | 'CHECKOUT' 
-  | 'FEEDBACK' 
   | 'CONFIRMATION';
 
 export interface Guest {

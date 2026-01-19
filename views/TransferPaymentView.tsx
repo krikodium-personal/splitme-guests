@@ -163,16 +163,14 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
     }
   };
 
-  const handleNavigateToTip = () => {
-    if (orderId && guestId) {
-      navigate(`/cash-payment?orderId=${orderId}&guestId=${guestId}`);
-    }
+  const handleNavigateToConfirmation = () => {
+    navigate('/confirmation');
   };
 
   // Determinar el texto y acción del botón según el estado
   const getButtonText = () => {
     if (isPaid) {
-      return 'Avanzar a la propina';
+      return 'Finalizar';
     }
     if (isWaitingConfirmation) {
       return 'Esperando confirmación';
@@ -182,7 +180,7 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
 
   const handleButtonClick = () => {
     if (isPaid) {
-      handleNavigateToTip();
+      handleNavigateToConfirmation();
     } else if (!isTransferConfirmed && !isWaitingConfirmation) {
       handleConfirmTransfer();
     }
