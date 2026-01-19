@@ -224,6 +224,13 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
     return dinerShares.every(diner => diner.paid === true);
   }, [dinerShares]);
 
+  // Total ya pagado por comensales con paid=TRUE (para "pagar la cuenta completa" = lo que falta)
+  const totalPagadoPorComensales = useMemo(() => 
+    dinerShares.filter(d => d.paid === true).reduce((s, d) => s + (Number(d.amount) || 0), 0),
+    [dinerShares]
+  );
+  const remainingToSettle = Math.max(0, grandTotal - totalPagadoPorComensales);
+
   // Se asegura una URL absoluta válida y limpia
   const shareUrl = useMemo(() => {
     try {
@@ -461,7 +468,7 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
             </button>
           )
         ) : (
-          isCurrentUserInSplit ? (
+          isCurrentUserInSplit && !currentUserPaid ? (
             <>
               <button 
                 onClick={() => {
@@ -479,18 +486,20 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
                 </div>
                 <span className="material-symbols-outlined font-black group-hover:translate-x-1 transition-transform">arrow_forward</span>
               </button>
-              <button 
-                onClick={() => {
-                  if (currentUserId) {
-                    onConfirm(currentUserId);
-                  } else {
-                    console.error('[CheckoutView] No se puede pagar: currentUserId no está definido');
-                  }
-                }} 
-                className="w-full flex items-center justify-center text-[#9db9a8] font-bold text-[10px] uppercase tracking-[0.2em] py-2 hover:text-white transition-colors"
-              >
-                O pagar la cuenta completa (${formatPrice(grandTotal)})
-              </button>
+              {remainingToSettle > 0 && (
+                <button 
+                  onClick={() => {
+                    if (currentUserId) {
+                      onConfirm(currentUserId);
+                    } else {
+                      console.error('[CheckoutView] No se puede pagar: currentUserId no está definido');
+                    }
+                  }} 
+                  className="w-full flex items-center justify-center text-[#9db9a8] font-bold text-[10px] uppercase tracking-[0.2em] py-2 hover:text-white transition-colors"
+                >
+                  O pagar la cuenta completa (${formatPrice(remainingToSettle)})
+                </button>
+              )}
             </>
           ) : null
         )}

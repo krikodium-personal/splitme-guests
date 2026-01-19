@@ -432,23 +432,24 @@ const MenuView: React.FC<MenuViewProps> = ({
       
       const guest = guests.find(g => g.id === guestId);
       const guestName = guest?.name || 'Comensal';
-      const text = `¡Hola ${guestName}! Puedes seleccionar tus platos aquí: ${menuUrl}`;
+      const textWithUrl = `¡Hola ${guestName}! Puedes seleccionar tus platos aquí: ${menuUrl}`;
+      const textOnly = `¡Hola ${guestName}! Puedes seleccionar tus platos aquí:`;
       
       if (navigator.share) {
         try {
           await navigator.share({
             title: 'SplitMe - Seleccionar platos',
-            text: text,
+            text: textOnly,
             url: menuUrl,
           });
         } catch (err: any) {
           if (err.name !== 'AbortError') {
             console.error("Error al compartir:", err);
-            copyToClipboard(text);
+            copyToClipboard(textWithUrl);
           }
         }
       } else {
-        copyToClipboard(text);
+        copyToClipboard(textWithUrl);
       }
     } catch (error) {
       console.error('Error al compartir:', error);
@@ -677,14 +678,15 @@ const MenuView: React.FC<MenuViewProps> = ({
               onCategoryChange(cat);
               window.history.replaceState(null, '', `/menu/${slug}`);
             }}
-              className={`px-4 py-2 rounded-full whitespace-nowrap text-sm font-bold transition-colors ${
+              className={`flex items-center justify-center gap-1.5 h-9 px-4 rounded-full whitespace-nowrap text-sm font-bold transition-colors shrink-0 ${
                 isSelected 
                   ? 'bg-primary text-background-dark' 
                   : isDestacados 
-                    ? 'bg-primary/20 text-primary border border-primary/30' 
+                    ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30' 
                     : 'bg-white/5 text-text-secondary'
               }`}
           >
+            {isDestacados && <span className="material-symbols-outlined text-[14px]">star</span>}
             {cat} {categoryCounts[cat] > 0 && <span className="ml-1 opacity-60">({categoryCounts[cat]})</span>}
           </button>
           );
