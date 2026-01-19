@@ -1025,50 +1025,43 @@ const MenuView: React.FC<MenuViewProps> = ({
               {!pendingGuestSelection && <span className="text-[10px] font-black text-primary uppercase bg-primary/10 px-3 py-1 rounded-full">Capacidad {guests.length}/{tableCapacity}</span>}
             </div>
             {pendingGuestSelection && <p className="text-text-secondary text-sm mb-4">Tocá tu nombre para continuar.</p>}
-            <div className="space-y-4 mb-8 max-h-64 overflow-y-auto no-scrollbar">
+            <div className="grid grid-cols-2 gap-2 sm:gap-3 mb-6">
               {guests.map(g => (
                 <div 
                   key={g.id} 
-                  className={`flex items-center justify-between p-4 rounded-2xl border transition-all ${selectedGuestId === g.id ? 'bg-primary/10 border-primary/40 shadow-lg' : 'bg-white/5 border-white/5'} ${pendingGuestSelection ? 'cursor-pointer active:bg-white/10' : ''}`}
+                  className={`flex items-center gap-2 p-3 rounded-xl border transition-all min-w-0 ${selectedGuestId === g.id ? 'bg-primary/10 border-primary/40 shadow-lg' : 'bg-white/5 border-white/5'} ${pendingGuestSelection ? 'cursor-pointer active:bg-white/10' : ''}`}
                   onClick={pendingGuestSelection ? () => { onSelectGuest(g.id); onGuestIdentified?.(g.id); setIsManageGuestsOpen(false); } : undefined}
                 >
-                  <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <div 
-                      className={`size-10 rounded-full flex items-center justify-center font-black text-xs shrink-0 cursor-pointer ${getGuestColor(g.id)}`}
-                      onClick={(e) => { e.stopPropagation(); onSelectGuest(g.id); if (pendingGuestSelection && onGuestIdentified) { onGuestIdentified(g.id); setIsManageGuestsOpen(false); } }}
-                    >
-                      {getInitials(g.name || backupNames[g.id] || '?')}
-                    </div>
-                    <div className="flex-1 min-w-0 relative flex items-center gap-2">
-                       <input 
-                         ref={el => { inputRefs.current[g.id] = el; }}
-                         type="text" 
-                         value={g.name} 
-                         onChange={(e) => handleUpdateGuestName(g.id, e.target.value)}
-                         onFocus={(e) => {
-                           e.target.select();
-                         }}
-                         onBlur={() => handleBlurName(g.id, g.name)}
-                         onClick={(e) => { if (!pendingGuestSelection) e.stopPropagation(); }}
-                         readOnly={!!pendingGuestSelection}
-                         className={`flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 font-bold text-white focus:ring-2 focus:ring-primary focus:border-primary focus:outline-none placeholder:opacity-30 transition-all ${pendingGuestSelection ? 'cursor-pointer' : 'cursor-text'}`}
-                         placeholder="Nombre del comensal..."
-                       />
-                       {!g.isHost && !pendingGuestSelection && (
-                         <button
-                           onClick={(e) => {
-                             e.stopPropagation();
-                             handleShareGuestMenu(g.id);
-                           }}
-                           className="size-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-white/60 hover:text-primary hover:bg-primary/20 hover:border-primary/40 active:scale-95 transition-all shrink-0"
-                           title="Compartir para seleccionar platos"
-                         >
-                           <span className="material-symbols-outlined text-[20px]">ios_share</span>
-                         </button>
-                       )}
-                    </div>
+                  <div 
+                    className={`size-8 rounded-full flex items-center justify-center font-black text-[10px] shrink-0 cursor-pointer ${getGuestColor(g.id)}`}
+                    onClick={(e) => { e.stopPropagation(); onSelectGuest(g.id); if (pendingGuestSelection && onGuestIdentified) { onGuestIdentified(g.id); setIsManageGuestsOpen(false); } }}
+                  >
+                    {getInitials(g.name || backupNames[g.id] || '?')}
                   </div>
-                  {selectedGuestId === g.id && <span className="material-symbols-outlined text-primary ml-2">check_circle</span>}
+                  <div className="flex-1 min-w-0 flex items-center gap-1.5">
+                    <input 
+                      ref={el => { inputRefs.current[g.id] = el; }}
+                      type="text" 
+                      value={g.name} 
+                      onChange={(e) => handleUpdateGuestName(g.id, e.target.value)}
+                      onFocus={(e) => e.target.select()}
+                      onBlur={() => handleBlurName(g.id, g.name)}
+                      onClick={(e) => { if (!pendingGuestSelection) e.stopPropagation(); }}
+                      readOnly={!!pendingGuestSelection}
+                      className={`flex-1 min-w-0 bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs font-bold text-white focus:ring-2 focus:ring-primary focus:outline-none placeholder:opacity-30 transition-all ${pendingGuestSelection ? 'cursor-pointer' : 'cursor-text'}`}
+                      placeholder="Nombre..."
+                    />
+                    {!g.isHost && !pendingGuestSelection && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleShareGuestMenu(g.id); }}
+                        className="size-7 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-white/60 hover:text-primary hover:bg-primary/20 active:scale-95 shrink-0"
+                        title="Compartir"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">ios_share</span>
+                      </button>
+                    )}
+                  </div>
+                  {selectedGuestId === g.id && <span className="material-symbols-outlined text-primary text-lg shrink-0">check_circle</span>}
                 </div>
               ))}
             </div>
