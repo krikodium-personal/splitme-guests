@@ -18,6 +18,32 @@ import { getSession, setSession, getOrderId, setOrderId, removeOrderId, clearSes
 
 const READY_SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3';
 
+/** Mensaje amigable según status_detail de Mercado Pago cuando el pago es rechazado. */
+function getMessageFromStatusDetail(statusDetail: string | null): string {
+  if (!statusDetail || typeof statusDetail !== 'string') {
+    return 'El pago fue rechazado. Por favor, intentá con otro medio de pago.';
+  }
+  const d = statusDetail.toLowerCase();
+  const map: Record<string, string> = {
+    'cc_rejected_bad_filled_card_number': 'El número de tarjeta es incorrecto. Revisalo e intentá de nuevo.',
+    'cc_rejected_bad_filled_date': 'La fecha de vencimiento es incorrecta o la tarjeta está vencida.',
+    'cc_rejected_bad_filled_security_code': 'El código de seguridad (CVV) es incorrecto.',
+    'cc_rejected_bad_filled_other': 'Revisá los datos de la tarjeta e intentá de nuevo.',
+    'cc_rejected_insufficient_amount': 'Fondos o límite insuficiente en la tarjeta.',
+    'cc_rejected_card_disabled': 'La tarjeta está deshabilitada o bloqueada.',
+    'cc_rejected_high_risk': 'El pago fue rechazado por controles de seguridad. Probá con otro medio.',
+    'cc_rejected_blacklist': 'No se pudo procesar con esta tarjeta. Usá otro medio de pago.',
+    'cc_rejected_duplicated_payment': 'Este pago ya fue registrado. Si no lo ves, esperá unos minutos.',
+    'cc_rejected_invalid_installments': 'El número de cuotas no es válido para esta tarjeta.',
+    'cc_rejected_max_attempts': 'Superaste el máximo de intentos. Probá más tarde con otro medio.',
+    'cc_rejected_call_for_authorize': 'El banco solicita autorización. Llamá al banco para habilitar la compra.',
+    'cc_rejected_time_out': 'La operación tardó demasiado. Intentá de nuevo.',
+    'cc_rejected_other_reason': 'El pago fue rechazado. Intentá con otra tarjeta o medio de pago.',
+    'rejected_by_bank': 'El banco rechazó el pago. Probá con otra tarjeta o medio de pago.',
+  };
+  return map[d] || 'El pago fue rechazado. Por favor, intentá con otro medio de pago.';
+}
+
 const App: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -58,6 +84,7 @@ const App: React.FC = () => {
   const [paymentAmount, setPaymentAmount] = useState<number>(0);
   const [paymentGuestName, setPaymentGuestName] = useState<string>('');
   const [pendingGuestSelection, setPendingGuestSelection] = useState(false);
+  const [paymentReturnMessage, setPaymentReturnMessage] = useState<{ type: 'rejected'|'pending'; message: string; waitingGuestId?: string | null } | null>(null);
 
   const batchChannelRef = useRef<any>(null);
   const cartChannelRef = useRef<any>(null);
@@ -997,7 +1024,8 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
       } catch (e) {}
 
       const isPaymentReturn = paymentStatus === 'success' || paymentStatus === 'approved';
-      const orderIdForLoad = orderIdParam || (isPaymentReturn && mpReturn?.orderId) || undefined;
+      const isAnyMpReturn = ['success','approved','rejected','failure','pending'].includes(paymentStatus || '');
+      const orderIdForLoad = orderIdParam || (isAnyMpReturn && mpReturn?.orderId) || undefined;
 
       // Si hay orderId en la URL o en sessionStorage (return de MP), cargar datos
       if (orderIdForLoad) {
@@ -1037,7 +1065,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
           setOrderId(orderIdForLoad);
 
           // Cargar guests con sus montos individuales y estado de pago
-          const guestIdToSet = guestIdParam || (isPaymentReturn && mpReturn?.guestId) || undefined;
+          const guestIdToSet = guestIdParam || (isAnyMpReturn && mpReturn?.guestId) || undefined;
           if (guestsRes.data) {
             const guestsFromDB: Guest[] = guestsRes.data.map(og => ({
               id: og.id,
@@ -1312,9 +1340,15 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
     }
   }, [supabase, activeOrderId, fetchOrderGuests]);
 
+  // ——— approved/success → pago exitoso, mensaje y avanzar a propina
+  // ——— rejected/failure → pago no exitoso, mensaje por status_detail, permanece en pantalla de pago
+  // ——— pending → pago pendiente, mensaje y esperar confirmación (Realtime) para approved
   useEffect(() => {
-    const isPaid = paymentStatus === 'success' || paymentStatus === 'approved';
-    if (!isPaid || !activeOrderId) return;
+    const ps = paymentStatus || '';
+    const isSuccess = ps === 'success' || ps === 'approved';
+    const isRejected = ps === 'rejected' || ps === 'failure';
+    const isPending = ps === 'pending';
+    if (!isSuccess && !isRejected && !isPending) return;
     if (location.pathname === '/confirmation') return;
 
     const urlParams = new URLSearchParams(window.location.search);
@@ -1326,46 +1360,49 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
       } catch (e) {}
     }
 
-    const paymentId = urlParams.get('payment_id');
-    const preferenceId = urlParams.get('preference_id');
-    const status = urlParams.get('status');
-    const paymentType = urlParams.get('payment_type_id');
-
-    console.log("[DineSplit] Pago exitoso detectado. Parámetros de URL:", {
-      guestId: guestIdFromUrl,
-      payment_id: paymentId,
-      preference_id: preferenceId,
-      status: status,
-      payment_type: paymentType
-    });
-
-    const payingGuest = guests.find(g => g.id === guestIdFromUrl);
-    const paymentAmount = payingGuest?.individualAmount || 0;
-
     const clearMpReturn = () => {
       try { sessionStorage.removeItem('splitme_mp_return'); } catch (e) {}
     };
 
-    if (guestIdFromUrl && paymentAmount > 0) {
-      handlePaymentSuccess(
-        guestIdFromUrl,
-        paymentAmount,
-        'mercadopago',
-        paymentId || undefined
-      ).then(success => {
+    if (isSuccess) {
+      setPaymentReturnMessage(null);
+      if (!activeOrderId) return;
+      const paymentId = urlParams.get('payment_id');
+      const payingGuest = guests.find(g => g.id === guestIdFromUrl);
+      const paymentAmount = payingGuest?.individualAmount || 0;
+      if (guestIdFromUrl && paymentAmount > 0) {
+        handlePaymentSuccess(guestIdFromUrl, paymentAmount, 'mercadopago', paymentId || undefined).then(success => {
+          clearMpReturn();
+          if (success) {
+            clearSession();
+            navigateToView('CONFIRMATION');
+          } else {
+            alert("Hubo un error al registrar el pago. Por favor, contacta al restaurante.");
+          }
+        });
+      } else {
         clearMpReturn();
-        if (success) {
-          clearSession();
-          navigateToView('CONFIRMATION');
-        } else {
-          alert("Hubo un error al registrar el pago. Por favor, contacta al restaurante.");
-        }
-      });
-    } else {
-      console.warn("[DineSplit] No se pudo procesar el pago: guestId o amount faltante");
+        clearSession();
+        navigateToView('CONFIRMATION');
+      }
+      return;
+    }
+
+    if (isRejected) {
+      const statusDetail = urlParams.get('status_detail');
+      const message = getMessageFromStatusDetail(statusDetail);
+      setPaymentReturnMessage({ type: 'rejected', message, waitingGuestId: undefined });
       clearMpReturn();
-      clearSession();
-      navigateToView('CONFIRMATION');
+      return;
+    }
+
+    if (isPending) {
+      setPaymentReturnMessage({
+        type: 'pending',
+        message: 'Pago pendiente. Estamos esperando la confirmación de Mercado Pago.',
+        waitingGuestId: guestIdFromUrl || null
+      });
+      clearMpReturn();
     }
   }, [paymentStatus, activeOrderId, guests, handlePaymentSuccess, location.pathname]);
 
@@ -1898,6 +1935,17 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
     navigate(route);
   }, [navigate]);
 
+  // Cuando hay pending y el guest pasa a paid (p. ej. por webhook), ir a propina
+  useEffect(() => {
+    const pm = paymentReturnMessage;
+    if (pm?.type !== 'pending' || !pm.waitingGuestId) return;
+    const g = guests.find(x => x.id === pm.waitingGuestId);
+    if (g?.paid) {
+      setPaymentReturnMessage(null);
+      navigateToView('CONFIRMATION');
+    }
+  }, [guests, paymentReturnMessage, navigateToView]);
+
   // Función para agregar item al carrito y guardarlo inmediatamente en la BD
   const handleAddToCart = useCallback(async (item: MenuItem, guestId: string, extras: string[], removedIngredients: string[]) => {
     if (!activeOrderId || !supabase) {
@@ -2361,6 +2409,8 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
               navigateToView('CASH_PAYMENT');
             }}
             onUpdatePaymentMethod={updatePaymentMethod}
+            paymentReturnMessage={paymentReturnMessage}
+            onDismissPaymentMessage={() => setPaymentReturnMessage(null)}
             cart={cart} 
             menuItems={menuItems} 
             splitData={splitData} 

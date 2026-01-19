@@ -11,6 +11,9 @@ interface IndividualShareViewProps {
   onShowTransfer?: (amount: number) => void;
   onShowCash?: (amount: number, guestName: string) => void;
   onUpdatePaymentMethod?: (guestId: string, method: 'mercadopago' | 'transfer' | 'cash') => Promise<boolean>;
+  /** Mensaje al volver de Mercado Pago: rechazado (dismissible) o pendiente (esperando confirmación). */
+  paymentReturnMessage?: { type: 'rejected'|'pending'; message: string; waitingGuestId?: string | null } | null;
+  onDismissPaymentMessage?: () => void;
   cart: OrderItem[];
   menuItems: MenuItem[];
   splitData: any[] | null;
@@ -18,7 +21,7 @@ interface IndividualShareViewProps {
   guests?: Guest[];
 }
 
-const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay, onShowTransfer, onShowCash, onUpdatePaymentMethod, cart, menuItems, splitData, restaurant, guests = [] }) => {
+const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay, onShowTransfer, onShowCash, onUpdatePaymentMethod, paymentReturnMessage, onDismissPaymentMessage, cart, menuItems, splitData, restaurant, guests = [] }) => {
   const location = useLocation();
   const [paymentMethod, setPaymentMethod] = useState<'mercadopago' | 'transfer' | 'cash'>('mercadopago');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -146,6 +149,36 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
         <h1 className="text-base font-bold leading-tight">{guestName}</h1>
         <div className="size-10"></div>
       </header>
+
+      {/* Banner por vuelta de Mercado Pago: rechazado o pendiente */}
+      {paymentReturnMessage?.type === 'rejected' && (
+        <div className="mx-4 mt-4 rounded-2xl bg-red-500/15 border border-red-500/40 p-4 flex flex-col gap-3">
+          <div className="flex items-start gap-3">
+            <span className="material-symbols-outlined text-red-400 shrink-0">error</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-red-200 font-bold text-sm">Pago rechazado</p>
+              <p className="text-white/90 text-sm mt-1">{paymentReturnMessage.message}</p>
+            </div>
+          </div>
+          <button
+            onClick={() => onDismissPaymentMessage?.()}
+            className="self-end px-4 py-2 rounded-xl bg-red-500/30 hover:bg-red-500/40 text-red-100 font-bold text-sm"
+          >
+            Entendido
+          </button>
+        </div>
+      )}
+      {paymentReturnMessage?.type === 'pending' && (
+        <div className="mx-4 mt-4 rounded-2xl bg-amber-500/15 border border-amber-500/40 p-4 flex items-center gap-3">
+          <div className="size-10 rounded-full flex items-center justify-center shrink-0">
+            <span className="material-symbols-outlined text-amber-400 animate-spin text-2xl">sync</span>
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-amber-200 font-bold text-sm">Pago pendiente</p>
+            <p className="text-white/90 text-sm mt-0.5">{paymentReturnMessage.message}</p>
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-col items-center justify-center pt-8 pb-10 animate-fade-in-up">
         <div className="text-text-secondary text-[10px] font-black uppercase tracking-[0.3em] mb-2 opacity-60">Monto total a pagar</div>
