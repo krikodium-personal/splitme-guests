@@ -1090,14 +1090,15 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
           const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/checkout', '/individual-share', '/transfer-payment', '/cash-payment', '/confirmation', '/guest-selection'];
           
           if (!routesRequiringSession.includes(currentPath)) {
+            const preserveQuery = location.search || '';
             if (guestIdParam) {
-              navigate('/individual-share');
+              navigate('/individual-share' + (preserveQuery || `?orderId=${orderIdForLoad}&guestId=${guestIdParam}`));
             } else {
               const preferredId = getActiveGuestId();
               if (preferredId && guestsFromDB.some(g => g.id === preferredId)) {
-                navigate(`/individual-share?orderId=${orderIdForLoad}&guestId=${preferredId}`);
+                navigate('/individual-share' + (preserveQuery || `?orderId=${orderIdForLoad}&guestId=${preferredId}`));
               } else {
-                navigate('/guest-selection');
+                navigate('/guest-selection' + (preserveQuery || `?orderId=${orderIdForLoad}`));
               }
             }
           }
@@ -1148,7 +1149,9 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
               .eq('id', orderId)
               .maybeSingle();
 
-            if (orderCheck && (orderCheck.status === 'PAGADO' || orderCheck.status === 'CANCELADO')) {
+            // Si la orden está PAGADA/CERRADA pero volvemos de MP con success/approved, no redirigir a /scan:
+            // cargar el estado y dejar que el efecto de paymentStatus lleve a /confirmation
+            if (orderCheck && (orderCheck.status === 'PAGADO' || orderCheck.status === 'CANCELADO') && !isPaymentReturn) {
               clearSession();
               setRestaurant(null);
               setCurrentTable(null);
@@ -1210,7 +1213,8 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             }
             await fetchOrderItemsFromDB(orderId);
 
-            if (location.pathname === '/' || location.pathname === '/scan') {
+            // Si volvemos de MP con success/approved, no forzar /menu: el efecto de paymentStatus llevará a /confirmation
+            if (!isPaymentReturn && (location.pathname === '/' || location.pathname === '/scan')) {
               navigate('/menu');
             }
             setLoading(false);
@@ -1255,6 +1259,18 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
     }
 
     try {
+      // Idempotencia: si el webhook ya marcó paid=true, considerar éxito y no re-escribir
+      const { data: existingGuest } = await supabase
+        .from('order_guests')
+        .select('paid')
+        .eq('id', guestId)
+        .maybeSingle();
+      if (existingGuest?.paid === true) {
+        console.log("[DineSplit] Guest ya está pagado (webhook), idempotente → éxito");
+        await fetchOrderGuests(activeOrderId);
+        return true;
+      }
+
       console.log("[DineSplit] ========================================");
       console.log("[DineSplit] Procesando pago exitoso");
       console.log("[DineSplit] Guest ID:", guestId);
