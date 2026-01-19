@@ -1,21 +1,32 @@
-
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Guest, OrderItem, MenuItem } from '../types';
 import { getInitials, getGuestColor } from './GuestInfoView';
 import { formatPrice } from './MenuView';
+import { getActiveGuestId } from '../lib/sessionCookies';
 
 interface GuestSelectionViewProps {
   guests: Guest[];
   cart: OrderItem[];
   menuItems: MenuItem[];
   splitData: any[] | null;
+  activeOrderId?: string | null;
   onSelectGuest: (guestId: string) => void;
   restaurant?: any;
 }
 
 const GuestSelectionView: React.FC<GuestSelectionViewProps> = ({ 
-  guests, cart, menuItems, splitData, onSelectGuest, restaurant 
+  guests, cart, menuItems, splitData, activeOrderId, onSelectGuest, restaurant 
 }) => {
+  const navigate = useNavigate();
+
+  // Si la cookie identifica a un comensal de esta orden, ir directo a su división (no mostrar esta pantalla)
+  useEffect(() => {
+    const id = getActiveGuestId();
+    if (id && activeOrderId && guests.some(g => g.id === id)) {
+      navigate(`/individual-share?orderId=${activeOrderId}&guestId=${id}`, { replace: true });
+    }
+  }, [guests, activeOrderId, navigate]);
   // Calcular totales de cada comensal
   const guestTotals = useMemo(() => {
     // Prioridad 1: Usar individualAmount desde order_guests (guardado en BD)
@@ -85,6 +96,14 @@ const GuestSelectionView: React.FC<GuestSelectionViewProps> = ({
               <p className="text-xs font-medium text-text-secondary mt-0.5">
                 Total a pagar
               </p>
+              {guest.paid ? (
+                <p className="text-xs font-bold text-green-400 mt-1 flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[14px]">check_circle</span>
+                  Pagado
+                </p>
+              ) : (guest.total > 0 ? (
+                <p className="text-xs font-medium text-amber-400/90 mt-1">Por pagar</p>
+              ) : null)}
             </div>
             <div className="flex flex-col items-end">
               <p className="text-white font-black text-xl tabular-nums">

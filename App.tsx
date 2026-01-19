@@ -1093,7 +1093,12 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             if (guestIdParam) {
               navigate('/individual-share');
             } else {
-              navigate('/guest-selection');
+              const preferredId = getActiveGuestId();
+              if (preferredId && guestsFromDB.some(g => g.id === preferredId)) {
+                navigate(`/individual-share?orderId=${orderIdForLoad}&guestId=${preferredId}`);
+              } else {
+                navigate('/guest-selection');
+              }
             }
           }
           setLoading(false);
@@ -2351,8 +2356,9 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             cart={cart} 
             menuItems={menuItems} 
             splitData={splitData} 
+            activeOrderId={activeOrderId}
             onSelectGuest={(guestId) => { 
-              navigate(`/individual-share?guestId=${guestId}`);
+              navigate(`/individual-share?orderId=${activeOrderId || ''}&guestId=${guestId}`);
             }} 
             restaurant={restaurant} 
           />
