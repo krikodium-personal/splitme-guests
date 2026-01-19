@@ -989,15 +989,25 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
         return;
       }
 
-      // Si hay orderId en la URL (con o sin guestId), cargar datos para el link compartido
-      if (orderIdParam) {
+      // Datos de retorno desde Mercado Pago (puede que la URL pierda orderId/guestId; usamos sessionStorage como respaldo)
+      let mpReturn: { orderId?: string; guestId?: string } = {};
+      try {
+        const s = sessionStorage.getItem('splitme_mp_return');
+        if (s) mpReturn = JSON.parse(s);
+      } catch (e) {}
+
+      const isPaymentReturn = paymentStatus === 'success' || paymentStatus === 'approved';
+      const orderIdForLoad = orderIdParam || (isPaymentReturn && mpReturn?.orderId) || undefined;
+
+      // Si hay orderId en la URL o en sessionStorage (return de MP), cargar datos
+      if (orderIdForLoad) {
         setLoading(true);
         try {
           // Cargar la orden y obtener restaurant_id
           const { data: orderData } = await supabase
             .from('orders')
             .select('*, tables!inner(restaurant_id)')
-            .eq('id', orderIdParam)
+            .eq('id', orderIdForLoad)
             .maybeSingle();
 
           if (!orderData) {
@@ -1013,7 +1023,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             supabase.from('restaurants').select('*').eq('id', restaurantId).maybeSingle(),
             supabase.from('categories').select('*').eq('restaurant_id', restaurantId).order('sort_order'),
             supabase.from('menu_items').select('*').eq('restaurant_id', restaurantId).order('sort_order'),
-            supabase.from('order_guests').select('*').eq('order_id', orderIdParam).order('position', { ascending: true })
+            supabase.from('order_guests').select('*').eq('order_id', orderIdForLoad).order('position', { ascending: true })
           ]);
 
           if (restaurantRes.error || !restaurantRes.data) {
@@ -1023,10 +1033,11 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
           setRestaurant(restaurantRes.data);
           setCategories(categoriesRes.data || []);
           setMenuItems(menuItemsRes.data || []);
-          setActiveOrderId(orderIdParam);
-          setOrderId(orderIdParam);
+          setActiveOrderId(orderIdForLoad);
+          setOrderId(orderIdForLoad);
 
           // Cargar guests con sus montos individuales y estado de pago
+          const guestIdToSet = guestIdParam || (isPaymentReturn && mpReturn?.guestId) || undefined;
           if (guestsRes.data) {
             const guestsFromDB: Guest[] = guestsRes.data.map(og => ({
               id: og.id,
@@ -1039,13 +1050,13 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             }));
             console.log("[DineSplit] Guests cargados desde link QR:", guestsFromDB.map(g => ({ id: g.id, name: g.name, individualAmount: g.individualAmount, paid: g.paid, payment_id: g.payment_id })));
             setGuests(guestsFromDB);
-            if (guestIdParam && guestsFromDB.some(g => g.id === guestIdParam)) {
-              setActiveGuestId(guestIdParam);
-              setActiveGuestIdCookie(guestIdParam);
+            if (guestIdToSet && guestsFromDB.some(g => g.id === guestIdToSet)) {
+              setActiveGuestId(guestIdToSet);
+              setActiveGuestIdCookie(guestIdToSet);
             }
           }
 
-          await fetchOrderItemsFromDB(orderIdParam);
+          await fetchOrderItemsFromDB(orderIdForLoad);
           
           const currentPath = location.pathname;
           const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/checkout', '/individual-share', '/transfer-payment', '/cash-payment', '/confirmation', '/guest-selection'];
@@ -1067,8 +1078,8 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
         await handleStartSession(resParam, tableParam, guestIdParam || getActiveGuestId() || undefined);
         window.history.replaceState({}, '', window.location.pathname);
       } else {
-        // Sin parámetros en URL: intentar restaurar sesión desde cookies
-        const orderId = getOrderId();
+        // Sin parámetros en URL: intentar restaurar sesión desde cookies (o sessionStorage si volvemos de MP)
+        const orderId = getOrderId() || (isPaymentReturn ? (mpReturn?.orderId || null) : null);
         const session = getSession();
 
         if (orderId) {
@@ -1155,7 +1166,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
                 payment_method: og.payment_method || null
               }));
               setGuests(guestsFromDB);
-              const preferred = getActiveGuestId();
+              const preferred = (isPaymentReturn && mpReturn?.guestId) || getActiveGuestId();
               const toSelect = (preferred && guestsFromDB.some(g => g.id === preferred)) ? preferred : null;
               if (toSelect) {
                 setActiveGuestId(toSelect);
@@ -1201,7 +1212,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
     };
     
     initApp();
-  }, [resParam, tableParam, orderIdParam, guestIdParam, clearParam, handleStartSession, fetchOrderItemsFromDB, navigate]);
+  }, [resParam, tableParam, orderIdParam, guestIdParam, clearParam, paymentStatus, handleStartSession, fetchOrderItemsFromDB, navigate]);
 
   // Función para procesar el pago exitoso
   const handlePaymentSuccess = useCallback(async (guestId: string, paymentAmount: number, paymentMethod: string, mpTransactionId?: string) => {
@@ -1302,51 +1313,61 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
   }, [supabase, activeOrderId, fetchOrderGuests]);
 
   useEffect(() => {
-    if (paymentStatus === 'success' && activeOrderId) {
-      // Obtener guestId de la URL o del estado
-      const urlParams = new URLSearchParams(window.location.search);
-      const guestIdFromUrl = urlParams.get('guestId');
-      
-      // Obtener información del pago de la URL (Mercado Pago pasa estos parámetros)
-      const paymentId = urlParams.get('payment_id');
-      const preferenceId = urlParams.get('preference_id');
-      const status = urlParams.get('status');
-      const paymentType = urlParams.get('payment_type_id');
+    const isPaid = paymentStatus === 'success' || paymentStatus === 'approved';
+    if (!isPaid || !activeOrderId) return;
+    if (location.pathname === '/confirmation') return;
 
-      console.log("[DineSplit] Pago exitoso detectado. Parámetros de URL:", {
-        guestId: guestIdFromUrl,
-        payment_id: paymentId,
-        preference_id: preferenceId,
-        status: status,
-        payment_type: paymentType
-      });
-
-      // Obtener el monto del pago desde el guest
-      const payingGuest = guests.find(g => g.id === guestIdFromUrl);
-      const paymentAmount = payingGuest?.individualAmount || 0;
-
-      if (guestIdFromUrl && paymentAmount > 0) {
-        // Procesar el pago
-        handlePaymentSuccess(
-          guestIdFromUrl,
-          paymentAmount,
-          'mercadopago',
-          paymentId || undefined
-        ).then(success => {
-          if (success) {
-            clearSession();
-            navigateToView('CONFIRMATION');
-          } else {
-            alert("Hubo un error al registrar el pago. Por favor, contacta al restaurante.");
-          }
-        });
-      } else {
-        console.warn("[DineSplit] No se pudo procesar el pago: guestId o amount faltante");
-        clearSession();
-        navigateToView('CONFIRMATION');
-      }
+    const urlParams = new URLSearchParams(window.location.search);
+    let guestIdFromUrl = urlParams.get('guestId');
+    if (!guestIdFromUrl) {
+      try {
+        const s = sessionStorage.getItem('splitme_mp_return');
+        if (s) guestIdFromUrl = (JSON.parse(s) as { guestId?: string }).guestId || null;
+      } catch (e) {}
     }
-  }, [paymentStatus, activeOrderId, guests, handlePaymentSuccess]);
+
+    const paymentId = urlParams.get('payment_id');
+    const preferenceId = urlParams.get('preference_id');
+    const status = urlParams.get('status');
+    const paymentType = urlParams.get('payment_type_id');
+
+    console.log("[DineSplit] Pago exitoso detectado. Parámetros de URL:", {
+      guestId: guestIdFromUrl,
+      payment_id: paymentId,
+      preference_id: preferenceId,
+      status: status,
+      payment_type: paymentType
+    });
+
+    const payingGuest = guests.find(g => g.id === guestIdFromUrl);
+    const paymentAmount = payingGuest?.individualAmount || 0;
+
+    const clearMpReturn = () => {
+      try { sessionStorage.removeItem('splitme_mp_return'); } catch (e) {}
+    };
+
+    if (guestIdFromUrl && paymentAmount > 0) {
+      handlePaymentSuccess(
+        guestIdFromUrl,
+        paymentAmount,
+        'mercadopago',
+        paymentId || undefined
+      ).then(success => {
+        clearMpReturn();
+        if (success) {
+          clearSession();
+          navigateToView('CONFIRMATION');
+        } else {
+          alert("Hubo un error al registrar el pago. Por favor, contacta al restaurante.");
+        }
+      });
+    } else {
+      console.warn("[DineSplit] No se pudo procesar el pago: guestId o amount faltante");
+      clearMpReturn();
+      clearSession();
+      navigateToView('CONFIRMATION');
+    }
+  }, [paymentStatus, activeOrderId, guests, handlePaymentSuccess, location.pathname]);
 
   // Función para actualizar el método de pago en order_guests
   const updatePaymentMethod = useCallback(async (guestId: string, method: 'mercadopago' | 'transfer' | 'cash') => {
@@ -1617,6 +1638,9 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
         const paymentUrl = pref.sandbox_init_point || pref.init_point;
         
         if (paymentUrl) {
+          try {
+            sessionStorage.setItem('splitme_mp_return', JSON.stringify({ orderId: activeOrderId, guestId }));
+          } catch (e) { /* sessionStorage puede no estar disponible */ }
           console.log('[DineSplit] Redirigiendo a:', paymentUrl);
           window.location.href = paymentUrl;
         } else {
@@ -2164,7 +2188,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
         </div>
       )}
       <Routes>
-        <Route path="/" element={<Navigate to="/scan" replace />} />
+        <Route path="/" element={<Navigate to={`/scan${location.search || ''}`} replace />} />
         <Route path="/scan" element={<ScanView onNext={handleStartSession} restaurantName={undefined} />} />
         <Route path="/guest-info" element={
           <GuestInfoView 
