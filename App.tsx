@@ -773,6 +773,18 @@ const App: React.FC = () => {
           // Recargar todos los guests desde la BD cuando hay cambios
           // No pasar preferredGuestId aquí para que no sobrescriba la selección actual
           await fetchOrderGuests(activeOrderId);
+          // Si el host definió la división (individual_amount), redirigir a no-host a su pantalla individual
+          if (payload?.new?.individual_amount != null) {
+            const path = window.location.pathname;
+            const preSplitPaths = path === '/order-summary' || path === '/progress' || path.startsWith('/menu');
+            if (!preSplitPaths) return;
+            const currentId = getActiveGuestId();
+            if (!currentId || !activeOrderId) return;
+            const { data: rows } = await supabase.from('order_guests').select('id, individual_amount, is_host').eq('order_id', activeOrderId);
+            const my = rows?.find((r: any) => r.id === currentId);
+            if (!my || my.individual_amount == null || my.is_host === true) return;
+            navigate(`/individual-share?orderId=${activeOrderId}&guestId=${currentId}`);
+          }
         }
       )
       .subscribe();
@@ -783,7 +795,18 @@ const App: React.FC = () => {
         supabase.removeChannel(guestsChannelRef.current);
       }
     };
-  }, [activeOrderId, fetchOrderGuests]);
+  }, [activeOrderId, fetchOrderGuests, navigate]);
+
+  // Si la división ya está hecha y el comensal (no host) está en una pantalla previa, redirigir a su pantalla individual
+  useEffect(() => {
+    const path = location.pathname;
+    if (path !== '/order-summary' && path !== '/progress' && !path.startsWith('/menu')) return;
+    const cid = getActiveGuestId() || activeGuestId;
+    if (!cid || !activeOrderId) return;
+    const g = guests.find(x => x.id === cid);
+    if (!g || g.individualAmount == null || g.isHost) return;
+    navigate(`/individual-share?orderId=${activeOrderId}&guestId=${cid}`);
+  }, [location.pathname, guests, activeOrderId, activeGuestId, navigate]);
 
   // Función para guardar montos individuales en order_guests
   // Esta función se llama CADA VEZ que se hace click en "Confirmar División"
