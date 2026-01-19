@@ -63,11 +63,12 @@ interface OrderSummaryViewProps {
 const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({ 
   guests, cart, batches, onBack, onSend, onPay, isSending = false, onUpdateQuantity, menuItems, currentGuestId
 }) => {
-  // Verificar si hay un host en la lista de guests (el usuario es host si existe un guest con isHost=true)
-  const isHost = useMemo(() => {
-    // Verificar si existe algún guest con isHost=true en la lista
-    return guests.some(g => g.isHost === true);
-  }, [guests]);
+  const isCurrentUserHost = useMemo(() => 
+    !!(currentGuestId && guests.find(g => g.id === currentGuestId)?.isHost), 
+    [guests, currentGuestId]
+  );
+  const hostGuest = useMemo(() => guests.find(g => g.isHost === true), [guests]);
+  const hostDisplayName = (hostGuest?.name || 'el anfitrión').replace(/\s*\(Tú\)\s*$/i, '').trim() || 'el anfitrión';
   const [currentTime, setCurrentTime] = useState(new Date()); // Para actualizar el tiempo cada minuto
   const [viewMode, setViewMode] = useState<'batches' | 'guests'>('batches'); // 'batches' = pedidos realizados, 'guests' = pedidos de comensales
 
@@ -417,7 +418,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
         </div>
         
         <div className="flex flex-col gap-3">
-          {createdBatch && isHost && pendingItems.length > 0 && pendingTotal > 0 && (
+          {createdBatch && isCurrentUserHost && pendingItems.length > 0 && pendingTotal > 0 && (
             <button onClick={onSend} disabled={isSending} className="w-full h-16 bg-primary text-background-dark rounded-2xl flex items-center justify-between px-8 shadow-xl shadow-primary/20 font-black active:scale-[0.98] transition-all">
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined font-black">{isSending ? 'sync' : 'send'}</span>
@@ -427,12 +428,16 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
             </button>
           )}
 
-          {confirmedItems.length > 0 && (
+          {confirmedItems.length > 0 && (isCurrentUserHost ? (
             <button onClick={onPay} className={`w-full h-14 rounded-2xl font-black flex items-center justify-center gap-2 transition-all ${pendingItems.length > 0 ? 'bg-white/5 text-white/60 border border-white/10' : 'bg-primary text-background-dark shadow-xl shadow-primary/20 active:scale-[0.98]'}`}>
               <span className="material-symbols-outlined font-black">payments</span>
-              <span>Pagar Cuenta</span>
+              <span>Dividir y pagar cuenta</span>
             </button>
-          )}
+          ) : (
+            <p className="w-full py-3 px-4 text-center text-sm text-white/70">
+              Pedile a <span className="font-bold text-white">{hostDisplayName}</span> que avance con el proceso de pago de la cuenta.
+            </p>
+          ))}
         </div>
       </div>
     </div>

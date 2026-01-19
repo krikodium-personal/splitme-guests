@@ -2217,7 +2217,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             categories={categories} 
             tableNumber={currentTable?.table_number} 
             waiter={currentWaiter}
-            currentGuestId={guestIdParam || activeGuestId}
+            currentGuestId={guestIdParam || getActiveGuestId() || activeGuestId}
           />
         } />
         <Route path="/progress" element={
