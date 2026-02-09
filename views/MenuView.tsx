@@ -487,7 +487,7 @@ const MenuView: React.FC<MenuViewProps> = ({
 
   const handleAddGuest = () => {
     if (!newGuestName.trim()) return;
-    if (guests.length + pendingNewGuests.length >= tableCapacity) {
+    if (guests.length >= tableCapacity) {
       alert(`La mesa tiene una capacidad máxima de ${tableCapacity} personas.`);
       return;
     }
