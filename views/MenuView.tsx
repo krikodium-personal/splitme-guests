@@ -824,10 +824,9 @@ const MenuView: React.FC<MenuViewProps> = ({
                       ) : (
                         <button 
                           onClick={(e) => handleIncrement(e, item)}
-                          className="px-4 py-2 rounded-xl bg-black/40 border border-white/20 hover:bg-black/60 active:scale-95 transition-all flex items-center gap-1.5"
+                          className="w-[42px] h-[41px] rounded-xl bg-black/40 border border-white/20 hover:bg-black/60 active:scale-95 transition-all flex items-center justify-center shrink-0"
                         >
                           <span className="material-symbols-outlined font-black text-base text-white">add</span>
-                          <span className="text-sm font-bold text-white">Add</span>
                         </button>
                       )}
                     </div>
