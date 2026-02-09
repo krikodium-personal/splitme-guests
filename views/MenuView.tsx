@@ -193,6 +193,7 @@ const MenuView: React.FC<MenuViewProps> = ({
   const [pendingNewGuests, setPendingNewGuests] = useState<Guest[]>([]);
   const [addingItems, setAddingItems] = useState<Set<string>>(new Set()); // Track items being added
   const [showQrModal, setShowQrModal] = useState(false);
+  const [showImageModal, setShowImageModal] = useState(false);
 
   const tableCapacity = table?.capacity || 10;
 
@@ -313,6 +314,7 @@ const MenuView: React.FC<MenuViewProps> = ({
 
   const handleClosePdp = () => {
     setShowDetail(null);
+    setShowImageModal(false);
     if (editingCartItem) onCancelEdit();
   };
 
@@ -882,7 +884,37 @@ const MenuView: React.FC<MenuViewProps> = ({
               </button>
             </div>
             <div className="overflow-y-auto flex-1 no-scrollbar">
-              <div className="h-64 w-full bg-center bg-cover" style={{ backgroundImage: `url('${showDetail.image_url}')` }}></div>
+              <div 
+                className="h-64 w-full relative flex items-center justify-center bg-white cursor-pointer overflow-hidden"
+                onClick={(e) => { e.stopPropagation(); setShowImageModal(true); }}
+              >
+                <img 
+                  src={showDetail.image_url} 
+                  alt={showDetail.name}
+                  className="h-full w-auto max-w-full object-contain object-center"
+                />
+                <div className="absolute bottom-3 right-3 size-9 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center border border-white/20 pointer-events-none">
+                  <span className="material-symbols-outlined text-white text-xl">zoom_in</span>
+                </div>
+              </div>
+
+              {showImageModal && (
+                <div className="fixed inset-0 z-[110] flex items-center justify-center animate-fade-in" onClick={() => setShowImageModal(false)}>
+                  <div className="absolute inset-0 bg-black/95" />
+                  <img 
+                    src={showDetail.image_url} 
+                    alt={showDetail.name}
+                    className="relative z-10 max-h-[90vh] max-w-[90vw] w-auto h-auto object-contain"
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setShowImageModal(false); }}
+                    className="absolute top-4 right-4 z-20 size-12 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 flex items-center justify-center text-white hover:bg-white/20 active:scale-95 transition-all"
+                  >
+                    <span className="material-symbols-outlined text-2xl">close</span>
+                  </button>
+                </div>
+              )}
               <div className="p-8">
                 <div className="flex justify-between items-start mb-4">
                   <div className="flex items-center gap-3 pr-4">
