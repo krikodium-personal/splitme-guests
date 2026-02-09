@@ -14,6 +14,7 @@ import TransferPaymentView from './views/TransferPaymentView';
 import CashPaymentView from './views/CashPaymentView';
 import CheckoutView from './views/CheckoutView';
 import ConfirmationView from './views/ConfirmationView';
+import JoinTableView from './views/JoinTableView';
 import { getSession, setSession, getOrderId, setOrderId, removeOrderId, clearSession, getActiveGuestId, setActiveGuestIdCookie } from './lib/sessionCookies';
 
 const READY_SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3';
@@ -993,8 +994,56 @@ const App: React.FC = () => {
     }
   }, [supabase, activeOrderId]);
 
+  // Agregar un comensal a la mesa (para JoinTableView - escanear QR)
+  const handleAddGuestForJoin = useCallback(async (name: string): Promise<string | null> => {
+    if (!supabase || !activeOrderId) return null;
+    const tableCapacity = currentTable?.capacity || 10;
+    if (guests.length >= tableCapacity) return null;
+    try {
+      const { data: existingGuests } = await supabase
+        .from('order_guests')
+        .select('position')
+        .eq('order_id', activeOrderId)
+        .order('position', { ascending: false })
+        .limit(1);
+      const lastPosition = existingGuests?.[0]?.position ?? 0;
+      const { data: saved, error } = await supabase
+        .from('order_guests')
+        .insert({
+          order_id: activeOrderId,
+          name: name.trim() || name,
+          is_host: false,
+          position: lastPosition + 1,
+          paid: false,
+        })
+        .select('id')
+        .single();
+      if (error) throw error;
+      const newId = saved?.id;
+      if (newId) {
+        setGuests(prev => [...prev, {
+          id: newId,
+          name: name.trim() || name,
+          isHost: false,
+          individualAmount: null,
+          paid: false,
+          payment_id: null,
+          payment_method: null,
+        }]);
+        const { count } = await supabase.from('order_guests').select('*', { count: 'exact', head: true }).eq('order_id', activeOrderId);
+        if (count != null) {
+          await supabase.from('orders').update({ guest_count: count }).eq('id', activeOrderId);
+        }
+      }
+      return newId ?? null;
+    } catch (e) {
+      console.error('[App] Error adding guest:', e);
+      return null;
+    }
+  }, [supabase, activeOrderId, currentTable, guests.length]);
+
   useEffect(() => {
-const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/checkout', '/individual-share', '/transfer-payment', '/cash-payment', '/confirmation', '/guest-selection'];
+const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/checkout', '/individual-share', '/transfer-payment', '/cash-payment', '/confirmation', '/guest-selection', '/join-table'];
     
     const initApp = async () => {
       // ?clear=1: limpia cookies de sesión/mesa y muestra la pantalla de scan
@@ -1045,10 +1094,12 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
           }
 
           const restaurantId = orderData.tables.restaurant_id;
+          const tableId = orderData.table_id || orderData.tables?.id;
 
-          // Cargar restaurante, categories, menuItems, guests, items y batches en paralelo
-          const [restaurantRes, categoriesRes, menuItemsRes, guestsRes] = await Promise.all([
+          // Cargar restaurante, mesa (con capacity), categories, menuItems, guests en paralelo
+          const [restaurantRes, tableRes, categoriesRes, menuItemsRes, guestsRes] = await Promise.all([
             supabase.from('restaurants').select('*').eq('id', restaurantId).maybeSingle(),
+            tableId ? supabase.from('tables').select('*').eq('id', tableId).maybeSingle() : Promise.resolve({ data: orderData.tables, error: null }),
             supabase.from('categories').select('*').eq('restaurant_id', restaurantId).order('sort_order'),
             supabase.from('menu_items').select('*').eq('restaurant_id', restaurantId).order('sort_order'),
             supabase.from('order_guests').select('*').eq('order_id', orderIdForLoad).order('position', { ascending: true })
@@ -1059,6 +1110,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
           }
 
           setRestaurant(restaurantRes.data);
+          setCurrentTable(tableRes?.data || orderData.tables || null);
           setCategories(categoriesRes.data || []);
           setMenuItems(menuItemsRes.data || []);
           setActiveOrderId(orderIdForLoad);
@@ -1098,7 +1150,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
               if (preferredId && guestsFromDB.some(g => g.id === preferredId)) {
                 navigate('/individual-share' + (preserveQuery || `?orderId=${orderIdForLoad}&guestId=${preferredId}`));
               } else {
-                navigate('/guest-selection' + (preserveQuery || `?orderId=${orderIdForLoad}`));
+                navigate('/join-table' + (preserveQuery || `?orderId=${orderIdForLoad}`));
               }
             }
           }
@@ -2377,6 +2429,19 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
               navigate(`/individual-share?orderId=${activeOrderId || ''}&guestId=${guestId}`);
             }} 
             restaurant={restaurant} 
+          />
+        } />
+        <Route path="/join-table" element={
+          <JoinTableView
+            guests={guests}
+            activeOrderId={activeOrderId}
+            table={currentTable}
+            restaurant={restaurant}
+            onSelectGuest={(guestId) => {
+              setActiveGuestId(guestId);
+              setActiveGuestIdCookie(guestId);
+            }}
+            onAddGuest={handleAddGuestForJoin}
           />
         } />
         <Route path="/checkout" element={

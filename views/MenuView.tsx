@@ -192,6 +192,7 @@ const MenuView: React.FC<MenuViewProps> = ({
   const [originalGuests, setOriginalGuests] = useState<Guest[]>([]);
   const [pendingNewGuests, setPendingNewGuests] = useState<Guest[]>([]);
   const [addingItems, setAddingItems] = useState<Set<string>>(new Set()); // Track items being added
+  const [showQrModal, setShowQrModal] = useState(false);
 
   const tableCapacity = table?.capacity || 10;
 
@@ -1025,6 +1026,20 @@ const MenuView: React.FC<MenuViewProps> = ({
               {!pendingGuestSelection && <span className="text-[10px] font-black text-primary uppercase bg-primary/10 px-3 py-1 rounded-full">Capacidad {guests.length}/{tableCapacity}</span>}
             </div>
             {pendingGuestSelection && <p className="text-text-secondary text-sm mb-4">Tocá tu nombre para continuar.</p>}
+            {!pendingGuestSelection && activeOrderId && (
+              <div className="mb-6">
+                <p className="text-text-secondary text-sm mb-3">
+                  Podés invitar a otros a esta mesa compartiendo el código QR.
+                </p>
+                <button
+                  onClick={() => setShowQrModal(true)}
+                  className="w-full flex items-center justify-center gap-3 p-4 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 hover:border-primary/30 transition-all"
+                >
+                  <span className="material-symbols-outlined text-2xl text-primary">qr_code_2</span>
+                  <span className="font-bold text-white">Compartir enlace de mesa</span>
+                </button>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-2 sm:gap-3 mb-6">
               {guests.map(g => (
                 <div 
@@ -1091,6 +1106,33 @@ const MenuView: React.FC<MenuViewProps> = ({
                 Cerrar
               </button>
             ))}
+          </div>
+        </div>
+      )}
+
+      {showQrModal && activeOrderId && (
+        <div className="fixed inset-0 z-[120] flex flex-col items-center justify-center animate-fade-in">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowQrModal(false)} />
+          <div className="relative z-10 bg-surface-dark rounded-3xl p-8 mx-4 max-w-sm w-full border border-white/10 shadow-2xl flex flex-col items-center">
+            <h3 className="text-xl font-black text-white mb-2">Escanear para unirse</h3>
+            <p className="text-text-secondary text-sm text-center mb-6">
+              Los comensales pueden escanear este QR para seleccionar sus platos
+            </p>
+            <div className="bg-white p-4 rounded-2xl mb-6">
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(
+                  `${window.location.origin}/join-table?orderId=${activeOrderId}`
+                )}`}
+                alt="QR para unirse a la mesa"
+                className="size-[220px]"
+              />
+            </div>
+            <button
+              onClick={() => setShowQrModal(false)}
+              className="w-full py-3 rounded-xl bg-white/10 text-white font-bold border border-white/10"
+            >
+              Cerrar
+            </button>
           </div>
         </div>
       )}
