@@ -433,14 +433,12 @@ const MenuView: React.FC<MenuViewProps> = ({
       const guest = guests.find(g => g.id === guestId);
       const guestName = guest?.name || 'Comensal';
       const textWithUrl = `¡Hola ${guestName}! Puedes seleccionar tus platos aquí: ${menuUrl}`;
-      const textOnly = `¡Hola ${guestName}! Puedes seleccionar tus platos aquí:`;
       
       if (navigator.share) {
         try {
           await navigator.share({
             title: 'SplitMe - Seleccionar platos',
-            text: textOnly,
-            url: menuUrl,
+            text: textWithUrl,
           });
         } catch (err: any) {
           if (err.name !== 'AbortError') {
