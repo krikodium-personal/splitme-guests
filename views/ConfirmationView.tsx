@@ -116,7 +116,10 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
   
   // Verificar si el usuario actual pagó (solo si tiene monto > 0)
   const currentUserPaid = useMemo(() => {
-    const currentUser = dinerShares.find(g => g.isHost || g.id === currentGuestId);
+    // El usuario actual es el que tiene currentGuestId, o el host si no hay currentGuestId
+    const currentUser = currentGuestId 
+      ? dinerShares.find(g => g.id === currentGuestId)
+      : dinerShares.find(g => g.isHost);
     return currentUser?.paid === true;
   }, [dinerShares, currentGuestId]);
 
@@ -227,7 +230,10 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
           </div>
         ) : (
           dinerShares.map((guest) => {
-            const isMe = guest.isHost || guest.id === currentGuestId;
+            // Determinar si este comensal es el usuario actual (el que está viendo la página)
+            // Si hay currentGuestId, solo ese comensal es "Tú"
+            // Si no hay currentGuestId, el host es "Tú" (comportamiento por defecto)
+            const isMe = currentGuestId ? guest.id === currentGuestId : guest.isHost;
             const isPaid = guest.paid === true;
             const amount = guest.individualAmount || 0;
             return (
@@ -273,7 +279,7 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
         ) : (
           <button onClick={onRestart} className="w-full bg-primary hover:bg-green-400 text-background-dark font-bold text-lg h-14 rounded-xl flex items-center justify-between px-6 shadow-lg shadow-primary/20 group">
             <span>Pagar mi parte</span>
-            <div className="flex items-center gap-2"><span>$${formatPrice(dinerShares.find(g => g.isHost || g.id === currentGuestId)?.individualAmount || 0)}</span><span className="material-symbols-outlined group-hover:translate-x-1 transition-transform">arrow_forward</span></div>
+            <div className="flex items-center gap-2"><span>$${formatPrice((currentGuestId ? dinerShares.find(g => g.id === currentGuestId) : dinerShares.find(g => g.isHost))?.individualAmount || 0)}</span><span className="material-symbols-outlined group-hover:translate-x-1 transition-transform">arrow_forward</span></div>
           </button>
         )}
       </div>
