@@ -239,8 +239,9 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
             return (
               <div key={guest.id} className={`flex items-center p-3 rounded-2xl bg-white dark:bg-surface-dark border border-slate-200 dark:border-border-dark shadow-sm transition-opacity ${isPaid ? 'opacity-60' : ''}`}>
                 <div className="relative">
-                  <div className={`size-12 rounded-full flex items-center justify-center border-2 shadow-inner ${isMe ? 'border-primary' : 'border-transparent'} ${getGuestColor(guest.id)}`}><span className="text-sm font-black text-white">{getInitials(guest.name)}</span></div>
-                  {isMe && <div className="absolute -bottom-1 -right-1 bg-primary text-[10px] text-black font-bold px-1.5 py-0.5 rounded-full border-2 border-surface-dark uppercase">TÚ</div>}
+                  <div className={`rounded-full flex items-center justify-center ${isMe ? 'p-[2px] border-2 border-primary' : ''}`}>
+                    <div className={`size-12 rounded-full flex items-center justify-center shadow-inner ${getGuestColor(guest.id)}`}><span className="text-sm font-black text-white">{getInitials(guest.name)}</span></div>
+                  </div>
                   {isPaid && <div className="absolute -bottom-1 -right-1 bg-green-500 text-white rounded-full p-0.5 border-2 border-surface-dark flex items-center justify-center"><span className="material-symbols-outlined text-[10px] font-bold">check</span></div>}
                 </div>
                 <div className="ml-3 flex-1"><p className="text-slate-900 dark:text-white font-bold">{isMe ? 'Tú' : guest.name.split(' ')[0]}</p><p className={`${isPaid ? 'text-green-600 dark:text-green-400' : isMe ? 'text-primary' : 'text-slate-500 dark:text-slate-400'} text-sm font-medium`}>{isPaid ? `Pagado $${formatPrice(amount)}` : `Debe $${formatPrice(amount)}`}</p></div>
