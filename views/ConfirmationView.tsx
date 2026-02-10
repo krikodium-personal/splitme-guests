@@ -221,7 +221,7 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
         </div>
       )}
 
-      <div className="flex items-center justify-between px-4 pb-2 pt-4"><h3 className="text-slate-900 dark:text-white text-lg font-bold leading-tight">Estado de los Invitados</h3></div>
+      <div className="flex items-center justify-between px-4 pb-2 pt-4"><h3 className="text-slate-900 dark:text-white text-lg font-bold leading-tight">Pagos de la división de la cuenta</h3></div>
 
       <div className="flex flex-col gap-3 px-4 pb-4 overflow-y-auto no-scrollbar">
         {isLoading ? (
