@@ -3,6 +3,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { OrderItem, OrderBatch, MenuItem } from '../types';
 import { formatPrice } from './MenuView';
+import { getGroupKeyForCategoryId, ORDER_GROUP_LABELS } from '../lib/orderGroups';
 
 // Función helper para calcular tiempo transcurrido desde created_at
 const getTimeAgo = (createdAt: string | undefined): string => {
@@ -45,17 +46,18 @@ const getServiceTime = (createdAt: string | undefined, servedAt: string | undefi
 
 interface OrderProgressViewProps {
   cart: OrderItem[];
-  batches: OrderBatch[]; // Recibidos como prop inicial
+  batches: OrderBatch[];
   activeOrderId?: string | null;
   onNext: () => void;
   onBack: () => void;
   onRedirectToFeedback?: () => void;
   tableNumber?: number;
   menuItems: MenuItem[];
+  categories?: { id: string; name: string; parent_id?: string | null }[];
 }
 
 const OrderProgressView: React.FC<OrderProgressViewProps> = ({ 
-  cart, batches: initialBatches, activeOrderId, onNext, onBack, onRedirectToFeedback, tableNumber, menuItems 
+  cart, batches: initialBatches, activeOrderId, onNext, onBack, onRedirectToFeedback, tableNumber, menuItems, categories = []
 }) => {
   const [localBatches, setLocalBatches] = useState<OrderBatch[]>(initialBatches);
   const [orderStatus, setOrderStatus] = useState<string>('ABIERTO');
@@ -233,31 +235,39 @@ const OrderProgressView: React.FC<OrderProgressViewProps> = ({
               const status = getStatusConfig(batch.status);
               const items = groupedItems[batch.id] || [];
                 const isReady = batchStatus === 'LISTO';
+                const firstItem = items[0];
+                const firstMenuItem = firstItem ? menuItems.find(m => m.id === firstItem.itemId) : null;
+                const groupKey = firstMenuItem && categories.length > 0 ? getGroupKeyForCategoryId(firstMenuItem.category_id, categories) : null;
+                const groupLabel = groupKey ? ORDER_GROUP_LABELS[groupKey] : null;
               
               return (
                 <div key={batch.id} className="animate-fade-in-up" style={{ animationDelay: `${index * 0.1}s` }}>
                   <div className="mb-4 px-2">
                     <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-3">
-                      <div className={`size-8 rounded-lg ${status.bg} flex items-center justify-center`}>
-                        <span className={`material-symbols-outlined text-sm ${status.color}`}>{status.icon}</span>
+                      <div className="flex items-center gap-3">
+                        <div className={`size-8 rounded-lg ${status.bg} flex items-center justify-center`}>
+                          <span className={`material-symbols-outlined text-sm ${status.color}`}>{status.icon}</span>
+                        </div>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/60">Envío #{batch.batch_number}</span>
+                          <p className="text-[9px] text-white/40 font-medium">
+                            {batchStatus === 'SERVIDO'
+                              ? getServiceTime(batch.created_at, batch.served_at)
+                              : getTimeAgo(batch.created_at)}
+                          </p>
+                        </div>
                       </div>
-                      <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/60">Envío #{batch.batch_number}</span>
+                      <span className={`text-[10px] font-black uppercase px-2 py-1 rounded-md border ${status.color} ${status.bg} border-current`}>
+                        {status.label}
+                      </span>
                     </div>
-                    <span className={`text-[10px] font-black uppercase px-2 py-1 rounded-md border ${status.color} ${status.bg} border-current`}>
-                      {status.label}
-                    </span>
-                    </div>
-                    <p className="text-[9px] text-white/40 font-medium ml-11">
-                      {(() => {
-                        if (batchStatus === 'SERVIDO') {
-                          console.log("[OrderProgressView] Batch SERVIDO #", batch.batch_number, "created_at:", batch.created_at, "served_at:", batch.served_at);
-                          return getServiceTime(batch.created_at, batch.served_at);
-                        }
-                        return getTimeAgo(batch.created_at);
-                      })()}
-                    </p>
                   </div>
+
+                  {groupLabel && (
+                    <h3 className="text-xs font-black text-white/70 uppercase tracking-widest mb-3 px-2">
+                      {groupLabel}
+                    </h3>
+                  )}
 
                   {isReady && (
                     <div className="mb-4 bg-primary text-background-dark p-3 rounded-2xl flex items-center gap-3 animate-pulse shadow-lg shadow-primary/20">

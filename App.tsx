@@ -60,7 +60,7 @@ const App: React.FC = () => {
 
   const [currentView, setCurrentView] = useState<AppView>('INIT');
   const [loading, setLoading] = useState(true);
-  const [isSendingOrder, setIsSendingOrder] = useState(false);
+  const [sendingGroup, setSendingGroup] = useState<OrderGroupKey | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [restaurant, setRestaurant] = useState<any>(null);
@@ -103,8 +103,8 @@ const App: React.FC = () => {
     if (!supabase) return;
     
     const [itemsRes, batchesRes] = await Promise.all([
-      supabase.from('order_items').select('*, menu_items(name)').eq('order_id', activeOrderId),
-      supabase.from('order_batches').select('*').eq('order_id', activeOrderId).order('batch_number', { ascending: true })
+      supabase.from('order_items').select('*, menu_items(name)').eq('order_id', orderId),
+      supabase.from('order_batches').select('*').eq('order_id', orderId).order('batch_number', { ascending: true })
     ]);
 
     if (itemsRes.data) {
@@ -1818,7 +1818,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
 
     if (pendingItems.length === 0) return;
 
-    setIsSendingOrder(true);
+    setSendingGroup(groupKey);
     try {
       const { data: existingOrder } = await supabase.from('orders').select('total_amount').eq('id', activeOrderId).single();
       const currentTotal = Number(existingOrder?.total_amount || 0);
@@ -1876,7 +1876,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
     } catch (err: any) {
       alert(`Error al enviar pedido: ${err.message}`);
     } finally {
-      setIsSendingOrder(false);
+      setSendingGroup(null);
     }
   };
 
@@ -2170,7 +2170,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             }} 
             onSendGroup={handleSendGroup} 
             onPay={() => navigateToView('SPLIT_BILL')} 
-            isSending={isSendingOrder} 
+            sendingGroup={sendingGroup} 
             onUpdateQuantity={(id, d) => handleUpdateCartItem(id, { quantity: Math.max(0, (cart.find(it => it.id === id)?.quantity || 1) + d) })} 
             menuItems={menuItems} 
             categories={categories} 
@@ -2189,7 +2189,8 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             onBack={() => navigateToView('MENU')} 
             onRedirectToFeedback={() => navigateToView('CONFIRMATION')} 
             tableNumber={currentTable?.table_number} 
-            menuItems={menuItems} 
+            menuItems={menuItems}
+            categories={categories}
           />
         } />
         <Route path="/split-bill" element={

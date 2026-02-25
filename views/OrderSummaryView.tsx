@@ -53,7 +53,7 @@ interface OrderSummaryViewProps {
   onEditItem: (cartItem: OrderItem) => void;
   onSendGroup: (groupKey: OrderGroupKey) => void;
   onPay?: () => void;
-  isSending?: boolean;
+  sendingGroup?: OrderGroupKey | null;
   onUpdateQuantity: (id: string, delta: number) => void;
   menuItems: MenuItem[];
   categories: any[];
@@ -64,7 +64,7 @@ interface OrderSummaryViewProps {
 }
 
 const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({ 
-  guests, cart, batches, onBack, onSendGroup, onPay, isSending = false, onUpdateQuantity, menuItems, categories, currentGuestId, waiter, tableNumber, activeOrderId
+  guests, cart, batches, onBack, onSendGroup, onPay, sendingGroup = null, onUpdateQuantity, menuItems, categories, currentGuestId, waiter, tableNumber, activeOrderId
 }) => {
   const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
 
@@ -183,7 +183,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
   return (
     <div className="bg-background-dark text-white font-display h-screen flex flex-col">
       <div className="flex items-center p-4 border-b border-white/5 sticky top-0 bg-background-dark/95 backdrop-blur-md z-10">
-        <button onClick={onBack} disabled={isSending} className="size-10 flex items-center justify-center rounded-full hover:bg-white/5">
+        <button onClick={onBack} disabled={!!sendingGroup} className="size-10 flex items-center justify-center rounded-full hover:bg-white/5">
           <span className="material-symbols-outlined">arrow_back</span>
         </button>
         <h2 className="flex-1 text-center font-bold">Resumen de Mesa</h2>
@@ -234,11 +234,11 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                       {isCurrentUserHost && (
                         <button
                           onClick={() => onSendGroup(groupKey)}
-                          disabled={isSending}
+                          disabled={!!sendingGroup}
                           className="h-10 px-5 bg-primary text-background-dark rounded-xl font-black text-xs flex items-center gap-2 shadow-lg active:scale-[0.98] transition-all"
                         >
-                          <span className="material-symbols-outlined text-base">{isSending ? 'sync' : 'send'}</span>
-                          {isSending ? 'Enviando...' : 'Pedir ahora'}
+                          <span className={`material-symbols-outlined text-base ${sendingGroup === groupKey ? 'animate-spin' : ''}`}>{sendingGroup === groupKey ? 'sync' : 'send'}</span>
+                          {sendingGroup === groupKey ? 'Enviando...' : 'Pedir ahora'}
                         </button>
                       )}
                     </div>
