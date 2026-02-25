@@ -1244,7 +1244,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
               supabase.from('restaurants').select('*').eq('id', restaurantId).maybeSingle(),
               supabase.from('categories').select('*').eq('restaurant_id', restaurantId).order('sort_order'),
               supabase.from('menu_items').select('*').eq('restaurant_id', restaurantId).order('sort_order'),
-              supabase.from('order_guests').select('*').eq('order_id', activeOrderId).order('position', { ascending: true }),
+              supabase.from('order_guests').select('*').eq('order_id', orderId).order('position', { ascending: true }),
               supabase.from('tables').select('*').eq('id', orderData.table_id).maybeSingle()
             ]);
 
