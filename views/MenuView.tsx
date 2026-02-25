@@ -3,6 +3,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Guest, MenuItem, OrderItem } from '../types';
 import { getInitials, getGuestColor } from './GuestInfoView';
+import WaiterRequestModal from './WaiterRequestModal';
 
 interface MenuViewProps {
   guests: Guest[];
@@ -22,6 +23,7 @@ interface MenuViewProps {
   categories: any[];
   table?: any;
   restaurant?: any;
+  waiter?: any;
   onSaveGuestChanges?: (updatedGuests: Guest[], newGuests: Guest[]) => Promise<boolean>;
   activeOrderId?: string | null;
   /** ID del comensal con el que esta sesión se identifica (cookie). Si se agrega a otro, se muestra alerta. */
@@ -150,7 +152,7 @@ const MenuView: React.FC<MenuViewProps> = ({
   guests, setGuests, cart, onAddToCart, onUpdateCartItem, onNext, 
   selectedGuestId, onSelectGuest, initialCategory, onCategoryChange, 
   editingCartItem, onCancelEdit, menuItems, categories: supabaseCategories,
-  table, restaurant, onSaveGuestChanges, activeOrderId, identifiedGuestId, pendingGuestSelection, onGuestIdentified
+  table, restaurant, waiter, onSaveGuestChanges, activeOrderId, identifiedGuestId, pendingGuestSelection, onGuestIdentified
 }) => {
   const { category: categorySlug, subcategory: subcategorySlug } = useParams<{ category?: string; subcategory?: string }>();
   const navigate = useNavigate();
@@ -162,6 +164,13 @@ const MenuView: React.FC<MenuViewProps> = ({
   const [selectedIngredientsToRemove, setSelectedIngredientsToRemove] = useState<string[]>([]);
   const [newGuestName, setNewGuestName] = useState('');
   const [selectedSubcategory, setSelectedSubcategory] = useState<string | null>(null);
+  const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
+
+  // Debug: Log waiter data
+  useEffect(() => {
+    console.log('[MenuView] Waiter data:', waiter);
+    console.log('[MenuView] Will show button?', !!waiter);
+  }, [waiter]);
   
   // Sincronizar categoría desde la URL solo cuando cambia la URL (no al hacer click en categoría)
   // Dependemos solo de categorySlug para no re-ejecutar cuando el usuario cambia por estado.
@@ -1167,6 +1176,31 @@ const MenuView: React.FC<MenuViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Botón flotante para solicitar al mesero - arriba del footer, separado */}
+      {waiter ? (
+        <button
+          onClick={() => setIsWaiterModalOpen(true)}
+          className="fixed bottom-28 right-4 z-[70] size-14 bg-primary hover:bg-green-400 text-background-dark rounded-full shadow-lg shadow-primary/30 flex items-center justify-center transition-all active:scale-95"
+          title="Solicitar al mesero"
+        >
+          <span className="material-symbols-outlined text-2xl">notifications</span>
+        </button>
+      ) : (
+        // Debug: Botón temporal para verificar que el componente se renderiza
+        <div className="fixed bottom-28 right-4 z-[70] size-14 bg-red-500 rounded-full flex items-center justify-center text-white text-xs" title="DEBUG: No hay waiter">
+          ?
+        </div>
+      )}
+
+      {/* Modal de solicitud al mesero */}
+      <WaiterRequestModal
+        isOpen={isWaiterModalOpen}
+        onClose={() => setIsWaiterModalOpen(false)}
+        waiter={waiter}
+        tableNumber={table?.table_number}
+        orderId={activeOrderId}
+      />
     </div>
   );
 };

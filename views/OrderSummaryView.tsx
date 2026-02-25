@@ -2,6 +2,8 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { Guest, OrderItem, MenuItem, OrderBatch } from '../types';
 import { formatPrice } from './MenuView';
 import { getInitials, getGuestColor } from './GuestInfoView';
+import WaiterRequestModal from './WaiterRequestModal';
+import { getGroupKeyForCategoryId, ORDER_GROUP_LABELS, type OrderGroupKey } from '../lib/orderGroups';
 
 // Función helper para calcular tiempo transcurrido desde created_at
 const getTimeAgo = (createdAt: string | undefined): string => {
@@ -49,7 +51,7 @@ interface OrderSummaryViewProps {
   onBack: () => void;
   onNavigateToCategory: (guestId: string, category: string) => void;
   onEditItem: (cartItem: OrderItem) => void;
-  onSend: () => void;
+  onSendGroup: (groupKey: OrderGroupKey) => void;
   onPay?: () => void;
   isSending?: boolean;
   onUpdateQuantity: (id: string, delta: number) => void;
@@ -58,11 +60,20 @@ interface OrderSummaryViewProps {
   tableNumber?: number;
   waiter?: any;
   currentGuestId?: string | null;
+  activeOrderId?: string | null;
 }
 
 const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({ 
-  guests, cart, batches, onBack, onSend, onPay, isSending = false, onUpdateQuantity, menuItems, currentGuestId
+  guests, cart, batches, onBack, onSendGroup, onPay, isSending = false, onUpdateQuantity, menuItems, categories, currentGuestId, waiter, tableNumber, activeOrderId
 }) => {
+  const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
+
+  // Debug: Log waiter data
+  useEffect(() => {
+    console.log('[OrderSummaryView] Waiter data:', waiter);
+    console.log('[OrderSummaryView] Will show button?', !!waiter);
+  }, [waiter]);
+  
   const isCurrentUserHost = useMemo(() => 
     !!(currentGuestId && guests.find(g => g.id === currentGuestId)?.isHost), 
     [guests, currentGuestId]
@@ -80,20 +91,28 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
 
     return () => clearInterval(interval);
   }, []);
-  // Encontrar el batch con status='CREADO' (batch activo que aún no se ha enviado)
-  const createdBatch = batches.find(b => b.status === 'CREADO');
-  
-  // Filtrar items por status: 'elegido' = pendientes, 'pedido' = confirmados/enviados
-  // IMPORTANTE: Los items pendientes SOLO son los que pertenecen al batch con status='CREADO'
+  // Items pendientes: status elegido, batch_id null o batch CREADO (retrocompat)
   const pendingItems = cart.filter(i => {
     const isElegido = i.status === 'elegido' || (!i.status && !i.isConfirmed);
-    // Solo incluir si pertenece al batch con status='CREADO' (si existe)
-    if (createdBatch) {
-      return isElegido && i.batch_id === createdBatch.id;
-    }
-    // Si no hay batch con status='CREADO', no hay items pendientes
-    return false;
+    const isPending = !i.batch_id || batches.some(b => b.id === i.batch_id && b.status === 'CREADO');
+    return isElegido && isPending;
   });
+
+  // Agrupar pendientes por categoría (entradas/bebidas, principales/guarniciones, postres/cafetería)
+  const pendingByGroup = useMemo(() => {
+    const groups: Record<OrderGroupKey, OrderItem[]> = {
+      entradas_bebidas: [],
+      principales_guarniciones: [],
+      postres_cafeteria: [],
+    };
+    pendingItems.forEach(item => {
+      const menuItem = menuItems.find(m => m.id === item.itemId);
+      if (!menuItem) return;
+      const groupKey = getGroupKeyForCategoryId(menuItem.category_id, categories);
+      groups[groupKey].push(item);
+    });
+    return groups;
+  }, [pendingItems, menuItems, categories]);
   const confirmedItems = cart.filter(i => i.status === 'pedido' || (!i.status && i.isConfirmed));
 
   const grandTotal = cart.reduce((sum, item) => {
@@ -116,11 +135,6 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
       };
     }).filter(group => group.items.length > 0);
   }, [guests, cart, menuItems]);
-
-  const pendingTotal = pendingItems.reduce((sum, item) => {
-    const menuItem = menuItems.find(m => m.id === item.itemId);
-    return sum + (menuItem ? menuItem.price * item.quantity : 0);
-  }, 0);
 
   // Agrupación dinámica por Lote (Batch) usando el estado real de DB
   const confirmedByBatch = useMemo(() => {
@@ -205,40 +219,51 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
       <div className="flex-1 overflow-y-auto p-4 pb-64 no-scrollbar">
         {viewMode === 'batches' ? (
           <>
-        {/* SECCIÓN: PENDIENTES */}
+        {/* SECCIÓN: PENDIENTES - Agrupados por categoría con botón "Pedir ahora" por grupo */}
         {pendingItems.length > 0 && (
           <div className="mb-10">
             <h3 className="text-primary text-[10px] font-black uppercase tracking-[0.3em] mb-4 pl-2">Por Enviar a Cocina</h3>
-            <div className="space-y-4">
-              {guests.map(guest => {
-                const guestPending = pendingItems.filter(i => i.guestId === guest.id);
-                if (guestPending.length === 0) return null;
+            <div className="space-y-6">
+              {(['entradas_bebidas', 'principales_guarniciones', 'postres_cafeteria'] as OrderGroupKey[]).map(groupKey => {
+                const items = pendingByGroup[groupKey];
+                if (items.length === 0) return null;
                 return (
-                  <div key={guest.id} className="bg-surface-dark rounded-3xl p-4 border border-primary/20 shadow-lg">
-                    <div className="flex items-center gap-2 mb-3">
-                      <div className={`size-5 rounded-full ${getGuestColor(guest.id)} flex items-center justify-center`}>
-                        <span className="text-[7px] font-black text-white">{getInitials(guest.name)}</span>
-                      </div>
-                      <p className="text-xs font-black text-white/50 uppercase tracking-widest">{guest.name}</p>
+                  <div key={groupKey} className="bg-surface-dark rounded-3xl p-4 border border-primary/20 shadow-lg">
+                    <div className="flex items-center justify-between mb-4">
+                      <h4 className="text-xs font-black text-white/80 uppercase tracking-widest">{ORDER_GROUP_LABELS[groupKey]}</h4>
+                      {isCurrentUserHost && (
+                        <button
+                          onClick={() => onSendGroup(groupKey)}
+                          disabled={isSending}
+                          className="h-10 px-5 bg-primary text-background-dark rounded-xl font-black text-xs flex items-center gap-2 shadow-lg active:scale-[0.98] transition-all"
+                        >
+                          <span className="material-symbols-outlined text-base">{isSending ? 'sync' : 'send'}</span>
+                          {isSending ? 'Enviando...' : 'Pedir ahora'}
+                        </button>
+                      )}
                     </div>
                     <div className="space-y-3">
-                      {guestPending.map(item => {
+                      {items.map(item => {
                         const dish = menuItems.find(m => m.id === item.itemId);
+                        const guest = guests.find(g => g.id === item.guestId);
                         return (
                           <div key={item.id} className="flex flex-col gap-2">
                             <div className="flex items-center gap-4">
-                            <div className="size-12 rounded-xl bg-cover bg-center shrink-0 border border-white/5" style={{ backgroundImage: `url("${dish?.image_url}")` }}></div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-bold truncate">{dish?.name}</p>
-                              <p className="text-primary text-xs font-bold">${formatPrice(Number(dish?.price || 0))}</p>
+                              <div className={`size-5 rounded-full ${getGuestColor(item.guestId)} flex items-center justify-center shrink-0`}>
+                                <span className="text-[7px] font-black text-white">{getInitials(guest?.name || '?')}</span>
+                              </div>
+                              <div className="size-12 rounded-xl bg-cover bg-center shrink-0 border border-white/5" style={{ backgroundImage: `url("${dish?.image_url}")` }}></div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[10px] text-white/50 truncate">{guest?.name}</p>
+                                <p className="text-sm font-bold truncate">{dish?.name}</p>
+                                <p className="text-primary text-xs font-bold">${formatPrice(Number(dish?.price || 0))}</p>
+                              </div>
+                              <div className="flex items-center gap-3 bg-background-dark/50 rounded-full px-2 py-1 shrink-0 border border-white/5">
+                                <button onClick={() => onUpdateQuantity(item.id, -1)} className="size-6 rounded-full hover:bg-white/10 flex items-center justify-center"><span className="material-symbols-outlined text-xs">remove</span></button>
+                                <span className="text-xs font-black w-4 text-center">{item.quantity}</span>
+                                <button onClick={() => onUpdateQuantity(item.id, 1)} className="size-6 rounded-full bg-white/10 flex items-center justify-center"><span className="material-symbols-outlined text-xs">add</span></button>
+                              </div>
                             </div>
-                            <div className="flex items-center gap-3 bg-background-dark/50 rounded-full px-2 py-1 shrink-0 border border-white/5">
-                              <button onClick={() => onUpdateQuantity(item.id, -1)} className="size-6 rounded-full hover:bg-white/10 flex items-center justify-center"><span className="material-symbols-outlined text-xs">remove</span></button>
-                              <span className="text-xs font-black w-4 text-center">{item.quantity}</span>
-                              <button onClick={() => onUpdateQuantity(item.id, 1)} className="size-6 rounded-full bg-white/10 flex items-center justify-center"><span className="material-symbols-outlined text-xs">add</span></button>
-                            </div>
-                            </div>
-                            {/* Personalizaciones */}
                             {(item.extras?.length > 0 || item.removedIngredients?.length > 0) && (
                               <div className="flex flex-wrap items-center gap-1.5 ml-16">
                                 {item.extras?.filter(ex => ex && ex.trim()).map(ex => (
@@ -418,16 +443,6 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
         </div>
         
         <div className="flex flex-col gap-3">
-          {createdBatch && isCurrentUserHost && pendingItems.length > 0 && pendingTotal > 0 && (
-            <button onClick={onSend} disabled={isSending} className="w-full h-16 bg-primary text-background-dark rounded-2xl flex items-center justify-between px-8 shadow-xl shadow-primary/20 font-black active:scale-[0.98] transition-all">
-              <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined font-black">{isSending ? 'sync' : 'send'}</span>
-                <span>{isSending ? 'Enviando...' : 'Pedir ahora'}</span>
-              </div>
-              <span className="tabular-nums">${formatPrice(pendingTotal)}</span>
-            </button>
-          )}
-
           {confirmedItems.length > 0 && (isCurrentUserHost ? (
             <button onClick={onPay} className={`w-full h-14 rounded-2xl font-black flex items-center justify-center gap-2 transition-all ${pendingItems.length > 0 ? 'bg-white/5 text-white/60 border border-white/10' : 'bg-primary text-background-dark shadow-xl shadow-primary/20 active:scale-[0.98]'}`}>
               <span className="material-symbols-outlined font-black">payments</span>
@@ -440,6 +455,31 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
           ))}
         </div>
       </div>
+
+      {/* Botón flotante para solicitar al mesero - arriba del footer, separado */}
+      {waiter ? (
+        <button
+          onClick={() => setIsWaiterModalOpen(true)}
+          className="fixed bottom-28 right-4 z-[70] size-14 bg-primary hover:bg-green-400 text-background-dark rounded-full shadow-lg shadow-primary/30 flex items-center justify-center transition-all active:scale-95"
+          title="Solicitar al mesero"
+        >
+          <span className="material-symbols-outlined text-2xl">notifications</span>
+        </button>
+      ) : (
+        // Debug: Botón temporal para verificar que el componente se renderiza
+        <div className="fixed bottom-28 right-4 z-[70] size-14 bg-red-500 rounded-full flex items-center justify-center text-white text-xs" title="DEBUG: No hay waiter">
+          ?
+        </div>
+      )}
+
+      {/* Modal de solicitud al mesero */}
+      <WaiterRequestModal
+        isOpen={isWaiterModalOpen}
+        onClose={() => setIsWaiterModalOpen(false)}
+        waiter={waiter}
+        tableNumber={tableNumber}
+        orderId={activeOrderId}
+      />
     </div>
   );
 };

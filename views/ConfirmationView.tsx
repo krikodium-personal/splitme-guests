@@ -4,6 +4,7 @@ import { getInitials, getGuestColor } from './GuestInfoView';
 import { formatPrice } from './MenuView';
 import { supabase } from '../lib/supabase';
 import { clearSession } from '../lib/sessionCookies';
+import WaiterRequestModal from './WaiterRequestModal';
 
 interface ConfirmationViewProps {
   onRestart: () => void;
@@ -12,23 +13,60 @@ interface ConfirmationViewProps {
   tableNumber?: number;
   activeOrderId?: string | null;
   currentGuestId?: string | null;
+  waiter?: any;
 }
 
-const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackToStart, guests = [], tableNumber, activeOrderId, currentGuestId }) => {
+const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackToStart, guests = [], tableNumber, activeOrderId, currentGuestId, waiter }) => {
   const [loadedGuests, setLoadedGuests] = useState<Guest[]>(guests);
   const [isLoading, setIsLoading] = useState(false);
+  const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
 
-  // Cargar guests desde la base de datos si no se pasaron como prop y hay activeOrderId
+  // Debug: Log waiter data
   useEffect(() => {
-    const loadGuestsFromDB = async () => {
+    console.log('[ConfirmationView] Waiter data:', waiter);
+    console.log('[ConfirmationView] WaiterData state:', waiterData);
+    console.log('[ConfirmationView] Will show button?', !!waiterData);
+  }, [waiter, waiterData]);
+
+  const [waiterData, setWaiterData] = useState<any>(waiter);
+
+  // Cargar guests y waiter desde la base de datos si no se pasaron como prop y hay activeOrderId
+  useEffect(() => {
+    const loadDataFromDB = async () => {
       // Si ya hay guests pasados como prop, usarlos
       if (guests.length > 0) {
         setLoadedGuests(guests);
-        return;
+      }
+
+      // Si no hay waiter pero hay activeOrderId, intentar cargarlo desde la orden
+      if (!waiter && activeOrderId && supabase) {
+        try {
+          // Obtener table_id de la orden
+          const { data: orderData } = await supabase
+            .from('orders')
+            .select('table_id, tables!inner(waiter_id)')
+            .eq('id', activeOrderId)
+            .maybeSingle();
+
+          if (orderData?.tables?.waiter_id) {
+            const { data: waiterData } = await supabase
+              .from('waiters')
+              .select('*')
+              .eq('id', orderData.tables.waiter_id)
+              .maybeSingle();
+            
+            if (waiterData) {
+              setWaiterData(waiterData);
+              console.log('[ConfirmationView] Waiter cargado desde DB:', waiterData);
+            }
+          }
+        } catch (error) {
+          console.error('[ConfirmationView] Error al cargar waiter:', error);
+        }
       }
 
       // Si no hay guests pero hay activeOrderId, cargarlos desde la DB
-      if (activeOrderId && supabase) {
+      if (guests.length === 0 && activeOrderId && supabase) {
         setIsLoading(true);
         try {
           const { data: orderGuests, error } = await supabase
@@ -63,8 +101,15 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
       }
     };
 
-    loadGuestsFromDB();
-  }, [guests, activeOrderId]);
+    loadDataFromDB();
+  }, [guests, activeOrderId, waiter]);
+
+  // Actualizar waiterData cuando waiter cambia desde props
+  useEffect(() => {
+    if (waiter) {
+      setWaiterData(waiter);
+    }
+  }, [waiter]);
 
   // Suscripción real-time para actualizar el estado de pago
   useEffect(() => {
@@ -264,6 +309,26 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
           })
         )}
       </div>
+
+      {/* Botón flotante para solicitar al mesero - arriba del footer, separado */}
+      {waiterData && (
+        <button
+          onClick={() => setIsWaiterModalOpen(true)}
+          className="fixed bottom-28 right-4 z-[70] size-14 bg-primary hover:bg-green-400 text-background-dark rounded-full shadow-lg shadow-primary/30 flex items-center justify-center transition-all active:scale-95"
+          title="Solicitar al mesero"
+        >
+          <span className="material-symbols-outlined text-2xl">notifications</span>
+        </button>
+      )}
+
+      {/* Modal de solicitud al mesero */}
+      <WaiterRequestModal
+        isOpen={isWaiterModalOpen}
+        onClose={() => setIsWaiterModalOpen(false)}
+        waiter={waiterData}
+        tableNumber={tableNumber}
+        orderId={activeOrderId}
+      />
 
       <div className="fixed bottom-0 left-0 w-full bg-white dark:bg-background-dark border-t border-slate-200 dark:border-border-dark p-4 shadow-2xl z-50">
         {currentUserPaid ? (

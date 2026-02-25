@@ -16,6 +16,7 @@ import CheckoutView from './views/CheckoutView';
 import ConfirmationView from './views/ConfirmationView';
 import JoinTableView from './views/JoinTableView';
 import { getSession, setSession, getOrderId, setOrderId, removeOrderId, clearSession, getActiveGuestId, setActiveGuestIdCookie } from './lib/sessionCookies';
+import { getGroupKeyForCategoryId, type OrderGroupKey } from './lib/orderGroups';
 
 const READY_SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3';
 
@@ -65,6 +66,11 @@ const App: React.FC = () => {
   const [restaurant, setRestaurant] = useState<any>(null);
   const [currentTable, setCurrentTable] = useState<any>(null);
   const [currentWaiter, setCurrentWaiter] = useState<any>(null);
+
+  // Debug: Log waiter changes
+  useEffect(() => {
+    console.log('[App] currentWaiter changed:', currentWaiter);
+  }, [currentWaiter]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
   const [guests, setGuests] = useState<Guest[]>([{ id: '1', name: 'Invitado 1 (Tú)', isHost: true }]);
@@ -97,8 +103,8 @@ const App: React.FC = () => {
     if (!supabase) return;
     
     const [itemsRes, batchesRes] = await Promise.all([
-      supabase.from('order_items').select('*, menu_items(name)').eq('order_id', orderId),
-      supabase.from('order_batches').select('*').eq('order_id', orderId).order('batch_number', { ascending: true })
+      supabase.from('order_items').select('*, menu_items(name)').eq('order_id', activeOrderId),
+      supabase.from('order_batches').select('*').eq('order_id', activeOrderId).order('batch_number', { ascending: true })
     ]);
 
     if (itemsRes.data) {
@@ -535,7 +541,7 @@ const App: React.FC = () => {
     let { data: orderGuests, error } = await supabase
       .from('order_guests')
       .select('*')
-      .eq('order_id', orderId);
+      .eq('order_id', activeOrderId);
     
     if (error) {
       console.error("[DineSplit] Error en query sin order:", error);
@@ -543,7 +549,7 @@ const App: React.FC = () => {
       const result2 = await supabase
         .from('order_guests')
         .select('*')
-        .eq('order_id', orderId)
+        .eq('order_id', activeOrderId)
         .order('position', { ascending: true });
       orderGuests = result2.data;
       error = result2.error;
@@ -598,7 +604,7 @@ const App: React.FC = () => {
         const { data: allGuestsForOrder, error: simpleError } = await supabase
           .from('order_guests')
           .select('id, order_id, name, position')
-          .eq('order_id', orderId);
+          .eq('order_id', activeOrderId);
         
         console.log("[DineSplit] Query simple (sin select *):", allGuestsForOrder?.length || 0, "guests");
         if (simpleError) {
@@ -661,7 +667,7 @@ const App: React.FC = () => {
       const { data: itemsData, error: itemsError } = await supabase
         .from('order_items')
         .select('guest_id')
-        .eq('order_id', orderId);
+        .eq('order_id', activeOrderId);
       
       if (itemsError) {
         console.error("[DineSplit] Error al buscar items para fallback:", itemsError);
@@ -731,7 +737,7 @@ const App: React.FC = () => {
             const { data: directQuery, error: directError } = await supabase
               .from('order_guests')
               .select('id, order_id, name, is_host, position')
-              .eq('order_id', orderId);
+              .eq('order_id', activeOrderId);
             
             if (directError) {
               console.error("[DineSplit] ❌ Error de RLS en query directa:", directError);
@@ -1110,11 +1116,24 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
           }
 
           setRestaurant(restaurantRes.data);
-          setCurrentTable(tableRes?.data || orderData.tables || null);
+          const finalTableData = tableRes?.data || orderData.tables || null;
+          setCurrentTable(finalTableData);
           setCategories(categoriesRes.data || []);
           setMenuItems(menuItemsRes.data || []);
           setActiveOrderId(orderIdForLoad);
           setOrderId(orderIdForLoad);
+
+          // Cargar waiter si la mesa tiene waiter_id
+          if (finalTableData?.waiter_id) {
+            const { data: waiterData } = await supabase
+              .from('waiters')
+              .select('*')
+              .eq('id', finalTableData.waiter_id)
+              .maybeSingle();
+            setCurrentWaiter(waiterData || null);
+          } else {
+            setCurrentWaiter(null);
+          }
 
           // Cargar guests con sus montos individuales y estado de pago
           const guestIdToSet = guestIdParam || (isAnyMpReturn && mpReturn?.guestId) || undefined;
@@ -1225,11 +1244,12 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
               supabase.from('restaurants').select('*').eq('id', restaurantId).maybeSingle(),
               supabase.from('categories').select('*').eq('restaurant_id', restaurantId).order('sort_order'),
               supabase.from('menu_items').select('*').eq('restaurant_id', restaurantId).order('sort_order'),
-              supabase.from('order_guests').select('*').eq('order_id', orderId).order('position', { ascending: true }),
+              supabase.from('order_guests').select('*').eq('order_id', activeOrderId).order('position', { ascending: true }),
               supabase.from('tables').select('*').eq('id', orderData.table_id).maybeSingle()
             ]);
 
-            setCurrentTable(tableRes?.data || null);
+            const finalTableData = tableRes?.data || null;
+            setCurrentTable(finalTableData);
 
             if (restaurantRes.error || !restaurantRes.data) {
               clearSession();
@@ -1243,6 +1263,18 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             setCategories(categoriesRes.data || []);
             setMenuItems(menuItemsRes.data || []);
             setActiveOrderId(orderId);
+
+            // Cargar waiter si la mesa tiene waiter_id
+            if (finalTableData?.waiter_id) {
+              const { data: waiterData } = await supabase
+                .from('waiters')
+                .select('*')
+                .eq('id', finalTableData.waiter_id)
+                .maybeSingle();
+              setCurrentWaiter(waiterData || null);
+            } else {
+              setCurrentWaiter(null);
+            }
             if (guestsRes.data) {
               const guestsFromDB: Guest[] = guestsRes.data.map(og => ({
                 id: og.id,
@@ -1771,190 +1803,76 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
     }
   };
 
-  const handleSendOrder = async () => {
-    if (!restaurant || !currentTable) return;
-    // Filtrar items con status='elegido' (aún no enviados) del batch actual
-    const pendingItems = cart.filter(item => 
-      item.status === 'elegido' && // Solo items con status='elegido'
-      item.batch_id === activeBatchId // Solo items del batch actual
-    );
-    
-    console.log("[DineSplit] handleSendOrder - Total items en cart:", cart.length);
-    console.log("[DineSplit] handleSendOrder - Pending items filtrados:", pendingItems.length);
-    console.log("[DineSplit] handleSendOrder - Active batch ID:", activeBatchId);
-    
-    if (pendingItems.length === 0) {
-      console.warn("[DineSplit] No hay items pendientes para enviar en el batch actual");
-      return;
-    }
+  /** Envía a cocina solo los items de un grupo de categorías. Cada grupo crea su propio batch. */
+  const handleSendGroup = async (groupKey: OrderGroupKey) => {
+    if (!restaurant || !currentTable || !activeOrderId || !supabase) return;
+
+    const pendingItems = cart.filter(item => {
+      const isElegido = item.status === 'elegido' || (!item.status && !item.isConfirmed);
+      const isPending = !item.batch_id || batches.some(b => b.id === item.batch_id && b.status === 'CREADO');
+      if (!isElegido || !isPending) return false;
+      const menuItem = menuItems.find(m => m.id === item.itemId);
+      if (!menuItem) return false;
+      return getGroupKeyForCategoryId(menuItem.category_id, categories) === groupKey;
+    });
+
+    if (pendingItems.length === 0) return;
 
     setIsSendingOrder(true);
     try {
-      let orderId = activeOrderId;
-      let currentTotal = 0;
+      const { data: existingOrder } = await supabase.from('orders').select('total_amount').eq('id', activeOrderId).single();
+      const currentTotal = Number(existingOrder?.total_amount || 0);
+      
+      const itemIds = pendingItems.map(i => i.id).filter(id => id && typeof id === 'string' && id.length > 10);
+      if (itemIds.length === 0) throw new Error("No hay items válidos para enviar.");
 
-      // La orden ya debería existir (se crea en handleCreateOrderWithGuests)
-      if (!orderId) {
-        throw new Error("No hay una orden activa. Por favor, completa la información de comensales primero.");
-      }
-      
-      if (!activeBatchId) {
-        throw new Error("No hay un batch activo. Por favor, completa la información de comensales primero.");
-      }
+      const { count: batchCount } = await supabase
+        .from('order_batches')
+        .select('*', { count: 'exact', head: true })
+        .eq('order_id', activeOrderId);
+      const nextBatchNum = (batchCount || 0) + 1;
 
-      // Actualizar el total de la orden
-      const { data: existingOrder } = await supabase.from('orders').select('total_amount').eq('id', orderId).single();
-      currentTotal = Number(existingOrder?.total_amount || 0);
-      
-      // Los items ya tienen el batch_id asignado, solo necesitamos cambiar su status a 'pedido'
-      const itemIds = pendingItems.map(item => item.id).filter(id => id && typeof id === 'string' && id.length > 10);
-      console.log("[DineSplit] Enviando pedido - Items a actualizar:", itemIds.length, "items");
-      console.log("[DineSplit] Batch ID del batch actual:", activeBatchId);
-      
-      if (itemIds.length === 0) {
-        console.error("[DineSplit] No hay items válidos. Pending items:", pendingItems.map(i => ({ id: i.id, type: typeof i.id })));
-        throw new Error("No hay items válidos para enviar. Asegúrate de que los platos se hayan guardado correctamente.");
-      }
-      
-      // Actualizar solo el status de los items a 'pedido' (ya tienen batch_id)
-      console.log("[DineSplit] Actualizando items con status='elegido' a 'pedido' para batch:", activeBatchId);
-      console.log("[DineSplit] IDs de items a actualizar:", itemIds);
-      console.log("[DineSplit] Criterios: IDs=", itemIds.length, "batch_id=", activeBatchId, "status='elegido'");
-      
-      // Actualizar por IDs específicos (más confiable que solo por batch_id y status)
-      const { error: updateError, data: updatedItems } = await supabase
-        .from('order_items')
-        .update({ 
-          status: 'pedido' // Cambiar el status a 'pedido'
+      const { data: newBatch, error: batchError } = await supabase
+        .from('order_batches')
+        .insert({
+          order_id: activeOrderId,
+          batch_number: nextBatchNum,
+          status: 'ENVIADO'
         })
-        .in('id', itemIds) // Actualizar por IDs específicos de los pendingItems
-        .eq('status', 'elegido') // Solo actualizar si tienen status='elegido' (seguridad extra)
-        .select();
+        .select()
+        .single();
+
+      if (batchError || !newBatch?.id) throw new Error(`Error al crear batch: ${batchError?.message || 'sin ID'}`);
+
+      const { error: updateError } = await supabase
+        .from('order_items')
+        .update({ batch_id: newBatch.id, status: 'pedido' })
+        .in('id', itemIds)
+        .eq('status', 'elegido');
       
       if (updateError) {
-        console.error("[DineSplit] Error al actualizar order_items:", updateError);
-        throw new Error(`Error al actualizar items: ${updateError.message}`);
-      }
-      
-      if (!updatedItems || updatedItems.length === 0) {
-        console.error("[DineSplit] ❌ No se actualizaron items con el filtro de status.");
-        console.error("[DineSplit] Posible problema de RLS o con el filtro. Intentando sin filtro de status...");
-        
-        // Si falla con el filtro de status, intentar actualizar solo por IDs (puede ser un problema de RLS)
-        const { error: retryError, data: retryItems } = await supabase
+        const { error: retryErr } = await supabase
           .from('order_items')
-          .update({ status: 'pedido' })
-          .in('id', itemIds) // Solo por IDs, sin filtro de status
-          .select();
-        
-        if (retryError) {
-          console.error("[DineSplit] ❌ Error en retry (posible problema de RLS):", retryError);
-          console.error("[DineSplit] Verifica las políticas RLS de la tabla order_items en Supabase.");
-          console.error("[DineSplit] La tabla debe permitir UPDATE para los order_items.");
-          throw new Error(`Error al actualizar items (posible problema de RLS): ${retryError.message}`);
-        }
-        
-        if (!retryItems || retryItems.length === 0) {
-          console.error("[DineSplit] ❌ No se actualizaron items ni con retry.");
-          // Verificar qué items hay en la BD
-          const { data: dbItems } = await supabase
-            .from('order_items')
-            .select('id, status, batch_id')
-            .in('id', itemIds);
-          
-          console.error("[DineSplit] Items en BD con esos IDs:", dbItems);
-          throw new Error("No se pudieron actualizar los items. Verifica las políticas RLS de order_items en Supabase.");
-        }
-        
-        // Si el retry funcionó, continuar con esos items
-        console.log("[DineSplit] ✅ Items actualizados sin filtro de status:", retryItems.length);
-        // Usar retryItems como updatedItems para continuar el flujo
-        const finalUpdatedItems = retryItems;
-        
-        // Continuar con el flujo usando finalUpdatedItems
-        console.log("[DineSplit] ✅ Items actualizados exitosamente:", finalUpdatedItems.length);
-        console.log("[DineSplit] Items actualizados:", finalUpdatedItems.map(i => ({ id: i.id, status: i.status, batch_id: i.batch_id })));
-
-        // Actualizar el batch
-        console.log("[DineSplit] Actualizando batch a status='ENVIADO'");
-        const { error: batchUpdateError } = await supabase
-          .from('order_batches')
-          .update({ status: 'ENVIADO' })
-          .eq('id', activeBatchId);
-        
-        if (batchUpdateError) {
-          console.error("[DineSplit] Error al actualizar batch:", batchUpdateError);
-          throw new Error(`Error al actualizar batch: ${batchUpdateError.message}`);
-        }
-        
-        console.log("[DineSplit] ✅ Batch actualizado a status='ENVIADO'");
-
-        // Actualizar total_amount de la orden
-        const newItemsTotal = pendingItems.reduce((sum, item) => sum + (Number(menuItems.find(m => m.id === item.itemId)?.price || 0) * item.quantity), 0);
-        await supabase.from('orders').update({ total_amount: currentTotal + newItemsTotal }).eq('id', orderId);
-
-        // NO crear batch aquí. El batch se creará automáticamente cuando un comensal agregue el próximo plato.
-        console.log("[DineSplit] Pedido enviado. El próximo batch se creará cuando se agregue un nuevo plato.");
-        setActiveBatchId(null); // Limpiar batch activo, se creará uno nuevo al agregar el próximo plato
-
-        // Recargar items desde la BD
-        await fetchOrderItemsFromDB(orderId!);
-        
-        // También recargar batches
-        const { data: updatedBatches } = await supabase
-          .from('order_batches')
-          .select('*')
-          .eq('order_id', orderId)
-          .order('batch_number', { ascending: true });
-        
-        if (updatedBatches) {
-          setBatches(updatedBatches);
-          console.log("[DineSplit] Batches actualizados:", updatedBatches.length);
-        }
-        navigateToView('PROGRESS');
-        return; // Salir temprano ya que manejamos el flujo aquí
+          .update({ batch_id: newBatch.id, status: 'pedido' })
+          .in('id', itemIds);
+        if (retryErr) throw new Error(`Error al actualizar items: ${retryErr.message}`);
       }
-      
-      console.log("[DineSplit] ✅ Items actualizados exitosamente:", updatedItems.length);
-      console.log("[DineSplit] Items actualizados:", updatedItems.map(i => ({ id: i.id, status: i.status, batch_id: i.batch_id })));
 
-      // PASO 2: Actualizar el status del batch de 'CREADO' a 'ENVIADO'
-      console.log("[DineSplit] Actualizando batch a status='ENVIADO'");
-      const { error: batchUpdateError } = await supabase
-        .from('order_batches')
-        .update({ status: 'ENVIADO' })
-        .eq('id', activeBatchId);
-      
-      if (batchUpdateError) {
-        console.error("[DineSplit] Error al actualizar batch:", batchUpdateError);
-        throw new Error(`Error al actualizar batch: ${batchUpdateError.message}`);
-      }
-      
-      console.log("[DineSplit] ✅ Batch actualizado a status='ENVIADO'");
+      const newItemsTotal = pendingItems.reduce((sum, item) => {
+        const p = menuItems.find(m => m.id === item.itemId)?.price || 0;
+        return sum + Number(p) * item.quantity;
+      }, 0);
+      await supabase.from('orders').update({ total_amount: currentTotal + newItemsTotal }).eq('id', activeOrderId);
 
-      // Actualizar total_amount de la orden
-      const newItemsTotal = pendingItems.reduce((sum, item) => sum + (Number(menuItems.find(m => m.id === item.itemId)?.price || 0) * item.quantity), 0);
-      await supabase.from('orders').update({ total_amount: currentTotal + newItemsTotal }).eq('id', orderId);
-
-      // NO crear batch aquí. El batch se creará automáticamente cuando un comensal agregue el próximo plato.
-      console.log("[DineSplit] Pedido enviado. El próximo batch se creará cuando se agregue un nuevo plato.");
-      setActiveBatchId(null); // Limpiar batch activo, se creará uno nuevo al agregar el próximo plato
-
-      // Recargar items desde la BD para reflejar el status actualizado
-      await fetchOrderItemsFromDB(orderId!);
-      
-      // También recargar batches
+      await fetchOrderItemsFromDB(activeOrderId);
       const { data: updatedBatches } = await supabase
         .from('order_batches')
         .select('*')
-        .eq('order_id', orderId)
+        .eq('order_id', activeOrderId)
         .order('batch_number', { ascending: true });
-      
-      if (updatedBatches) {
-        setBatches(updatedBatches);
-        console.log("[DineSplit] Batches actualizados:", updatedBatches.length);
-      }
-      setCurrentView('PROGRESS');
+      if (updatedBatches) setBatches(updatedBatches);
+
+      navigate('/progress');
     } catch (err: any) {
       alert(`Error al enviar pedido: ${err.message}`);
     } finally {
@@ -2019,7 +1937,8 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
     }
   }, [guests, paymentReturnMessage, navigateToView]);
 
-  // Función para agregar item al carrito y guardarlo inmediatamente en la BD
+  // Función para agregar item al carrito y guardarlo inmediatamente en la BD.
+  // Los items se insertan con batch_id=null hasta que se envíen por grupo en "Pedir ahora".
   const handleAddToCart = useCallback(async (item: MenuItem, guestId: string, extras: string[], removedIngredients: string[]) => {
     if (!activeOrderId || !supabase) {
       console.error("[DineSplit] No hay orden activa o supabase no está disponible");
@@ -2029,136 +1948,18 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
     try {
       const menuItem = menuItems.find(m => m.id === item.id);
       
-      // Buscar si existe un batch con status='CREADO', si no existe, crear uno nuevo
-      let currentBatchId = activeBatchId;
-      
-      // Si no hay batch activo o el batch activo no tiene status='CREADO', buscar o crear uno
-      if (!currentBatchId) {
-        console.log("[DineSplit] No hay batch activo, buscando uno con status='CREADO'...");
-        const { data: existingBatches } = await supabase
-          .from('order_batches')
-          .select('*')
-          .eq('order_id', activeOrderId)
-          .order('batch_number', { ascending: false });
-        
-        const createdBatch = existingBatches?.find(b => b.status === 'CREADO');
-        
-        if (createdBatch) {
-          currentBatchId = createdBatch.id;
-          setActiveBatchId(createdBatch.id);
-          console.log("[DineSplit] Batch con status='CREADO' encontrado:", createdBatch.id, "batch_number:", createdBatch.batch_number);
-        } else {
-          // No existe batch con status='CREADO', crear uno nuevo
-          console.log("[DineSplit] No se encontró batch con status='CREADO', creando uno nuevo...");
-          const { count: batchCount } = await supabase
-            .from('order_batches')
-            .select('*', { count: 'exact', head: true })
-            .eq('order_id', activeOrderId);
-          const nextBatchNum = (batchCount || 0) + 1;
-          
-          const { data: newBatch, error: batchError } = await supabase
-            .from('order_batches')
-            .insert({
-              order_id: activeOrderId,
-              batch_number: nextBatchNum,
-              status: 'CREADO'
-            })
-            .select()
-            .single();
-          
-          if (batchError) {
-            console.error("[DineSplit] Error al crear nuevo batch:", batchError);
-            throw new Error(`Error al crear nuevo batch: ${batchError.message}`);
-          }
-          
-          if (!newBatch || !newBatch.id) {
-            throw new Error("No se pudo crear el nuevo batch. El batch no tiene ID.");
-          }
-          
-          currentBatchId = newBatch.id;
-          setActiveBatchId(newBatch.id);
-          setBatches(prev => [...prev, newBatch]);
-          console.log("[DineSplit] ✅ Nuevo batch creado. Batch ID:", newBatch.id, "batch_number:", newBatch.batch_number);
-        }
-      } else {
-        // Verificar que el batch activo tenga status='CREADO'
-        const { data: activeBatch } = await supabase
-          .from('order_batches')
-          .select('id, status, batch_number')
-          .eq('id', currentBatchId)
-          .single();
-        
-        if (activeBatch && activeBatch.status !== 'CREADO') {
-          // El batch activo ya fue enviado, buscar o crear uno nuevo con status='CREADO'
-          console.log("[DineSplit] Batch activo tiene status='", activeBatch.status, "'. Buscando batch con status='CREADO'...");
-          const { data: allBatches } = await supabase
-            .from('order_batches')
-            .select('*')
-            .eq('order_id', activeOrderId)
-            .order('batch_number', { ascending: false });
-          
-          const createdBatch = allBatches?.find(b => b.status === 'CREADO');
-          
-          if (createdBatch) {
-            currentBatchId = createdBatch.id;
-            setActiveBatchId(createdBatch.id);
-            console.log("[DineSplit] Batch con status='CREADO' encontrado:", createdBatch.id, "batch_number:", createdBatch.batch_number);
-          } else {
-            // No existe batch con status='CREADO', crear uno nuevo
-            console.log("[DineSplit] No se encontró batch con status='CREADO', creando uno nuevo...");
-            const { count: batchCount } = await supabase
-              .from('order_batches')
-              .select('*', { count: 'exact', head: true })
-              .eq('order_id', activeOrderId);
-            const nextBatchNum = (batchCount || 0) + 1;
-            
-            const { data: newBatch, error: batchError } = await supabase
-              .from('order_batches')
-              .insert({
-                order_id: activeOrderId,
-                batch_number: nextBatchNum,
-                status: 'CREADO'
-              })
-              .select()
-              .single();
-            
-            if (batchError) {
-              console.error("[DineSplit] Error al crear nuevo batch:", batchError);
-              throw new Error(`Error al crear nuevo batch: ${batchError.message}`);
-            }
-            
-            if (!newBatch || !newBatch.id) {
-              throw new Error("No se pudo crear el nuevo batch. El batch no tiene ID.");
-            }
-            
-            currentBatchId = newBatch.id;
-            setActiveBatchId(newBatch.id);
-            setBatches(prev => [...prev, newBatch]);
-            console.log("[DineSplit] ✅ Nuevo batch creado. Batch ID:", newBatch.id, "batch_number:", newBatch.batch_number);
-          }
-        }
-      }
-      
-      if (!currentBatchId) {
-        throw new Error("No se pudo encontrar o crear un batch activo con status='CREADO'.");
-      }
-
-      console.log("[DineSplit] Agregando item al carrito con batch_id:", currentBatchId);
-      
-      // Insertar con batch_id del batch activo (que ahora sabemos que tiene status='CREADO')
+      // Insertar sin batch_id: los items se agrupan por categoría y se envían por separado
       const insertPayload: any = {
         order_id: activeOrderId,
-        guest_id: guestId, // UUID de order_guests
+        guest_id: guestId,
         menu_item_id: item.id,
         quantity: 1,
         unit_price: Number(menuItem?.price || 0),
-        extras: extras.length > 0 ? extras : null, // Guardar en columna extras
-        removed_ingredients: removedIngredients.length > 0 ? removedIngredients : null, // Guardar en columna removed_ingredients
-        batch_id: currentBatchId, // CRÍTICO: Usar el batch_id del batch activo (con status='CREADO')
-        status: 'elegido' // Estado inicial: elegido (aún no enviado a cocina)
+        extras: extras.length > 0 ? extras : null,
+        removed_ingredients: removedIngredients.length > 0 ? removedIngredients : null,
+        batch_id: null, // Se asigna al hacer "Pedir ahora" por grupo
+        status: 'elegido'
       };
-      
-      console.log("[DineSplit] Insertando order_item con payload:", { ...insertPayload, extras: insertPayload.extras?.length, removed_ingredients: insertPayload.removed_ingredients?.length });
       
       const { data: newItem, error } = await supabase
         .from('order_items')
@@ -2168,33 +1969,22 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
 
       if (error) {
         console.error("[DineSplit] Error al insertar item:", error);
-        console.error("[DineSplit] Error details:", JSON.stringify(error, null, 2));
         throw error;
       }
 
-      // Validar que newItem tenga un ID válido y batch_id correcto
       if (!newItem || !newItem.id) {
-        console.error("[DineSplit] Error: El item insertado no tiene ID válido:", newItem);
         throw new Error("Error al insertar item: no se recibió un ID válido de la base de datos");
       }
 
-      if (newItem.batch_id !== currentBatchId) {
-        console.error("[DineSplit] ⚠️ ADVERTENCIA: El batch_id del item insertado no coincide con currentBatchId", {
-          itemBatchId: newItem.batch_id,
-          currentBatchId: currentBatchId
-        });
-      }
-
-      console.log("[DineSplit] ✅ Item insertado correctamente. ID:", newItem.id, "Batch ID:", newItem.batch_id, "Menu Item ID:", item.id);
+      console.log("[DineSplit] ✅ Item insertado. ID:", newItem.id, "Menu Item ID:", item.id);
       
-      // Agregar al estado local
       setCart(prev => [...prev, {
-        id: newItem.id, // UUID de Supabase
+        id: newItem.id,
         itemId: item.id,
         guestId: guestId,
         quantity: 1,
         order_id: activeOrderId,
-        batch_id: newItem.batch_id || currentBatchId, // Usar el batch_id de la BD
+        batch_id: null,
         isConfirmed: false,
         status: newItem.status || 'elegido',
         extras,
@@ -2205,7 +1995,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
       alert(`Error al agregar plato: ${err.message}`);
       throw err; // Re-lanzar el error para que el componente pueda manejarlo
     }
-  }, [activeOrderId, activeBatchId, supabase, menuItems]);
+  }, [activeOrderId, supabase, menuItems]);
 
   // Función para actualizar item en el carrito y en la BD
   const handleUpdateCartItem = useCallback(async (id: string, updates: Partial<OrderItem>) => {
@@ -2345,7 +2135,8 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             menuItems={menuItems} 
             categories={categories} 
             restaurant={restaurant} 
-            table={currentTable} 
+            table={currentTable}
+            waiter={currentWaiter}
             onSaveGuestChanges={handleSaveGuestChanges}
             activeOrderId={activeOrderId}
             identifiedGuestId={getActiveGuestId()}
@@ -2377,7 +2168,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
               setEditingCartItem(item); 
               navigateToView('MENU'); 
             }} 
-            onSend={handleSendOrder} 
+            onSendGroup={handleSendGroup} 
             onPay={() => navigateToView('SPLIT_BILL')} 
             isSending={isSendingOrder} 
             onUpdateQuantity={(id, d) => handleUpdateCartItem(id, { quantity: Math.max(0, (cart.find(it => it.id === id)?.quantity || 1) + d) })} 
@@ -2386,6 +2177,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             tableNumber={currentTable?.table_number} 
             waiter={currentWaiter}
             currentGuestId={guestIdParam || getActiveGuestId() || activeGuestId}
+            activeOrderId={activeOrderId}
           />
         } />
         <Route path="/progress" element={
@@ -2573,6 +2365,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             tableNumber={currentTable?.table_number}
             activeOrderId={activeOrderId}
             currentGuestId={guestIdParam || activeGuestId}
+            waiter={currentWaiter}
           />
         } />
         <Route path="*" element={<Navigate to="/scan" replace />} />
