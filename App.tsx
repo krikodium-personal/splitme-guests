@@ -14,8 +14,9 @@ import TransferPaymentView from './views/TransferPaymentView';
 import CashPaymentView from './views/CashPaymentView';
 import CheckoutView from './views/CheckoutView';
 import ConfirmationView from './views/ConfirmationView';
+import FeedbackView from './views/FeedbackView';
 import JoinTableView from './views/JoinTableView';
-import { getSession, setSession, getOrderId, setOrderId, removeOrderId, clearSession, getActiveGuestId, setActiveGuestIdCookie } from './lib/sessionCookies';
+import { getSession, setSession, getOrderId, setOrderId, removeOrderId, clearSession, getActiveGuestId, setActiveGuestIdCookie, setTableAndRestaurant, getTableAndRestaurant } from './lib/sessionCookies';
 import { getGroupKeyForCategoryId, type OrderGroupKey } from './lib/orderGroups';
 
 const READY_SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3';
@@ -73,7 +74,7 @@ const App: React.FC = () => {
   }, [currentWaiter]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
-  const [guests, setGuests] = useState<Guest[]>([{ id: '1', name: 'Invitado 1 (Tú)', isHost: true }]);
+  const [guests, setGuests] = useState<Guest[]>([{ id: '1', name: 'Comensal 1 (Tú)', isHost: true }]);
   const [activeGuestId, setActiveGuestId] = useState<string>('1');
   
   // Mantener el ref actualizado con el valor de activeGuestId
@@ -347,10 +348,25 @@ const App: React.FC = () => {
       setCurrentWaiter(waiterRes.data || null);
       setCategories(catRes.data || []);
       setMenuItems(itemRes.data || []);
+      setTableAndRestaurant(tableData, resData);
       
       // PASO 3: Verificar orden activa
-      // Mientras el status de la orden esté en ABIERTO, la orden se tiene que seguir mostrando
-      // Buscar órdenes que no estén PAGADO o CANCELADO (incluye ABIERTO y otros estados)
+      // Si la mesa está Libre (cerrada en admin), siempre iniciar sesión nueva — no buscar órdenes previas
+      const tableStatus = (tableData.status || '').toString().toUpperCase().trim();
+      if (tableStatus === 'LIBRE') {
+        console.log("[DineSplit] Mesa con status=Libre. Iniciando sesión nueva (sin orden previa).");
+        removeOrderId();
+        setActiveOrderId(null);
+        setCart([]);
+        setBatches([]);
+        setGuests([{ id: '1', name: 'Comensal 1 (Tú)', isHost: true }]);
+        setActiveGuestId('1');
+        navigateToView('GUEST_INFO');
+        setLoading(false);
+        return true;
+      }
+
+      // Buscar órdenes que no estén PAGADO o CANCELADO (incluye ABIERTO y otros estados activos)
       let activeTableOrder;
       
       const { data: orders } = await supabase
@@ -401,7 +417,7 @@ const App: React.FC = () => {
           setActiveOrderId(null);
           setCart([]);
           setBatches([]);
-          setGuests([{ id: '1', name: 'Invitado 1 (Tú)', isHost: true }]);
+          setGuests([{ id: '1', name: 'Comensal 1 (Tú)', isHost: true }]);
           setActiveGuestId('1');
           navigateToView('GUEST_INFO');
         }
@@ -411,7 +427,7 @@ const App: React.FC = () => {
         setActiveOrderId(null);
         setCart([]);
         setBatches([]);
-        setGuests([{ id: '1', name: 'Invitado 1 (Tú)', isHost: true }]);
+        setGuests([{ id: '1', name: 'Comensal 1 (Tú)', isHost: true }]);
         setActiveGuestId('1');
         navigateToView('GUEST_INFO');
       }
@@ -427,21 +443,36 @@ const App: React.FC = () => {
   }, [fetchOrderItemsFromDB]);
 
   // Función para crear orden y guardar guests cuando se completa GUEST_INFO
-  const handleCreateOrderWithGuests = useCallback(async (guestsToSave: Guest[]) => {
-    if (!restaurant || !currentTable || !supabase) return false;
+  // Acepta table y restaurant opcionales para evitar problemas de closure cuando vienen de GuestInfoView
+  const handleCreateOrderWithGuests = useCallback(async (
+    guestsToSave: Guest[],
+    tableOverride?: { id: string; [key: string]: any } | null,
+    restaurantOverride?: { id: string; [key: string]: any } | null
+  ) => {
+    let tableToUse = tableOverride ?? currentTable;
+    let restaurantToUse = restaurantOverride ?? restaurant;
+    if (!tableToUse || !restaurantToUse) {
+      const stored = getTableAndRestaurant();
+      tableToUse = tableToUse ?? stored.table;
+      restaurantToUse = restaurantToUse ?? stored.restaurant;
+    }
+    if (!restaurantToUse || !tableToUse || !supabase) {
+      console.error('[DineSplit] handleCreateOrderWithGuests: faltan datos', { tableToUse: !!tableToUse, restaurantToUse: !!restaurantToUse, supabase: !!supabase });
+      throw new Error('Faltan datos de mesa o restaurante. Volvé a escanear el código QR.');
+    }
     
     try {
       // Crear la orden
       const { data: newOrder, error: orderError } = await supabase
         .from('orders')
         .insert({
-          restaurant_id: restaurant.id,
-          table_id: currentTable.id,
+          restaurant_id: restaurantToUse.id,
+          table_id: tableToUse.id,
           waiter_id: currentWaiter?.id || null,
           status: 'ABIERTO',
           total_amount: 0,
           guest_count: guestsToSave.length,
-          guest_name: guestsToSave[0]?.name || 'Invitado 1'
+          guest_name: guestsToSave[0]?.name || 'Comensal 1'
         })
         .select()
         .single();
@@ -477,6 +508,7 @@ const App: React.FC = () => {
       setOrderId(newOrder.id);
       setActiveGuestId(savedGuests[0].id);
       setActiveGuestIdCookie(savedGuests[0].id);
+      setPendingGuestSelection(false); // Quien abre la mesa es el host, no preguntar "¿Quién sos?"
       
       // Crear el PRIMER batch para esta orden
       console.log("[DineSplit] Creando primer batch para la orden:", newOrder.id);
@@ -511,18 +543,18 @@ const App: React.FC = () => {
       const { error: tableUpdateError } = await supabase
         .from('tables')
         .update({ status: 'OCUPADA' })
-        .eq('id', currentTable.id);
+        .eq('id', tableToUse.id);
       
       if (tableUpdateError) {
         console.error("[DineSplit] Error al actualizar estado de mesa:", tableUpdateError);
         // No lanzamos error para no bloquear el flujo, solo lo registramos
       }
       
-      return true;
+      return savedGuests[0].id; // Devolver ID del host para usarlo en la navegación
     } catch (error: any) {
       console.error("[DineSplit] Error al crear orden con guests:", error);
-      alert(`Error al crear la orden: ${error.message}`);
-      return false;
+      const msg = error?.message || error?.error_description || 'Error desconocido';
+      throw new Error(`Error al crear la orden: ${msg}`);
     }
   }, [restaurant, currentTable, currentWaiter]);
 
@@ -1063,7 +1095,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
         setActiveOrderId(null);
         setCart([]);
         setBatches([]);
-        setGuests([{ id: '1', name: 'Invitado 1 (Tú)', isHost: true }]);
+        setGuests([{ id: '1', name: 'Comensal 1 (Tú)', isHost: true }]);
         setActiveGuestId('1');
         setError(null);
         setLoading(false);
@@ -1115,8 +1147,32 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             throw new Error("No se pudo cargar el restaurante.");
           }
 
-          setRestaurant(restaurantRes.data);
           const finalTableData = tableRes?.data || orderData.tables || null;
+          const orderStatus = (orderData.status || '').toString().toUpperCase().trim();
+          const tableStatusFromOrder = (finalTableData?.status || '').toString().toUpperCase().trim();
+
+          // Si la orden está cerrada o la mesa está Libre, redirigir a scan para iniciar sesión nueva
+          if (orderStatus === 'PAGADO' || orderStatus === 'CANCELADO' || tableStatusFromOrder === 'LIBRE') {
+            console.log("[DineSplit] Orden cerrada o mesa Libre (order:", orderStatus, ", table:", tableStatusFromOrder, "). Redirigiendo a nueva sesión.");
+            clearSession();
+            setRestaurant(null);
+            setCurrentTable(null);
+            setCurrentWaiter(null);
+            setMenuItems([]);
+            setCategories([]);
+            setActiveOrderId(null);
+            setCart([]);
+            setBatches([]);
+            setGuests([{ id: '1', name: 'Comensal 1 (Tú)', isHost: true }]);
+            setActiveGuestId('1');
+            const accessCode = restaurantRes.data.access_code || '';
+            const tableNum = finalTableData?.table_number ?? '';
+            navigate(accessCode && tableNum ? `/scan?res=${accessCode}&table=${tableNum}` : '/scan');
+            setLoading(false);
+            return;
+          }
+
+          setRestaurant(restaurantRes.data);
           setCurrentTable(finalTableData);
           setCategories(categoriesRes.data || []);
           setMenuItems(menuItemsRes.data || []);
@@ -1207,7 +1263,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
               setActiveOrderId(null);
               setCart([]);
               setBatches([]);
-              setGuests([{ id: '1', name: 'Invitado 1 (Tú)', isHost: true }]);
+              setGuests([{ id: '1', name: 'Comensal 1 (Tú)', isHost: true }]);
               setActiveGuestId('1');
               navigate('/scan');
               setLoading(false);
@@ -1232,7 +1288,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
               setActiveOrderId(null);
               setCart([]);
               setBatches([]);
-              setGuests([{ id: '1', name: 'Invitado 1 (Tú)', isHost: true }]);
+              setGuests([{ id: '1', name: 'Comensal 1 (Tú)', isHost: true }]);
               setActiveGuestId('1');
               navigate('/scan');
               setLoading(false);
@@ -1249,6 +1305,27 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             ]);
 
             const finalTableData = tableRes?.data || null;
+            const tableStatusFromCookie = (finalTableData?.status || '').toString().toUpperCase().trim();
+
+            // Si la mesa está Libre (cerrada en admin), limpiar y redirigir a scan
+            if (tableStatusFromCookie === 'LIBRE') {
+              console.log("[DineSplit] Mesa Libre al restaurar desde cookie. Redirigiendo a scan.");
+              clearSession();
+              setRestaurant(null);
+              setCurrentTable(null);
+              setCurrentWaiter(null);
+              setMenuItems([]);
+              setCategories([]);
+              setActiveOrderId(null);
+              setCart([]);
+              setBatches([]);
+              setGuests([{ id: '1', name: 'Comensal 1 (Tú)', isHost: true }]);
+              setActiveGuestId('1');
+              navigate('/scan');
+              setLoading(false);
+              return;
+            }
+
             setCurrentTable(finalTableData);
 
             if (restaurantRes.error || !restaurantRes.data) {
@@ -1324,7 +1401,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
           setActiveOrderId(null);
           setCart([]);
           setBatches([]);
-          setGuests([{ id: '1', name: 'Invitado 1 (Tú)', isHost: true }]);
+          setGuests([{ id: '1', name: 'Comensal 1 (Tú)', isHost: true }]);
           setActiveGuestId('1');
           navigate('/scan');
           setLoading(false);
@@ -1896,6 +1973,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
       '/individual-share': 'INDIVIDUAL_SHARE',
       '/transfer-payment': 'TRANSFER_PAYMENT',
       '/cash-payment': 'CASH_PAYMENT',
+      '/feedback': 'FEEDBACK',
       '/confirmation': 'CONFIRMATION'
     };
     
@@ -1919,6 +1997,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
       'INDIVIDUAL_SHARE': '/individual-share',
       'TRANSFER_PAYMENT': '/transfer-payment',
       'CASH_PAYMENT': '/cash-payment',
+      'FEEDBACK': '/feedback',
       'CONFIRMATION': '/confirmation'
     };
     
@@ -2102,13 +2181,24 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
         <Route path="/" element={<Navigate to={`/scan${location.search || ''}`} replace />} />
         <Route path="/scan" element={<ScanView onNext={handleStartSession} restaurantName={undefined} />} />
         <Route path="/guest-info" element={
-          <GuestInfoView 
-            onBack={() => navigateToView('SCAN')} 
-            onNext={async (finalGuests: Guest[]) => {
-              const success = await handleCreateOrderWithGuests(finalGuests);
-              if (success) {
-                navigateToView('MENU');
-              }
+          <GuestInfoView
+            onBack={() => {
+              clearSession();
+              setRestaurant(null);
+              setCurrentTable(null);
+              setCurrentWaiter(null);
+              setMenuItems([]);
+              setCategories([]);
+              setActiveOrderId(null);
+              setCart([]);
+              setBatches([]);
+              setGuests([{ id: '1', name: 'Comensal 1 (Tú)', isHost: true }]);
+              setActiveGuestId('1');
+              navigate('/scan');
+            }}
+            onNext={async (finalGuests: Guest[], tableFromView: any, restaurantFromView: any) => {
+              const hostId = await handleCreateOrderWithGuests(finalGuests, tableFromView, restaurantFromView);
+              navigate(`/menu/destacados?guestId=${hostId}`);
             }} 
             guests={guests} 
             setGuests={setGuests} 
@@ -2310,10 +2400,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
         <Route path="/cash-payment" element={
           <CashPaymentView 
             onBack={() => navigateToView('INDIVIDUAL_SHARE')}
-            onNext={() => {
-              clearSession();
-              navigateToView('CONFIRMATION');
-            }}
+            onNext={() => navigate('/feedback')}
             amount={(() => {
               // Calcular el amount basándose en el guestId de la URL o activeGuestId
               const targetGuestId = guestIdParam || activeGuestId;
@@ -2346,6 +2433,16 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             guestId={guestIdParam || activeGuestId}
             orderId={activeOrderId || ''}
             guestName={paymentGuestName}
+            cart={cart}
+            menuItems={menuItems}
+            waiter={currentWaiter}
+            restaurant={restaurant}
+          />
+        } />
+        <Route path="/feedback" element={
+          <FeedbackView
+            onNext={() => navigate('/confirmation')}
+            onSkip={() => navigate('/confirmation')}
             cart={cart}
             menuItems={menuItems}
             waiter={currentWaiter}

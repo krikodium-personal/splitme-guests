@@ -81,4 +81,39 @@ export function clearSession(): void {
   removeSession();
   removeOrderId();
   removeActiveGuestId();
+  if (typeof sessionStorage !== 'undefined') {
+    sessionStorage.removeItem('splitme_table');
+    sessionStorage.removeItem('splitme_restaurant');
+  }
+}
+
+const TABLE_STORAGE_KEY = 'splitme_table';
+const RESTAURANT_STORAGE_KEY = 'splitme_restaurant';
+
+/** Guarda mesa y restaurante para recuperar al crear orden (evita problemas de closure/timing). */
+export function setTableAndRestaurant(table: unknown, restaurant: unknown): void {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    if (table) sessionStorage.setItem(TABLE_STORAGE_KEY, JSON.stringify(table));
+    if (restaurant) sessionStorage.setItem(RESTAURANT_STORAGE_KEY, JSON.stringify(restaurant));
+  } catch (e) {
+    console.warn('[sessionCookies] Error guardando table/restaurant:', e);
+  }
+}
+
+/** Recupera mesa y restaurante guardados. */
+export function getTableAndRestaurant(): { table: any; restaurant: any } {
+  let table: any = null;
+  let restaurant: any = null;
+  if (typeof sessionStorage !== 'undefined') {
+    try {
+      const t = sessionStorage.getItem(TABLE_STORAGE_KEY);
+      const r = sessionStorage.getItem(RESTAURANT_STORAGE_KEY);
+      if (t) table = JSON.parse(t);
+      if (r) restaurant = JSON.parse(r);
+    } catch (e) {
+      console.warn('[sessionCookies] Error leyendo table/restaurant:', e);
+    }
+  }
+  return { table, restaurant };
 }

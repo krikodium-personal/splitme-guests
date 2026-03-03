@@ -670,7 +670,7 @@ const MenuView: React.FC<MenuViewProps> = ({
             >
               <span className="material-symbols-outlined text-lg">group</span>
             </button>
-            <span className="text-[9px] font-black uppercase tracking-widest text-text-secondary opacity-60 text-center leading-tight">Administrar<br/>comensales</span>
+            <span className="text-[9px] font-black uppercase tracking-widest text-text-secondary opacity-60 text-center leading-tight">Ajustes /<br/>Compartir</span>
           </div>
         </div>
       </header>

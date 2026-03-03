@@ -6,15 +6,15 @@ interface GuestInfoViewProps {
   guests: Guest[];
   setGuests: React.Dispatch<React.SetStateAction<Guest[]>>;
   onBack: () => void;
-  onNext: (finalGuests: Guest[]) => void;
+  onNext: (finalGuests: Guest[], table: any, restaurant: any) => void | Promise<void>;
   table?: any;
   waiter?: any;
   restaurant?: any;
 }
 
 export const getInitials = (name: string) => {
-  // Detectar el patrón por defecto "Invitado X" o "Invitado X (Tú)"
-  const defaultMatch = name.match(/^Invitado\s(\d+)/);
+  // Detectar el patrón por defecto "Comensal X" o "Invitado X" (retrocompatibilidad)
+  const defaultMatch = name.match(/^(?:Comensal|Invitado)\s(\d+)/);
   if (defaultMatch) {
     return defaultMatch[1]; // Retornar solo el número (ej: "1", "2")
   }
@@ -62,13 +62,15 @@ const GuestInfoView: React.FC<GuestInfoViewProps> = ({ guests, setGuests, onBack
   const memberSince = formatStartDate(waiter?.start_date);
 
   const isDefaultName = (name: string, index: number) => {
-    return name === "Invitado 1 (Tú)" || name === `Invitado ${index + 1}`;
+    return name === "Comensal 1 (Tú)" || name === `Comensal ${index + 1}` ||
+      name === "Invitado 1 (Tú)" || name === `Invitado ${index + 1}`; // retrocompatibilidad
   };
 
   const [names, setNames] = useState<string[]>(() => 
     guests.map((g, i) => isDefaultName(g.name, i) ? "" : g.name)
   );
   const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     setNames(prev => {
@@ -97,31 +99,48 @@ const GuestInfoView: React.FC<GuestInfoViewProps> = ({ guests, setGuests, onBack
     setNames(newNames);
   };
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
     setError(null);
+    if (isSubmitting) return;
+    setIsSubmitting(true);
 
     if (guestCount > 1) {
-      const trimmed = names.slice(0, guestCount).map((n) => n.trim());
+      const trimmed = names.slice(0, guestCount).map((n) => (n ?? '').trim());
       const vacios = trimmed.some((t) => !t);
       if (vacios) {
         setError('Cada comensal debe tener un nombre.');
+        setIsSubmitting(false);
         return;
       }
       const lower = trimmed.map((t) => t.toLowerCase());
       const unicos = new Set(lower);
       if (unicos.size !== lower.length) {
         setError('Cada comensal debe tener un nombre distinto.');
+        setIsSubmitting(false);
         return;
       }
     }
 
+    if (!table || !restaurant) {
+      setError('No se pudo vincular la mesa. Volvé a escanear el código QR.');
+      setIsSubmitting(false);
+      return;
+    }
+
     const finalGuests: Guest[] = Array.from({ length: guestCount }).map((_, i) => ({
       id: (i + 1).toString(),
-      name: names[i].trim() || (i === 0 ? "Invitado 1 (Tú)" : `Invitado ${i + 1}`),
+      name: (names[i] ?? '').trim() || (i === 0 ? "Comensal 1 (Tú)" : `Comensal ${i + 1}`),
       isHost: i === 0
     }));
     setGuests(finalGuests);
-    onNext(finalGuests);
+    try {
+      await onNext(finalGuests, table, restaurant);
+    } catch (err: any) {
+      console.error('[GuestInfoView] Error en onNext:', err);
+      setError(err?.message || 'No se pudo continuar. Intentá de nuevo.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -209,7 +228,7 @@ const GuestInfoView: React.FC<GuestInfoViewProps> = ({ guests, setGuests, onBack
         <div className="mb-10 w-full">
           <div className="bg-white dark:bg-surface-dark rounded-[2rem] p-6 shadow-sm ring-1 ring-black/5 dark:ring-white/5">
             <div className="flex items-center justify-between mb-6">
-              <span className="text-slate-500 dark:text-slate-400 font-medium">Invitados</span>
+              <span className="text-slate-500 dark:text-slate-400 font-medium">Comensales</span>
               <div className="flex flex-col items-end">
                 <span className="text-3xl font-bold text-slate-900 dark:text-white">{guestCount}</span>
                 <span className="text-[10px] uppercase font-black text-slate-400 tracking-widest">Máx {tableCapacity}</span>
@@ -231,11 +250,11 @@ const GuestInfoView: React.FC<GuestInfoViewProps> = ({ guests, setGuests, onBack
 
         <div className="flex flex-col gap-4 animate-fade-in">
           <div className="flex items-center justify-between px-2">
-            <h3 className="text-slate-900 dark:text-white text-lg font-bold leading-tight">Nombres de los invitados<span className="text-red-500 dark:text-red-400">*</span></h3>
+            <h3 className="text-slate-900 dark:text-white text-lg font-bold leading-tight">Nombres de los comensales<span className="text-red-500 dark:text-red-400">*</span></h3>
           </div>
           <div className="space-y-3">
             {names.map((name, i) => {
-              const currentName = name.trim() || (i === 0 ? "Invitado 1 (Tú)" : `Invitado ${i + 1}`);
+              const currentName = name.trim() || (i === 0 ? "Comensal 1 (Tú)" : `Comensal ${i + 1}`);
               const colorId = (i + 1).toString();
               return (
                 <div key={i} className="group relative">
@@ -246,7 +265,7 @@ const GuestInfoView: React.FC<GuestInfoViewProps> = ({ guests, setGuests, onBack
                   </div>
                   <input 
                     className="w-full bg-white dark:bg-surface-dark text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-full py-4 pl-16 pr-4 border-none ring-1 ring-slate-200 dark:ring-white/10 focus:ring-2 focus:ring-primary outline-none transition-all shadow-sm" 
-                    placeholder={i === 0 ? "Invitado 1 (Tú)" : `Invitado ${i + 1}`} 
+                    placeholder={i === 0 ? "Comensal 1 (Tú)" : `Comensal ${i + 1}`} 
                     type="text"
                     value={name}
                     onChange={(e) => handleNameChange(i, e.target.value)}
@@ -269,9 +288,18 @@ const GuestInfoView: React.FC<GuestInfoViewProps> = ({ guests, setGuests, onBack
             Cada comensal debe tener un nombre distinto.
           </p>
         )}
-        <button onClick={handleContinue} className="w-full bg-primary hover:bg-[#0fd660] active:scale-[0.98] transition-all text-black font-bold text-lg h-14 rounded-xl flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(19,236,106,0.3)]">
-          <span>Ir al Menú</span>
-          <span className="material-symbols-outlined text-xl font-bold">arrow_forward</span>
+        <button onClick={handleContinue} disabled={isSubmitting} className="w-full bg-primary hover:bg-[#0fd660] active:scale-[0.98] transition-all text-black font-bold text-lg h-14 rounded-xl flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(19,236,106,0.3)] disabled:opacity-70 disabled:cursor-not-allowed">
+          {isSubmitting ? (
+            <>
+              <div className="size-5 border-2 border-black border-t-transparent rounded-full animate-spin" />
+              <span>Creando orden...</span>
+            </>
+          ) : (
+            <>
+              <span>Ir al Menú</span>
+              <span className="material-symbols-outlined text-xl font-bold">arrow_forward</span>
+            </>
+          )}
         </button>
       </div>
     </div>

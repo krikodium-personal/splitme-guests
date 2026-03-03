@@ -10,7 +10,7 @@ interface ScanViewProps {
 
 const ScanView: React.FC<ScanViewProps> = ({ onNext, restaurantName }) => {
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
-  const [restaurantCode, setRestaurantCode] = useState('');
+  const [restaurantCode, setRestaurantCode] = useState('LAP006');
   const [tableNumber, setTableNumber] = useState('');
   const [scannerError, setScannerError] = useState<string | null>(null);
   const [isCameraActive, setIsCameraActive] = useState(false);

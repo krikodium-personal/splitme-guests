@@ -20,6 +20,7 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
   const [loadedGuests, setLoadedGuests] = useState<Guest[]>(guests);
   const [isLoading, setIsLoading] = useState(false);
   const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
+  const [waiterData, setWaiterData] = useState<any>(waiter);
 
   // Debug: Log waiter data
   useEffect(() => {
@@ -27,8 +28,6 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
     console.log('[ConfirmationView] WaiterData state:', waiterData);
     console.log('[ConfirmationView] Will show button?', !!waiterData);
   }, [waiter, waiterData]);
-
-  const [waiterData, setWaiterData] = useState<any>(waiter);
 
   // Cargar guests y waiter desde la base de datos si no se pasaron como prop y hay activeOrderId
   useEffect(() => {

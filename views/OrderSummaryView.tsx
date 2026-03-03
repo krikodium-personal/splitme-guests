@@ -115,7 +115,10 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
   }, [pendingItems, menuItems, categories]);
   const confirmedItems = cart.filter(i => i.status === 'pedido' || (!i.status && i.isConfirmed));
 
+  // Total Acumulado: solo items en batches ya enviados (excluir CREADO y sin batch)
   const grandTotal = cart.reduce((sum, item) => {
+    const isInCreatedBatch = !item.batch_id || batches.some(b => b.id === item.batch_id && (b.status || '').toUpperCase() === 'CREADO');
+    if (isInCreatedBatch) return sum;
     const menuItem = menuItems.find(m => m.id === item.itemId);
     return sum + (menuItem ? menuItem.price * item.quantity : 0);
   }, 0);
