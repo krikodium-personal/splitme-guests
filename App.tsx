@@ -85,6 +85,14 @@ const App: React.FC = () => {
   const [cart, setCart] = useState<OrderItem[]>([]);
   const [batches, setBatches] = useState<OrderBatch[]>([]);
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null); // Batch actual para nuevos items
+
+  // Cart filtrado para SplitBill: solo items ya enviados (excluir CREADO y sin batch_id)
+  const cartForSplit = React.useMemo(() => {
+    return cart.filter(item => {
+      const isInCreatedBatch = !item.batch_id || batches.some(b => b.id === item.batch_id && (b.status || '').toUpperCase() === 'CREADO');
+      return !isInCreatedBatch;
+    });
+  }, [cart, batches]);
   const [editingCartItem, setEditingCartItem] = useState<OrderItem | null>(null);
   const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
   const [splitData, setSplitData] = useState<any[] | null>(null);
@@ -2286,7 +2294,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
         <Route path="/split-bill" element={
           <SplitBillView 
             guests={guests} 
-            cart={cart} 
+            cart={cartForSplit} 
             onBack={() => navigateToView('PROGRESS')} 
             onConfirm={async (shares) => { 
               console.log("[DineSplit] Confirmar División clickeado. Shares recibidos:", shares);
@@ -2304,7 +2312,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
         <Route path="/guest-selection" element={
           <GuestSelectionView 
             guests={guests} 
-            cart={cart} 
+            cart={cartForSplit} 
             menuItems={menuItems} 
             splitData={splitData} 
             activeOrderId={activeOrderId}
@@ -2338,7 +2346,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
               }
             }}
             onNavigateToTip={() => navigateToView('CONFIRMATION')}
-            cart={cart} 
+            cart={cartForSplit} 
             guests={guests} 
             menuItems={menuItems} 
             tableNumber={currentTable?.table_number} 
@@ -2381,7 +2389,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             onUpdatePaymentMethod={updatePaymentMethod}
             paymentReturnMessage={paymentReturnMessage}
             onDismissPaymentMessage={() => setPaymentReturnMessage(null)}
-            cart={cart} 
+            cart={cartForSplit} 
             menuItems={menuItems} 
             splitData={splitData} 
             restaurant={restaurant} 
@@ -2417,8 +2425,8 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
                 if (targetGuest?.individualAmount) {
                   return targetGuest.individualAmount;
                 }
-                // Si no hay individualAmount, calcular desde el cart
-                const guestCartItems = cart.filter(item => item.guestId === targetGuestId);
+                // Si no hay individualAmount, calcular desde el cart (solo items enviados)
+                const guestCartItems = cartForSplit.filter(item => item.guestId === targetGuestId);
                 const calculatedAmount = guestCartItems.reduce((sum, item) => {
                   const menuItem = menuItems.find(m => m.id === item.itemId);
                   return sum + (menuItem ? menuItem.price * item.quantity : 0);
