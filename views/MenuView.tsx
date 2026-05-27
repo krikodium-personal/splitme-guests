@@ -392,12 +392,12 @@ const MenuView: React.FC<MenuViewProps> = ({
     return ['Destacados', ...filteredDbCats];
   }, [supabaseCategories]);
 
-  // Cantidad de productos por comensal (para badge en header)
+  // Cantidad total de productos por comensal (todos los estados: elegido + pedido)
   const guestItemCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     guests.forEach(g => {
       counts[g.id] = cart
-        .filter(i => i.guestId === g.id && (i.status === 'elegido' || (!i.status && !i.isConfirmed)))
+        .filter(i => i.guestId === g.id)
         .reduce((sum, i) => sum + i.quantity, 0);
     });
     return counts;
