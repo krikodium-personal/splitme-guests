@@ -1869,7 +1869,7 @@ const App: React.FC = () => {
         const cleanUrl = window.location.origin + window.location.pathname;
         const supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL || 'https://hqaiuywzklrwywdhmqxw.supabase.co';
         const webhookBase = `${supabaseUrl.replace(/\/$/, '')}/functions/v1/mercadopago-webhook`;
-        const notificationUrl = `${webhookBase}?source_news=webhooks&restaurant_id=${restaurant.id}`;
+        const notificationUrl = `${webhookBase}?source_news=webhooks`;
         // Incluir guestId en la URL de retorno para poder identificar quién pagó
         const successUrl = `${cleanUrl}?status=success&orderId=${activeOrderId}&guestId=${guestId}`;
         const failureUrl = `${cleanUrl}?status=failure&orderId=${activeOrderId}&guestId=${guestId}`;
@@ -1918,6 +1918,11 @@ const App: React.FC = () => {
           }],
           external_reference: `${activeOrderId}|${guestId}`.substring(0, 256), // Máximo 256 caracteres
           notification_url: notificationUrl,
+          metadata: {
+            restaurant_id: restaurant.id,
+            order_id: activeOrderId,
+            guest_id: guestId,
+          },
           back_urls: {
             success: backUrls.success,
             failure: backUrls.failure,
