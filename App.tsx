@@ -1844,8 +1844,9 @@ const App: React.FC = () => {
           has_key_alias: !!config.key_alias
         });
         
-        // Para Mercado Pago, el access token está en token_cbu (renombrado desde access_token)
+        // Token del vendedor del restaurante (payment_configs.token_cbu). Debe ser de la cuenta que cobra.
         const accessToken = config.token_cbu;
+        const sellerPublicKey = config.key_alias?.trim() || '';
         if (!accessToken) {
           throw new Error("El token de acceso de Mercado Pago (token_cbu) no está configurado.");
         }
@@ -1853,17 +1854,18 @@ const App: React.FC = () => {
           throw new Error("El token de acceso de Mercado Pago está vacío.");
         }
         
-        // Detectar si el token es de TEST o PRODUCCIÓN
-        // Los tokens de TEST suelen comenzar con "TEST-" o tener un formato específico
-        // Los tokens de PRODUCCIÓN suelen ser más largos y no tienen el prefijo "TEST-"
-        const isTestToken = accessToken.startsWith('TEST-') || accessToken.includes('test') || accessToken.length < 50;
-        console.log('[DineSplit] Tipo de token detectado:', {
-          isTestToken,
-          tokenLength: accessToken.length,
-          tokenPrefix: accessToken.substring(0, 10) + '...',
-          note: isTestToken 
-            ? '⚠️ Token de TEST detectado. En sandbox, Mercado Pago puede requerir credenciales de PRODUCCIÓN con usuarios de prueba.'
-            : '✅ Token de PRODUCCIÓN detectado.'
+        // Credenciales genéricas TEST- de la app SplitMe → sandbox_init_point.
+        // Credenciales APP_USR del vendedor (incluso en prueba) → init_point.
+        const isAppTestCredential =
+          accessToken.startsWith('TEST-') || sellerPublicKey.startsWith('TEST-');
+        console.log('[DineSplit] Credenciales MP del vendedor:', {
+          isAppTestCredential,
+          sellerUserId: config.user_account || null,
+          tokenPrefix: accessToken.substring(0, 12) + '...',
+          publicKeyPrefix: sellerPublicKey ? sellerPublicKey.substring(0, 12) + '...' : '(sin public key)',
+          note: isAppTestCredential
+            ? 'Credenciales TEST de app detectadas. Preferí credenciales de producción del vendedor de prueba (Settings).'
+            : 'Credenciales de vendedor (APP_USR). Checkout con tarjetas/usuarios de prueba de MP.'
         });
 
         const cleanUrl = window.location.origin + window.location.pathname;
@@ -1966,22 +1968,21 @@ const App: React.FC = () => {
             statusText: response.statusText,
             errorCode: errorData.error,
             errorMessage: errorData.message,
-            isTestToken,
-            accessTokenPrefix: accessToken.substring(0, 10)
+            isAppTestCredential,
+            sellerUserId: config.user_account,
+            accessTokenPrefix: accessToken.substring(0, 12)
           });
           
-          // Detectar el error específico "Una de las partes con la que intentás hacer el pago es de prueba"
           const errorMessage = errorData.message || '';
           if (errorMessage.includes('prueba') || errorMessage.includes('test') || errorData.error === 'bad_request') {
             let helpfulMessage = 'Error de configuración de Mercado Pago:\n\n';
-            helpfulMessage += 'El error "Una de las partes con la que intentás hacer el pago es de prueba" generalmente ocurre cuando:\n\n';
-            helpfulMessage += '1. Estás usando un token de TEST en el sandbox\n';
-            helpfulMessage += '2. O hay una inconsistencia entre el tipo de token y el entorno\n\n';
-            helpfulMessage += `Tipo de token detectado: ${isTestToken ? 'TEST' : 'PRODUCCIÓN'}\n\n`;
+            helpfulMessage += 'Cada restaurante debe usar el Public Key y Access Token de SU cuenta vendedora en Settings.\n';
+            helpfulMessage += 'No uses las credenciales de prueba genéricas de la aplicación SplitMe.\n\n';
+            helpfulMessage += `Tipo detectado: ${isAppTestCredential ? 'credenciales TEST de app' : 'credenciales de vendedor (APP_USR)'}\n\n`;
             helpfulMessage += 'Solución:\n';
-            helpfulMessage += '- Si estás en sandbox, verifica que el access token en payment_configs sea el correcto\n';
-            helpfulMessage += '- Asegúrate de usar usuarios de prueba pero con credenciales apropiadas\n';
-            helpfulMessage += '- Revisa la documentación de Mercado Pago para tu entorno específico';
+            helpfulMessage += '- Iniciá sesión como el vendedor de prueba de ESTE local en mercadopago.com.ar\n';
+            helpfulMessage += '- Copiá Public Key y Access Token de producción de ese vendedor (y su User ID)\n';
+            helpfulMessage += '- Guardá en Settings → Medios de Pago con credenciales distintas por restaurante';
             
             throw new Error(helpfulMessage);
           }
@@ -1995,8 +1996,9 @@ const App: React.FC = () => {
         console.log('[DineSplit] Preference ID:', pref.id);
         console.log('[DineSplit] Sandbox URL:', pref.sandbox_init_point || 'No disponible');
         
-        // Usar sandbox_init_point si está disponible y estamos en desarrollo, sino usar init_point
-        const paymentUrl = pref.sandbox_init_point || pref.init_point;
+        const paymentUrl = isAppTestCredential
+          ? (pref.sandbox_init_point || pref.init_point)
+          : (pref.init_point || pref.sandbox_init_point);
         
         if (paymentUrl) {
           try {
