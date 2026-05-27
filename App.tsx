@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Routes, Route, useNavigate, useLocation, Navigate, useSearchParams } from 'react-router-dom';
 import { supabase } from './lib/supabase';
-import { AppView, Guest, OrderItem, MenuItem, OrderBatch } from './types';
+import { AppView, Guest, OrderItem, MenuItem, MenuSectionHeader, OrderBatch } from './types';
 import ScanView from './views/ScanView';
 import GuestInfoView from './views/GuestInfoView';
 import MenuView from './views/MenuView';
@@ -15,9 +15,11 @@ import CashPaymentView from './views/CashPaymentView';
 import CheckoutView from './views/CheckoutView';
 import ConfirmationView from './views/ConfirmationView';
 import FeedbackView from './views/FeedbackView';
+import TipView from './views/TipView';
 import JoinTableView from './views/JoinTableView';
 import { getSession, setSession, getOrderId, setOrderId, removeOrderId, clearSession, getActiveGuestId, setActiveGuestIdCookie, setTableAndRestaurant, getTableAndRestaurant } from './lib/sessionCookies';
 import { getGroupKeyForCategoryId, type OrderGroupKey } from './lib/orderGroups';
+import { getVariantGroups } from './lib/variantDisplay';
 
 const READY_SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3';
 
@@ -47,6 +49,26 @@ function getMessageFromStatusDetail(statusDetail: string | null): string {
   return map[d] || 'El pago fue rechazado. Por favor, intentá con otro medio de pago.';
 }
 
+/** Enriquece menu items con variant_groups si no los tienen (fallback cuando la relación no viene en el select) */
+async function enrichMenuItemsWithVariants(menuItemsData: any[], supabaseClient: typeof supabase): Promise<any[]> {
+  if (!menuItemsData?.length || menuItemsData.some((m: any) => (m.variant_groups ?? m.variant_group)?.length > 0)) {
+    return menuItemsData;
+  }
+  try {
+    const { data: vgData } = await supabaseClient.from('variant_groups').select('*, variant_options(*)').in('menu_item_id', menuItemsData.map((m: any) => m.id));
+    if (!vgData?.length) return menuItemsData;
+    const vgByMenu = (vgData as any[]).reduce((acc: any, vg) => {
+      const mid = vg.menu_item_id;
+      if (!acc[mid]) acc[mid] = [];
+      acc[mid].push({ ...vg, variant_options: vg.variant_options ?? vg.variant_option ?? [] });
+      return acc;
+    }, {});
+    return menuItemsData.map((m: any) => ({ ...m, variant_groups: vgByMenu[m.id] || [] }));
+  } catch (_) {
+    return menuItemsData;
+  }
+}
+
 const App: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -60,7 +82,7 @@ const App: React.FC = () => {
   const clearParam = searchParams.get('clear');
 
   const [currentView, setCurrentView] = useState<AppView>('INIT');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [sendingGroup, setSendingGroup] = useState<OrderGroupKey | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -74,6 +96,7 @@ const App: React.FC = () => {
   }, [currentWaiter]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
+  const [sectionHeaders, setSectionHeaders] = useState<MenuSectionHeader[]>([]);
   const [guests, setGuests] = useState<Guest[]>([{ id: '1', name: 'Comensal 1 (Tú)', isHost: true }]);
   const [activeGuestId, setActiveGuestId] = useState<string>('1');
   
@@ -107,6 +130,8 @@ const App: React.FC = () => {
   const guestsChannelRef = useRef<any>(null);
   const activeGuestIdRef = useRef<string>('1');
   const prevPathRef = useRef<string | null>(null);
+  const menuItemsRef = useRef<MenuItem[]>([]);
+  useEffect(() => { menuItemsRef.current = menuItems; }, [menuItems]);
 
   const fetchOrderItemsFromDB = useCallback(async (orderId: string) => {
     if (!supabase) return;
@@ -157,6 +182,39 @@ const App: React.FC = () => {
           }
         }
         
+        // Cargar variantes: prioridad variant_selections (columna) > notes (retrocompatibilidad)
+        let selectedReplaceOptionId: string | undefined;
+        let selectedAddOptionIds: string[] | undefined;
+        let variantSelections: string[] = [];
+        if (item.variant_selections && Array.isArray(item.variant_selections)) {
+          variantSelections = item.variant_selections.filter((id: any) => typeof id === 'string' && id.length > 0);
+        }
+        if (variantSelections.length > 0) {
+          // Resolver replace vs add usando menuItem (si está disponible)
+          const menuItem = menuItemsRef.current?.find((m: MenuItem) => m.id === item.menu_item_id);
+          if (menuItem?.variant_groups) {
+            const allOpts = menuItem.variant_groups.flatMap(g => g.variant_options || []);
+            variantSelections.forEach((id: string) => {
+              const opt = allOpts.find((o: any) => o.id === id);
+              if (opt && (opt.price_type || '').toLowerCase() === 'replace') selectedReplaceOptionId = id;
+              else if (opt && (opt.price_type || '').toLowerCase() === 'add') selectedAddOptionIds = [...(selectedAddOptionIds || []), id];
+            });
+          } else {
+            // Sin menuItem: asumir primer ID es replace, resto add (heurística)
+            if (variantSelections.length > 0) selectedReplaceOptionId = variantSelections[0];
+            if (variantSelections.length > 1) selectedAddOptionIds = variantSelections.slice(1);
+          }
+        } else if (item.notes && typeof item.notes === 'string') {
+          // Retrocompatibilidad: parsear desde notes
+          const variantReplaceMatch = item.notes.match(/VARIANT_REPLACE:([a-fA-F0-9-]+)/i);
+          if (variantReplaceMatch) selectedReplaceOptionId = variantReplaceMatch[1];
+          const variantAddMatch = item.notes.match(/VARIANT_ADD:([^|]*)/i);
+          if (variantAddMatch && variantAddMatch[1]) {
+            selectedAddOptionIds = variantAddMatch[1].split(',').map(s => s.trim()).filter(Boolean);
+          }
+          variantSelections = [selectedReplaceOptionId, ...(selectedAddOptionIds || [])].filter(Boolean) as string[];
+        }
+
         // Usar el guest_id directamente de la base de datos (UUID de order_guests)
         const guestId = item.guest_id;
         const status = item.status || (item.batch_id ? 'pedido' : 'elegido'); // Retrocompatibilidad
@@ -171,7 +229,11 @@ const App: React.FC = () => {
           isConfirmed: status === 'pedido', // Confirmado si status es 'pedido'
           status: status, // Guardar el status
           extras,
-          removedIngredients
+          removedIngredients,
+          unitPrice: item.unit_price != null ? Number(item.unit_price) : undefined,
+          selectedReplaceOptionId,
+          selectedAddOptionIds,
+          variant_selections: variantSelections.length > 0 ? variantSelections : undefined
         };
       });
       
@@ -343,19 +405,28 @@ const App: React.FC = () => {
 
       // Cargar datos complementarios
       // Buscar el mesero asignado a la mesa usando waiter_id
-      const [waiterRes, catRes, itemRes] = await Promise.all([
+      const [waiterRes, catRes, itemRes, sectionHeadersRes] = await Promise.all([
         tableData.waiter_id 
           ? supabase.from('waiters').select('*').eq('id', tableData.waiter_id).maybeSingle()
           : Promise.resolve({ data: null, error: null }),
         supabase.from('categories').select('*').eq('restaurant_id', resData.id).order('sort_order'),
-        supabase.from('menu_items').select('*').eq('restaurant_id', resData.id).order('sort_order')
+        supabase.from('menu_items').select('*, variant_groups(*, variant_options(*))').eq('restaurant_id', resData.id).order('sort_order'),
+        supabase.from('menu_section_headers').select('*').eq('restaurant_id', resData.id).order('sort_order')
       ]);
+
+      let menuItemsData = itemRes.data || [];
+      if (itemRes.error) {
+        const fallback = await supabase.from('menu_items').select('*').eq('restaurant_id', resData.id).order('sort_order');
+        menuItemsData = fallback.data || [];
+      }
+      menuItemsData = await enrichMenuItemsWithVariants(menuItemsData, supabase);
 
       setRestaurant(resData);
       setCurrentTable(tableData);
       setCurrentWaiter(waiterRes.data || null);
       setCategories(catRes.data || []);
-      setMenuItems(itemRes.data || []);
+      setSectionHeaders((sectionHeadersRes.data as MenuSectionHeader[]) || []);
+      setMenuItems(menuItemsData);
       setTableAndRestaurant(tableData, resData);
       
       // PASO 3: Verificar orden activa
@@ -581,7 +652,7 @@ const App: React.FC = () => {
     let { data: orderGuests, error } = await supabase
       .from('order_guests')
       .select('*')
-      .eq('order_id', activeOrderId);
+      .eq('order_id', orderId);
     
     if (error) {
       console.error("[DineSplit] Error en query sin order:", error);
@@ -589,7 +660,7 @@ const App: React.FC = () => {
       const result2 = await supabase
         .from('order_guests')
         .select('*')
-        .eq('order_id', activeOrderId)
+        .eq('order_id', orderId)
         .order('position', { ascending: true });
       orderGuests = result2.data;
       error = result2.error;
@@ -644,7 +715,7 @@ const App: React.FC = () => {
         const { data: allGuestsForOrder, error: simpleError } = await supabase
           .from('order_guests')
           .select('id, order_id, name, position')
-          .eq('order_id', activeOrderId);
+          .eq('order_id', orderId);
         
         console.log("[DineSplit] Query simple (sin select *):", allGuestsForOrder?.length || 0, "guests");
         if (simpleError) {
@@ -707,7 +778,7 @@ const App: React.FC = () => {
       const { data: itemsData, error: itemsError } = await supabase
         .from('order_items')
         .select('guest_id')
-        .eq('order_id', activeOrderId);
+        .eq('order_id', orderId);
       
       if (itemsError) {
         console.error("[DineSplit] Error al buscar items para fallback:", itemsError);
@@ -777,7 +848,7 @@ const App: React.FC = () => {
             const { data: directQuery, error: directError } = await supabase
               .from('order_guests')
               .select('id, order_id, name, is_host, position')
-              .eq('order_id', activeOrderId);
+              .eq('order_id', orderId);
             
             if (directError) {
               console.error("[DineSplit] ❌ Error de RLS en query directa:", directError);
@@ -957,6 +1028,32 @@ const App: React.FC = () => {
     }
   }, [supabase, activeOrderId]);
 
+  /** Refresca menu items (disponibilidad y stock) para visibilidad en tiempo real al cambiar sección/subsección. */
+  const refreshMenuItems = useCallback(async () => {
+    if (!restaurant?.id || !supabase) return;
+    try {
+      const { data, error } = await supabase
+        .from('menu_items')
+        .select('*, variant_groups(*, variant_options(*))')
+        .eq('restaurant_id', restaurant.id)
+        .order('sort_order');
+      if (error) {
+        const fallback = await supabase.from('menu_items').select('*').eq('restaurant_id', restaurant.id).order('sort_order');
+        if (fallback.data) {
+          const enriched = await enrichMenuItemsWithVariants(fallback.data, supabase);
+          setMenuItems(enriched);
+        }
+        return;
+      }
+      if (data) {
+        const enriched = await enrichMenuItemsWithVariants(data, supabase);
+        setMenuItems(enriched);
+      }
+    } catch (e) {
+      console.warn('[DineSplit] Error al refrescar menu items:', e);
+    }
+  }, [restaurant?.id, supabase]);
+
   // Función para actualizar múltiples nombres de comensales y agregar nuevos
   const handleSaveGuestChanges = useCallback(async (updatedGuests: Guest[], newGuests: Guest[]) => {
     if (!supabase || !activeOrderId) return false;
@@ -1089,7 +1186,8 @@ const App: React.FC = () => {
   }, [supabase, activeOrderId, currentTable, guests.length]);
 
   useEffect(() => {
-const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/checkout', '/individual-share', '/transfer-payment', '/cash-payment', '/confirmation', '/guest-selection', '/join-table'];
+  const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/checkout', '/individual-share', '/transfer-payment', '/cash-payment', '/tip', '/feedback', '/confirmation', '/guest-selection', '/join-table'];
+    let cancelled = false;
     
     const initApp = async () => {
       // ?clear=1: limpia cookies de sesión/mesa y muestra la pantalla de scan
@@ -1100,6 +1198,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
         setCurrentWaiter(null);
         setMenuItems([]);
         setCategories([]);
+        setSectionHeaders([]);
         setActiveOrderId(null);
         setCart([]);
         setBatches([]);
@@ -1143,12 +1242,13 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
           const tableId = orderData.table_id || orderData.tables?.id;
 
           // Cargar restaurante, mesa (con capacity), categories, menuItems, guests en paralelo
-          const [restaurantRes, tableRes, categoriesRes, menuItemsRes, guestsRes] = await Promise.all([
+          const [restaurantRes, tableRes, categoriesRes, menuItemsRes, guestsRes, sectionHeadersRes] = await Promise.all([
             supabase.from('restaurants').select('*').eq('id', restaurantId).maybeSingle(),
             tableId ? supabase.from('tables').select('*').eq('id', tableId).maybeSingle() : Promise.resolve({ data: orderData.tables, error: null }),
             supabase.from('categories').select('*').eq('restaurant_id', restaurantId).order('sort_order'),
-            supabase.from('menu_items').select('*').eq('restaurant_id', restaurantId).order('sort_order'),
-            supabase.from('order_guests').select('*').eq('order_id', orderIdForLoad).order('position', { ascending: true })
+            supabase.from('menu_items').select('*, variant_groups(*, variant_options(*))').eq('restaurant_id', restaurantId).order('sort_order'),
+            supabase.from('order_guests').select('*').eq('order_id', orderIdForLoad).order('position', { ascending: true }),
+            supabase.from('menu_section_headers').select('*').eq('restaurant_id', restaurantId).order('sort_order')
           ]);
 
           if (restaurantRes.error || !restaurantRes.data) {
@@ -1183,7 +1283,8 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
           setRestaurant(restaurantRes.data);
           setCurrentTable(finalTableData);
           setCategories(categoriesRes.data || []);
-          setMenuItems(menuItemsRes.data || []);
+          setSectionHeaders((sectionHeadersRes.data as MenuSectionHeader[]) || []);
+          setMenuItems(await enrichMenuItemsWithVariants(menuItemsRes.data || [], supabase));
           setActiveOrderId(orderIdForLoad);
           setOrderId(orderIdForLoad);
 
@@ -1201,8 +1302,9 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
 
           // Cargar guests con sus montos individuales y estado de pago
           const guestIdToSet = guestIdParam || (isAnyMpReturn && mpReturn?.guestId) || undefined;
+          let guestsFromDB: Guest[] = [];
           if (guestsRes.data) {
-            const guestsFromDB: Guest[] = guestsRes.data.map(og => ({
+            guestsFromDB = guestsRes.data.map(og => ({
               id: og.id,
               name: og.name,
               isHost: og.is_host || false,
@@ -1222,7 +1324,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
           await fetchOrderItemsFromDB(orderIdForLoad);
           
           const currentPath = location.pathname;
-          const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/checkout', '/individual-share', '/transfer-payment', '/cash-payment', '/confirmation', '/guest-selection'];
+          const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/checkout', '/individual-share', '/transfer-payment', '/cash-payment', '/tip', '/feedback', '/confirmation', '/guest-selection'];
           
           if (!routesRequiringSession.includes(currentPath)) {
             const preserveQuery = location.search || '';
@@ -1304,12 +1406,13 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             }
 
             const restaurantId = orderData.tables.restaurant_id;
-            const [restaurantRes, categoriesRes, menuItemsRes, guestsRes, tableRes] = await Promise.all([
+            const [restaurantRes, categoriesRes, menuItemsRes, guestsRes, tableRes, sectionHeadersRes] = await Promise.all([
               supabase.from('restaurants').select('*').eq('id', restaurantId).maybeSingle(),
               supabase.from('categories').select('*').eq('restaurant_id', restaurantId).order('sort_order'),
-              supabase.from('menu_items').select('*').eq('restaurant_id', restaurantId).order('sort_order'),
+              supabase.from('menu_items').select('*, variant_groups(*, variant_options(*))').eq('restaurant_id', restaurantId).order('sort_order'),
               supabase.from('order_guests').select('*').eq('order_id', orderId).order('position', { ascending: true }),
-              supabase.from('tables').select('*').eq('id', orderData.table_id).maybeSingle()
+              supabase.from('tables').select('*').eq('id', orderData.table_id).maybeSingle(),
+              supabase.from('menu_section_headers').select('*').eq('restaurant_id', restaurantId).order('sort_order')
             ]);
 
             const finalTableData = tableRes?.data || null;
@@ -1346,7 +1449,8 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
 
             setRestaurant(restaurantRes.data);
             setCategories(categoriesRes.data || []);
-            setMenuItems(menuItemsRes.data || []);
+            setSectionHeaders((sectionHeadersRes.data as MenuSectionHeader[]) || []);
+            setMenuItems(await enrichMenuItemsWithVariants(menuItemsRes.data || [], supabase));
             setActiveOrderId(orderId);
 
             // Cargar waiter si la mesa tiene waiter_id
@@ -1416,8 +1520,28 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
         }
       }
     };
-    
-    initApp();
+
+    const timeoutId = setTimeout(() => {
+      if (cancelled) return;
+      console.warn('[DineSplit] Init timeout — showing scan view');
+      setLoading(false);
+      navigate('/scan');
+    }, 8000);
+
+    initApp()
+      .catch((err) => {
+        if (cancelled) return;
+        console.error("[DineSplit] Error en initApp:", err);
+        setLoading(false);
+        setError(null);
+        navigate('/scan');
+      })
+      .finally(() => clearTimeout(timeoutId));
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
   }, [resParam, tableParam, orderIdParam, guestIdParam, clearParam, paymentStatus, handleStartSession, fetchOrderItemsFromDB, navigate]);
 
   // Función para procesar el pago exitoso
@@ -1565,7 +1689,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
           clearMpReturn();
           if (success) {
             clearSession();
-            navigateToView('CONFIRMATION');
+            navigate('/tip');
           } else {
             alert("Hubo un error al registrar el pago. Por favor, contacta al restaurante.");
           }
@@ -1573,7 +1697,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
       } else {
         clearMpReturn();
         clearSession();
-        navigateToView('CONFIRMATION');
+        navigate('/tip');
       }
       return;
     }
@@ -1664,10 +1788,11 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
           .filter(item => item.guestId === guest.id)
           .map(item => {
             const menuItem = menuItems.find(m => m.id === item.itemId);
+            const unitPrice = item.unitPrice ?? (menuItem?.price ?? 0);
             return {
               name: menuItem?.name || 'Producto',
               quantity: item.quantity,
-              price: menuItem?.price || 0
+              price: unitPrice
             };
           })
       }));
@@ -1742,6 +1867,9 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
         });
 
         const cleanUrl = window.location.origin + window.location.pathname;
+        const supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL || 'https://hqaiuywzklrwywdhmqxw.supabase.co';
+        const webhookBase = `${supabaseUrl.replace(/\/$/, '')}/functions/v1/mercadopago-webhook`;
+        const notificationUrl = `${webhookBase}?source_news=webhooks&restaurant_id=${restaurant.id}`;
         // Incluir guestId en la URL de retorno para poder identificar quién pagó
         const successUrl = `${cleanUrl}?status=success&orderId=${activeOrderId}&guestId=${guestId}`;
         const failureUrl = `${cleanUrl}?status=failure&orderId=${activeOrderId}&guestId=${guestId}`;
@@ -1789,6 +1917,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             currency_id: 'ARS' 
           }],
           external_reference: `${activeOrderId}|${guestId}`.substring(0, 256), // Máximo 256 caracteres
+          notification_url: notificationUrl,
           back_urls: {
             success: backUrls.success,
             failure: backUrls.failure,
@@ -1905,9 +2034,6 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
 
     setSendingGroup(groupKey);
     try {
-      const { data: existingOrder } = await supabase.from('orders').select('total_amount').eq('id', activeOrderId).single();
-      const currentTotal = Number(existingOrder?.total_amount || 0);
-      
       const itemIds = pendingItems.map(i => i.id).filter(id => id && typeof id === 'string' && id.length > 10);
       if (itemIds.length === 0) throw new Error("No hay items válidos para enviar.");
 
@@ -1943,11 +2069,8 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
         if (retryErr) throw new Error(`Error al actualizar items: ${retryErr.message}`);
       }
 
-      const newItemsTotal = pendingItems.reduce((sum, item) => {
-        const p = menuItems.find(m => m.id === item.itemId)?.price || 0;
-        return sum + Number(p) * item.quantity;
-      }, 0);
-      await supabase.from('orders').update({ total_amount: currentTotal + newItemsTotal }).eq('id', activeOrderId);
+      // total_amount se actualiza por trigger en la BD (excluyendo batches CREADO)
+      // No actualizar manualmente para evitar sobrescribir el valor correcto
 
       await fetchOrderItemsFromDB(activeOrderId);
       const { data: updatedBatches } = await supabase
@@ -1956,8 +2079,6 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
         .eq('order_id', activeOrderId)
         .order('batch_number', { ascending: true });
       if (updatedBatches) setBatches(updatedBatches);
-
-      navigate('/progress');
     } catch (err: any) {
       alert(`Error al enviar pedido: ${err.message}`);
     } finally {
@@ -1981,6 +2102,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
       '/individual-share': 'INDIVIDUAL_SHARE',
       '/transfer-payment': 'TRANSFER_PAYMENT',
       '/cash-payment': 'CASH_PAYMENT',
+      '/tip': 'TIP',
       '/feedback': 'FEEDBACK',
       '/confirmation': 'CONFIRMATION'
     };
@@ -2005,6 +2127,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
       'INDIVIDUAL_SHARE': '/individual-share',
       'TRANSFER_PAYMENT': '/transfer-payment',
       'CASH_PAYMENT': '/cash-payment',
+      'TIP': '/tip',
       'FEEDBACK': '/feedback',
       'CONFIRMATION': '/confirmation'
     };
@@ -2020,32 +2143,86 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
     const g = guests.find(x => x.id === pm.waitingGuestId);
     if (g?.paid) {
       setPaymentReturnMessage(null);
-      navigateToView('CONFIRMATION');
+      navigate('/tip');
     }
-  }, [guests, paymentReturnMessage, navigateToView]);
+  }, [guests, paymentReturnMessage, navigate]);
 
   // Función para agregar item al carrito y guardarlo inmediatamente en la BD.
   // Los items se insertan con batch_id=null hasta que se envíen por grupo en "Pedir ahora".
-  const handleAddToCart = useCallback(async (item: MenuItem, guestId: string, extras: string[], removedIngredients: string[]) => {
+  const handleAddToCart = useCallback(async (
+    item: MenuItem,
+    guestId: string,
+    extras: string[],
+    removedIngredients: string[],
+    variantOptions?: { unitPrice: number; selectedReplaceOptionId?: string | null; selectedAddOptionIds?: string[] }
+  ) => {
     if (!activeOrderId || !supabase) {
       console.error("[DineSplit] No hay orden activa o supabase no está disponible");
       return;
     }
 
     try {
+      // Verificar disponibilidad y stock: primero en estado local, luego en BD (tiempo real)
+      const localUnavailable = item.availability === false;
+      const { data: freshItem } = await supabase
+        .from('menu_items')
+        .select('availability, stock_quantity')
+        .eq('id', item.id)
+        .maybeSingle();
+
+      const rawAvail = freshItem?.availability;
+      const dbUnavailable = rawAvail === false || rawAvail === 'false' || rawAvail === 0;
+      const rawStock = freshItem?.stock_quantity;
+      const dbNoStock = rawStock != null && Number(rawStock) < 1;
+
+      if (localUnavailable || dbUnavailable || dbNoStock) {
+        setMenuItems(prev => prev.map(m => m.id === item.id ? { ...m, availability: false } : m));
+        const err = new Error('PRODUCTO_NO_DISPONIBLE');
+        throw err;
+      }
+
       const menuItem = menuItems.find(m => m.id === item.id);
+      const unitPrice = variantOptions?.unitPrice ?? Number(menuItem?.price || 0);
       
+      // Separar: personalización (ingredientsToAdd) -> extras; variantes -> variant_selections
+      const ingredientsToAdd = item.customer_customization?.ingredientsToAdd || [];
+      const rawVariantSelections = variantOptions?.variantSelections?.length
+        ? variantOptions.variantSelections
+        : [
+            ...(variantOptions?.selectedReplaceOptionId ? [variantOptions.selectedReplaceOptionId] : []),
+            ...(variantOptions?.selectedAddOptionIds || [])
+          ];
+      
+      const personalizationFromVariants: string[] = [];
+      const variantOnlyIds: string[] = [];
+      const groups = getVariantGroups(item);
+      const allOpts = groups.flatMap(g => ((g.variant_options ?? (g as any).variant_option) || []) as { id: string; name?: string; price_type?: string }[]);
+      
+      rawVariantSelections.forEach((id: string) => {
+        const opt = allOpts.find((o: any) => o.id === id);
+        const isAddOpt = opt && ((opt.price_type || '').toLowerCase() === 'add');
+        if (isAddOpt && opt && ingredientsToAdd.some((ing: string) => (ing || '').trim().toLowerCase() === (opt.name || '').trim().toLowerCase())) {
+          personalizationFromVariants.push(opt.name || '');
+        } else {
+          variantOnlyIds.push(id);
+        }
+      });
+
+      const finalExtras = [...new Set([...extras, ...personalizationFromVariants])].filter(Boolean);
+      const variantSelections = variantOnlyIds;
+
       // Insertar sin batch_id: los items se agrupan por categoría y se envían por separado
       const insertPayload: any = {
         order_id: activeOrderId,
         guest_id: guestId,
         menu_item_id: item.id,
         quantity: 1,
-        unit_price: Number(menuItem?.price || 0),
-        extras: extras.length > 0 ? extras : null,
+        unit_price: unitPrice,
+        extras: finalExtras.length > 0 ? finalExtras : null,
         removed_ingredients: removedIngredients.length > 0 ? removedIngredients : null,
         batch_id: null, // Se asigna al hacer "Pedir ahora" por grupo
-        status: 'elegido'
+        status: 'elegido',
+        ...(variantSelections.length > 0 && { variant_selections: variantSelections })
       };
       
       const { data: newItem, error } = await supabase
@@ -2074,13 +2251,20 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
         batch_id: null,
         isConfirmed: false,
         status: newItem.status || 'elegido',
-        extras,
-        removedIngredients
+        extras: finalExtras,
+        removedIngredients,
+        unitPrice: variantOptions ? unitPrice : undefined,
+        selectedReplaceOptionId: variantOptions?.selectedReplaceOptionId ?? undefined,
+        selectedAddOptionIds: variantOnlyIds.filter(id => allOpts.some((o: any) => o.id === id && (o.price_type || '').toLowerCase() === 'add')),
+        variant_selections: variantOnlyIds.length > 0 ? variantOnlyIds : undefined
       }]);
     } catch (err: any) {
+      if (err?.message === 'PRODUCTO_NO_DISPONIBLE') {
+        throw err; // MenuView muestra modal "Producto no disponible" y marca AGOTADO
+      }
       console.error("[DineSplit] Error al agregar item al carrito:", err);
       alert(`Error al agregar plato: ${err.message}`);
-      throw err; // Re-lanzar el error para que el componente pueda manejarlo
+      throw err;
     }
   }, [activeOrderId, supabase, menuItems]);
 
@@ -2118,6 +2302,8 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
       if (updates.quantity !== undefined) updateData.quantity = updates.quantity;
       if (updates.extras !== undefined) updateData.extras = updates.extras.length > 0 ? updates.extras : null;
       if (updates.removedIngredients !== undefined) updateData.removed_ingredients = updates.removedIngredients.length > 0 ? updates.removedIngredients : null;
+      if (updates.variant_selections !== undefined) updateData.variant_selections = updates.variant_selections.length > 0 ? updates.variant_selections : [];
+      if (updates.unitPrice !== undefined) updateData.unit_price = updates.unitPrice;
 
       const { error } = await supabase
         .from('order_items')
@@ -2133,6 +2319,42 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
       alert(`Error al actualizar plato: ${err.message}`);
     }
   }, [cart, supabase]);
+
+  const handleRemoveItemFromBatch = useCallback(async (cartItemId: string) => {
+    if (!supabase || !activeOrderId) return;
+    const item = cart.find(i => i.id === cartItemId);
+    const batchId = item?.batch_id ?? null;
+    try {
+      const { error } = await supabase
+        .from('order_items')
+        .update({ batch_id: null, status: 'elegido' })
+        .eq('id', cartItemId);
+
+      if (error) throw error;
+
+      await fetchOrderItemsFromDB(activeOrderId);
+
+      if (batchId) {
+        const { count } = await supabase
+          .from('order_items')
+          .select('*', { count: 'exact', head: true })
+          .eq('batch_id', batchId);
+        if (count === 0) {
+          await supabase.from('order_batches').delete().eq('id', batchId);
+        }
+      }
+
+      const { data: updatedBatches } = await supabase
+        .from('order_batches')
+        .select('*')
+        .eq('order_id', activeOrderId)
+        .order('batch_number', { ascending: true });
+      if (updatedBatches) setBatches(updatedBatches);
+    } catch (err: any) {
+      console.error("[DineSplit] Error al quitar item del batch:", err);
+      alert(`Error al quitar el plato del pedido: ${err.message}`);
+    }
+  }, [supabase, activeOrderId, fetchOrderItemsFromDB, cart]);
 
   if (loading) {
     return (
@@ -2180,11 +2402,6 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
         </div>
       )}
 
-      {currentTable && location.pathname !== '/scan' && (
-        <div className="absolute top-0 right-0 z-[100] px-3 py-1 bg-primary text-background-dark text-[10px] font-black uppercase tracking-widest rounded-bl-xl shadow-lg">
-          Mesa {currentTable.table_number}
-        </div>
-      )}
       <Routes>
         <Route path="/" element={<Navigate to={`/scan${location.search || ''}`} replace />} />
         <Route path="/scan" element={<ScanView onNext={handleStartSession} restaurantName={undefined} />} />
@@ -2216,7 +2433,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
           />
         } />
         <Route path="/menu/:category?/:subcategory?" element={
-          <MenuView 
+          <MenuView
             onNext={() => navigateToView('ORDER_SUMMARY')} 
             guests={guests} 
             setGuests={setGuests} 
@@ -2231,7 +2448,8 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             editingCartItem={editingCartItem} 
             onCancelEdit={() => setEditingCartItem(null)} 
             menuItems={menuItems} 
-            categories={categories} 
+            categories={categories}
+            sectionHeaders={sectionHeaders}
             restaurant={restaurant} 
             table={currentTable}
             waiter={currentWaiter}
@@ -2240,6 +2458,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             identifiedGuestId={getActiveGuestId()}
             pendingGuestSelection={pendingGuestSelection}
             onGuestIdentified={(id) => { setActiveGuestIdCookie(id); setPendingGuestSelection(false); }}
+            onRefreshMenuItems={refreshMenuItems}
           />
         } />
         <Route path="/order-summary" element={
@@ -2270,12 +2489,14 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             onPay={() => navigateToView('SPLIT_BILL')} 
             sendingGroup={sendingGroup} 
             onUpdateQuantity={(id, d) => handleUpdateCartItem(id, { quantity: Math.max(0, (cart.find(it => it.id === id)?.quantity || 1) + d) })} 
+            onRemoveItemFromBatch={handleRemoveItemFromBatch}
             menuItems={menuItems} 
             categories={categories} 
             tableNumber={currentTable?.table_number} 
             waiter={currentWaiter}
             currentGuestId={guestIdParam || getActiveGuestId() || activeGuestId}
             activeOrderId={activeOrderId}
+            restaurant={restaurant}
           />
         } />
         <Route path="/progress" element={
@@ -2285,7 +2506,8 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             activeOrderId={activeOrderId} 
             onNext={() => navigateToView('SPLIT_BILL')} 
             onBack={() => navigateToView('MENU')} 
-            onRedirectToFeedback={() => navigateToView('CONFIRMATION')} 
+            onRedirectToFeedback={() => navigate('/tip')} 
+            onRemoveItemFromBatch={handleRemoveItemFromBatch}
             tableNumber={currentTable?.table_number} 
             menuItems={menuItems}
             categories={categories}
@@ -2295,7 +2517,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
           <SplitBillView 
             guests={guests} 
             cart={cartForSplit} 
-            onBack={() => navigateToView('PROGRESS')} 
+            onBack={() => navigateToView('ORDER_SUMMARY')} 
             onConfirm={async (shares) => { 
               console.log("[DineSplit] Confirmar División clickeado. Shares recibidos:", shares);
               setSplitData(shares);
@@ -2345,7 +2567,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
                 navigateToView('INDIVIDUAL_SHARE');
               }
             }}
-            onNavigateToTip={() => navigateToView('CONFIRMATION')}
+            onNavigateToTip={() => navigate('/tip')}
             cart={cartForSplit} 
             guests={guests} 
             menuItems={menuItems} 
@@ -2408,7 +2630,7 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
         <Route path="/cash-payment" element={
           <CashPaymentView 
             onBack={() => navigateToView('INDIVIDUAL_SHARE')}
-            onNext={() => navigate('/feedback')}
+            onNext={() => navigate('/tip')}
             amount={(() => {
               // Calcular el amount basándose en el guestId de la URL o activeGuestId
               const targetGuestId = guestIdParam || activeGuestId;
@@ -2429,7 +2651,8 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
                 const guestCartItems = cartForSplit.filter(item => item.guestId === targetGuestId);
                 const calculatedAmount = guestCartItems.reduce((sum, item) => {
                   const menuItem = menuItems.find(m => m.id === item.itemId);
-                  return sum + (menuItem ? menuItem.price * item.quantity : 0);
+                  const unitPrice = item.unitPrice ?? (menuItem?.price ?? 0);
+                  return sum + unitPrice * item.quantity;
                 }, 0);
                 if (calculatedAmount > 0) {
                   return calculatedAmount;
@@ -2447,11 +2670,30 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
             restaurant={restaurant}
           />
         } />
+        <Route path="/tip" element={
+          <TipView
+            onNext={() => navigate('/feedback')}
+            onSkip={() => navigate('/feedback')}
+            cart={cartForSplit}
+            menuItems={menuItems}
+            guestPaidAmount={(() => {
+              const targetGuestId = guestIdParam || getActiveGuestId() || activeGuestId;
+              const targetGuest = guests.find(g => g.id === targetGuestId);
+              if (targetGuest?.individualAmount != null) return targetGuest.individualAmount;
+              const guestShare = splitData?.find(s => s.id === targetGuestId);
+              if (guestShare?.total != null) return guestShare.total;
+              return null;
+            })()}
+            currentGuestId={guestIdParam || getActiveGuestId() || activeGuestId}
+            waiter={currentWaiter}
+            restaurant={restaurant}
+          />
+        } />
         <Route path="/feedback" element={
           <FeedbackView
             onNext={() => navigate('/confirmation')}
             onSkip={() => navigate('/confirmation')}
-            cart={cart}
+            cart={cartForSplit}
             menuItems={menuItems}
             waiter={currentWaiter}
             restaurant={restaurant}
@@ -2460,8 +2702,14 @@ const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-
         <Route path="/confirmation" element={
           <ConfirmationView 
             onRestart={() => { 
-              clearSession(); 
-              navigate('/scan'); 
+              const oid = activeOrderId || orderIdParam;
+              const gid = guestIdParam || getActiveGuestId() || activeGuestId;
+              if (oid && gid) {
+                navigate(`/individual-share?orderId=${oid}&guestId=${gid}`);
+              } else {
+                clearSession();
+                navigate('/scan');
+              }
             }}
             onBackToStart={() => {
               clearSession();

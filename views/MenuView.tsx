@@ -1,15 +1,16 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { Guest, MenuItem, OrderItem } from '../types';
+import { Guest, MenuItem, MenuSectionHeader, OrderItem, VariantGroup, VariantOption } from '../types';
 import { getInitials, getGuestColor } from './GuestInfoView';
 import WaiterRequestModal from './WaiterRequestModal';
+import { getVariantGroups } from '../lib/variantDisplay';
 
 interface MenuViewProps {
   guests: Guest[];
   setGuests: React.Dispatch<React.SetStateAction<Guest[]>>;
   cart: OrderItem[];
-  onAddToCart: (item: MenuItem, guestId: string, extras: string[], removedIngredients: string[]) => Promise<void>;
+  onAddToCart: (item: MenuItem, guestId: string, extras: string[], removedIngredients: string[], variantOptions?: { unitPrice: number; selectedReplaceOptionId?: string | null; selectedAddOptionIds?: string[]; variantSelections?: string[] }) => Promise<void>;
   onUpdateCartItem: (cartItemId: string, updates: Partial<OrderItem>) => void;
   onNext: () => void;
   onIndividualShare: () => void;
@@ -21,6 +22,7 @@ interface MenuViewProps {
   onCancelEdit: () => void;
   menuItems: MenuItem[];
   categories: any[];
+  sectionHeaders?: MenuSectionHeader[];
   table?: any;
   restaurant?: any;
   waiter?: any;
@@ -32,6 +34,8 @@ interface MenuViewProps {
   pendingGuestSelection?: boolean;
   /** Se llama cuando el usuario elige su comensal en el modal (junto con onSelectGuest). Actualiza cookie y limpia pending. */
   onGuestIdentified?: (guestId: string) => void;
+  /** Refresca disponibilidad y stock de productos al cambiar sección/subsección (tiempo real). */
+  onRefreshMenuItems?: () => Promise<void>;
 }
 
 export const formatPrice = (price: number) => {
@@ -152,7 +156,7 @@ const MenuView: React.FC<MenuViewProps> = ({
   guests, setGuests, cart, onAddToCart, onUpdateCartItem, onNext, 
   selectedGuestId, onSelectGuest, initialCategory, onCategoryChange, 
   editingCartItem, onCancelEdit, menuItems, categories: supabaseCategories,
-  table, restaurant, waiter, onSaveGuestChanges, activeOrderId, identifiedGuestId, pendingGuestSelection, onGuestIdentified
+  sectionHeaders = [], table, restaurant, waiter, onSaveGuestChanges, activeOrderId, identifiedGuestId, pendingGuestSelection, onGuestIdentified, onRefreshMenuItems
 }) => {
   const { category: categorySlug, subcategory: subcategorySlug } = useParams<{ category?: string; subcategory?: string }>();
   const navigate = useNavigate();
@@ -165,6 +169,12 @@ const MenuView: React.FC<MenuViewProps> = ({
   const [newGuestName, setNewGuestName] = useState('');
   const [selectedSubcategory, setSelectedSubcategory] = useState<string | null>(null);
   const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
+  const [selectedReplaceOptionId, setSelectedReplaceOptionId] = useState<string | null>(null);
+  const [selectedReplaceOptionIds, setSelectedReplaceOptionIds] = useState<Record<string, string[]>>({}); // Para grupos con selection=multiple
+  const [selectedAddOptionIds, setSelectedAddOptionIds] = useState<string[]>([]);
+
+  /** Imagen del producto o logo del restaurante como fallback cuando no hay imagen. */
+  const getItemImageUrl = (imageUrl?: string | null) => (imageUrl || '').trim() || restaurant?.logo_url || '';
 
   // Debug: Log waiter data
   useEffect(() => {
@@ -194,15 +204,30 @@ const MenuView: React.FC<MenuViewProps> = ({
     }
   }, [subcategorySlug, initialCategory, supabaseCategories]);
 
+  // Refrescar disponibilidad y stock al entrar a una sección o subsección (tiempo real)
+  useEffect(() => {
+    onRefreshMenuItems?.();
+  }, [initialCategory, selectedSubcategory, onRefreshMenuItems]);
+
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
-  const mainScrollRef = useRef<HTMLElement | null>(null);
+  const mainScrollRef = useRef<HTMLDivElement | null>(null);
   const guestsRowRef = useRef<HTMLDivElement | null>(null);
+  const lastScrollYRef = useRef(0);
+  const lastTouchYRef = useRef(0);
+  const lastGestureTimeRef = useRef(0);
+  const headerBlockRef = useRef<HTMLDivElement | null>(null);
+  const headerHoveredRef = useRef(false);
+  const [headerHidden, setHeaderHidden] = useState(false);
+  const [headerHeight, setHeaderHeight] = useState(320);
+  const [scrollTop, setScrollTop] = useState(0);
   const [backupNames, setBackupNames] = useState<Record<string, string>>({});
   const [originalGuests, setOriginalGuests] = useState<Guest[]>([]);
   const [pendingNewGuests, setPendingNewGuests] = useState<Guest[]>([]);
   const [addingItems, setAddingItems] = useState<Set<string>>(new Set()); // Track items being added
   const [showQrModal, setShowQrModal] = useState(false);
   const [showImageModal, setShowImageModal] = useState(false);
+  const [requiredVariantError, setRequiredVariantError] = useState(false);
+  const [showUnavailableModal, setShowUnavailableModal] = useState(false);
 
   const tableCapacity = table?.capacity || 10;
 
@@ -232,19 +257,51 @@ const MenuView: React.FC<MenuViewProps> = ({
     }
   }, [editingCartItem, menuItems]);
 
-  // Limpiar personalizaciones cuando cambia el comensal seleccionado
+  // Recargar personalizaciones y variantes cuando cambia el comensal seleccionado
   useEffect(() => {
-    // Si hay un item abierto, recargar sus personalizaciones para el nuevo comensal
     if (showDetail) {
       const existing = guestSpecificCart.find(i => i.itemId === showDetail.id && (i.status === 'elegido' || (!i.status && !i.isConfirmed)));
       setSelectedExtras(existing?.extras || []);
       setSelectedIngredientsToRemove(existing?.removedIngredients || []);
+      if (existing?.selectedReplaceOptionId || existing?.selectedAddOptionIds?.length || (existing?.variant_selections?.length ?? 0) > 0) {
+        setSelectedReplaceOptionId(existing.selectedReplaceOptionId ?? null);
+        setSelectedAddOptionIds(existing.selectedAddOptionIds ?? []);
+        const vg = (showDetail.variant_groups || []).filter((g: any) => (g.variant_options || g.variant_option || []).some((o: any) => (o.price_type || '').toLowerCase() === 'replace'));
+        const byGroup: Record<string, string[]> = {};
+        const idsToParse = existing.variant_selections?.length ? existing.variant_selections : (existing.selectedReplaceOptionId ? [existing.selectedReplaceOptionId] : []);
+        idsToParse.forEach((id: string) => {
+          for (const g of vg) {
+            const opts = g.variant_options || g.variant_option || [];
+            if (opts.some((o: any) => o.id === id)) {
+              byGroup[g.id] = [...(byGroup[g.id] || []), id];
+              break;
+            }
+          }
+        });
+        setSelectedReplaceOptionIds(byGroup);
+      } else {
+      const replaceGroups = (showDetail.variant_groups || []).filter(g =>
+        (g.variant_options || []).some((o: VariantOption) => (o.price_type || '').toLowerCase() === 'replace')
+      );
+        const firstGroup = replaceGroups[0];
+        const hasRequired = firstGroup && isRequiredGroup(firstGroup);
+        setSelectedReplaceOptionId(hasRequired ? null : (firstGroup?.variant_options?.[0]?.id ?? null));
+        setSelectedReplaceOptionIds({});
+        setSelectedAddOptionIds([]);
+      }
     } else {
-      // Si no hay item abierto, limpiar las selecciones
       setSelectedExtras([]);
       setSelectedIngredientsToRemove([]);
     }
   }, [selectedGuestId, showDetail, guestSpecificCart]);
+
+  // Sincronizar showDetail con menuItems cuando cambian (ej. producto marcado como AGOTADO tras intentar agregar)
+  useEffect(() => {
+    if (showDetail) {
+      const updated = menuItems.find(m => m.id === showDetail.id);
+      if (updated) setShowDetail(updated);
+    }
+  }, [menuItems]);
 
   // Resetear subcategoría cuando cambia la categoría principal
   useEffect(() => {
@@ -254,7 +311,66 @@ const MenuView: React.FC<MenuViewProps> = ({
   // Scroll al inicio del contenido al cambiar categoría o subcategoría
   useEffect(() => {
     mainScrollRef.current?.scrollTo(0, 0);
+    setHeaderHidden(false);
+    lastScrollYRef.current = 0;
+    setScrollTop(0);
   }, [initialCategory, selectedSubcategory]);
+
+  // Header: ocultar en scroll down, mostrar en scroll up.
+  // Wheel y touch = intención inmediata. Scroll = fallback pero ignorado 200ms tras gesto (evita inercia).
+  useEffect(() => {
+    const el = mainScrollRef.current;
+    if (!el) return;
+    const applyFromGesture = (hidden: boolean) => {
+      lastGestureTimeRef.current = Date.now();
+      if (hidden && headerHoveredRef.current) return;
+      setHeaderHidden(hidden);
+    };
+    const onScroll = () => {
+      const y = el.scrollTop;
+      const prev = lastScrollYRef.current;
+      lastScrollYRef.current = y;
+      setScrollTop(y);
+      if (Date.now() - lastGestureTimeRef.current < 200) return;
+      if (y > prev && y > 10) {
+        if (!headerHoveredRef.current) setHeaderHidden(true);
+      } else if (y < prev) setHeaderHidden(false);
+      if (y < 10) setHeaderHidden(false);
+    };
+    const onWheel = (e: WheelEvent) => {
+      if (!el.contains(e.target as Node)) return;
+      if (Math.abs(e.deltaY) < 2) return;
+      applyFromGesture(e.deltaY > 0);
+    };
+    const onWheelDoc = (e: WheelEvent) => {
+      if (Math.abs(e.deltaY) < 2) return;
+      applyFromGesture(e.deltaY > 0);
+    };
+    const onTouchStart = (e: TouchEvent) => {
+      lastTouchYRef.current = e.touches[0]?.clientY ?? 0;
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      const y = e.touches[0]?.clientY ?? 0;
+      const prev = lastTouchYRef.current;
+      lastTouchYRef.current = y;
+      const d = y - prev;
+      if (Math.abs(d) < 4) return;
+      applyFromGesture(d < 0);
+    };
+    const touchOpts = { passive: true, capture: true } as const;
+    el.addEventListener('scroll', onScroll, { passive: true });
+    el.addEventListener('wheel', onWheel, { passive: true });
+    document.addEventListener('wheel', onWheelDoc, { passive: true, capture: true });
+    document.addEventListener('touchstart', onTouchStart, touchOpts);
+    document.addEventListener('touchmove', onTouchMove, touchOpts);
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      el.removeEventListener('wheel', onWheel);
+      document.removeEventListener('wheel', onWheelDoc, { capture: true });
+      document.removeEventListener('touchstart', onTouchStart, touchOpts);
+      document.removeEventListener('touchmove', onTouchMove, touchOpts);
+    };
+  }, []);
 
   // Hacer scroll al comensal seleccionado en la fila de guests (p. ej. tras recuperar sesión al refrescar)
   useEffect(() => {
@@ -275,6 +391,17 @@ const MenuView: React.FC<MenuViewProps> = ({
     const filteredDbCats = dbCategories.filter(cat => cat.toLowerCase() !== 'destacados');
     return ['Destacados', ...filteredDbCats];
   }, [supabaseCategories]);
+
+  // Cantidad de productos por comensal (para badge en header)
+  const guestItemCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    guests.forEach(g => {
+      counts[g.id] = cart
+        .filter(i => i.guestId === g.id && (i.status === 'elegido' || (!i.status && !i.isConfirmed)))
+        .reduce((sum, i) => sum + i.quantity, 0);
+    });
+    return counts;
+  }, [guests, cart]);
 
   // Cantidad total acumulada por categoría ESPECÍFICA del comensal seleccionado
   const categoryCounts = useMemo(() => {
@@ -310,22 +437,60 @@ const MenuView: React.FC<MenuViewProps> = ({
   const pendingCount = cart.filter(item => item.status === 'elegido' || (!item.status && !item.isConfirmed)).reduce((sum, item) => sum + item.quantity, 0);
   const totalSessionPrice = cart.reduce((sum, item) => {
     const menuItem = menuItems.find(m => m.id === item.itemId);
-    return sum + (menuItem ? Number(menuItem.price) * item.quantity : 0);
+    const unitPrice = item.unitPrice ?? (menuItem ? Number(menuItem.price) : 0);
+    return sum + unitPrice * item.quantity;
   }, 0);
 
   const handleOpenPdp = (item: MenuItem) => {
+    setRequiredVariantError(false);
     setShowDetail(item);
-    // Solo cargar personalizaciones del comensal actual para este item específico
-    const existing = guestSpecificCart.find(i => i.itemId === item.id && (i.status === 'elegido' || (!i.status && !i.isConfirmed)));
+    // Preferir editingCartItem si estamos editando uno específico; sino buscar en el carrito
+    const existing = (editingCartItem && editingCartItem.itemId === item.id)
+      ? editingCartItem
+      : guestSpecificCart.find(i => i.itemId === item.id && (i.status === 'elegido' || (!i.status && !i.isConfirmed)));
     setSelectedExtras(existing?.extras || []);
     setSelectedIngredientsToRemove(existing?.removedIngredients || []);
+    // Cargar variantes: del item existente o default a primera opción replace si es nuevo
+    if (existing?.selectedReplaceOptionId || existing?.selectedAddOptionIds?.length || (existing?.variant_selections?.length ?? 0) > 0) {
+      setSelectedReplaceOptionId(existing.selectedReplaceOptionId ?? null);
+      setSelectedAddOptionIds(existing.selectedAddOptionIds ?? []);
+      const vg = (item.variant_groups || []).filter((g: any) => (g.variant_options || g.variant_option || []).some((o: any) => (o.price_type || '').toLowerCase() === 'replace'));
+      const byGroup: Record<string, string[]> = {};
+      const idsToParse = existing.variant_selections?.length ? existing.variant_selections : (existing.selectedReplaceOptionId ? [existing.selectedReplaceOptionId] : []);
+      idsToParse.forEach((id: string) => {
+        for (const g of vg) {
+          const opts = g.variant_options || g.variant_option || [];
+          if (opts.some((o: any) => o.id === id)) {
+            byGroup[g.id] = [...(byGroup[g.id] || []), id];
+            break;
+          }
+        }
+      });
+      setSelectedReplaceOptionIds(byGroup);
+    } else {
+      const replaceGroups = (item.variant_groups || []).filter(g =>
+        (g.variant_options || []).some((o: VariantOption) => (o.price_type || '').toLowerCase() === 'replace')
+      );
+      const firstGroup = replaceGroups[0];
+      const hasRequired = firstGroup && isRequiredGroup(firstGroup);
+      setSelectedReplaceOptionId(hasRequired ? null : (firstGroup?.variant_options?.[0]?.id ?? null));
+      setSelectedReplaceOptionIds({});
+      setSelectedAddOptionIds([]);
+    }
   };
 
   const handleClosePdp = () => {
     setShowDetail(null);
     setShowImageModal(false);
+    setRequiredVariantError(false);
     if (editingCartItem) onCancelEdit();
+    setHeaderHidden(false);
+    mainScrollRef.current?.scrollTo(0, 0);
+    lastScrollYRef.current = 0;
+    setScrollTop(0);
   };
+
+  const hasAnyVariants = (i: MenuItem) => (i.variant_groups?.length || 0) > 0;
 
   const handleIncrement = async (e: React.MouseEvent, item: MenuItem) => {
     e.stopPropagation();
@@ -337,6 +502,12 @@ const MenuView: React.FC<MenuViewProps> = ({
       if (!window.confirm(`Estás sumando platos a ${name}, que no es tu sesión. ¿Continuar?`)) return;
     }
     
+    // Si tiene variantes, abrir PDP para que elija
+    if (hasAnyVariants(item)) {
+      handleOpenPdp(item);
+      return;
+    }
+    
     const simpleItem = getSimpleCartItemForGuest(item.id);
     if (simpleItem) {
       onUpdateCartItem(simpleItem.id, { quantity: simpleItem.quantity + 1 });
@@ -345,8 +516,12 @@ const MenuView: React.FC<MenuViewProps> = ({
       setAddingItems(prev => new Set(prev).add(item.id));
       try {
         await onAddToCart(item, selectedGuestId, [], []);
-      } catch (error) {
-        console.error("Error al agregar item:", error);
+      } catch (error: any) {
+        if (error?.message === 'PRODUCTO_NO_DISPONIBLE') {
+          setShowUnavailableModal(true);
+        } else {
+          console.error("Error al agregar item:", error);
+        }
       } finally {
         // Remover del set de items agregando
         setAddingItems(prev => {
@@ -368,10 +543,34 @@ const MenuView: React.FC<MenuViewProps> = ({
 
   const handleUpdateCurrent = () => {
     if (!showDetail || !existingInCart) return;
-    onUpdateCartItem(existingInCart.id, { 
-      extras: [...selectedExtras], 
-      removedIngredients: [...selectedIngredientsToRemove] 
+    const ingredientsToAdd = showDetail.customer_customization?.ingredientsToAdd || [];
+    const groups = getVariantGroups(showDetail);
+    const allOpts = groups.flatMap(g => ((g.variant_options ?? (g as any).variant_option) || []) as { id: string; name?: string; price_type?: string }[]);
+    const personalizationFromAdd: string[] = [];
+    const variantAddIds: string[] = [];
+    selectedAddOptionIds.forEach(id => {
+      const opt = allOpts.find((o: any) => o.id === id);
+      const isAddOpt = opt && ((opt.price_type || '').toLowerCase() === 'add');
+      if (isAddOpt && opt && ingredientsToAdd.some((ing: string) => (ing || '').trim().toLowerCase() === (opt.name || '').trim().toLowerCase())) {
+        personalizationFromAdd.push(opt.name || '');
+      } else {
+        variantAddIds.push(id);
+      }
     });
+    const finalExtras = [...new Set([...selectedExtras, ...personalizationFromAdd])].filter(Boolean);
+    const allReplaceIds = [...(selectedReplaceOptionId ? [selectedReplaceOptionId] : []), ...Object.values(selectedReplaceOptionIds).flat()];
+    const variantSelections = [...new Set([...allReplaceIds, ...variantAddIds])];
+    const updates: Parameters<typeof onUpdateCartItem>[1] = { 
+      extras: finalExtras, 
+      removedIngredients: [...selectedIngredientsToRemove] 
+    };
+    if (hasVariants) {
+      updates.selectedReplaceOptionId = selectedReplaceOptionId ?? undefined;
+      updates.selectedAddOptionIds = variantAddIds;
+      updates.variant_selections = variantSelections;
+      updates.unitPrice = variantUnitPrice;
+    }
+    onUpdateCartItem(existingInCart.id, updates);
     handleClosePdp();
   };
 
@@ -385,13 +584,41 @@ const MenuView: React.FC<MenuViewProps> = ({
       if (!window.confirm(`Estás sumando platos a ${name}, que no es tu sesión. ¿Continuar?`)) return;
     }
     
+    // Si hay grupo replace required sin selección, o grupo add required sin al menos una opción
+    const hasRequiredReplaceMissing = variantReplaceGroups.some(g => {
+      if (!isRequiredGroup(g)) return false;
+      if (isSelectionIndividual(g)) return !selectedReplaceOptionId;
+      return (selectedReplaceOptionIds[g.id] || []).length === 0;
+    });
+    const hasRequiredAddMissing = variantAddGroups.some(g => {
+      if (!isRequiredGroup(g)) return false;
+      const optIds = (g.variant_options || []).map(o => o.id);
+      const hasSelection = selectedAddOptionIds.some(id => optIds.includes(id));
+      return !hasSelection;
+    });
+    if (hasRequiredReplaceMissing || hasRequiredAddMissing) {
+      setRequiredVariantError(true);
+      return;
+    }
+    
     // Marcar como agregando
     setAddingItems(prev => new Set(prev).add(showDetail.id));
     try {
-      await onAddToCart(showDetail, selectedGuestId, [...selectedExtras], [...selectedIngredientsToRemove]);
-    handleClosePdp();
-    } catch (error) {
-      console.error("Error al agregar item:", error);
+      const allReplaceIds = [...(selectedReplaceOptionId ? [selectedReplaceOptionId] : []), ...Object.values(selectedReplaceOptionIds).flat()];
+      const variantOpts = hasVariants ? {
+        unitPrice: variantUnitPrice,
+        selectedReplaceOptionId: selectedReplaceOptionId ?? undefined,
+        selectedAddOptionIds: [...selectedAddOptionIds],
+        variantSelections: [...new Set([...allReplaceIds, ...selectedAddOptionIds])]
+      } : undefined;
+      await onAddToCart(showDetail, selectedGuestId, [...selectedExtras], [...selectedIngredientsToRemove], variantOpts);
+      handleClosePdp();
+    } catch (error: any) {
+      if (error?.message === 'PRODUCTO_NO_DISPONIBLE') {
+        setShowUnavailableModal(true);
+      } else {
+        console.error("Error al agregar item:", error);
+      }
     } finally {
       // Remover del set de items agregando
       setAddingItems(prev => {
@@ -548,7 +775,7 @@ const MenuView: React.FC<MenuViewProps> = ({
     }
   };
 
-  // Obtener subcategorías disponibles para la categoría actual
+  // Obtener subcategorías disponibles para la categoría actual, respetando sort_order del admin
   const availableSubcategories = useMemo(() => {
     if (initialCategory === 'Destacados') return [];
     
@@ -558,31 +785,35 @@ const MenuView: React.FC<MenuViewProps> = ({
     const subCatIds = supabaseCategories.filter(c => c.parent_id === parentCatObj.id).map(c => c.id);
     const allRelevantIds = [parentCatObj.id, ...subCatIds];
     
-    // Obtener todos los items de esta categoría
-    const categoryItems = menuItems.filter(item => allRelevantIds.includes(item.category_id));
-    
-    // Extraer subcategory_id únicos que no sean null
+    // Subcategorías que tienen al menos un producto
     const uniqueSubcategoryIds = new Set<string>();
-    categoryItems.forEach(item => {
-      if (item.subcategory_id) {
-        uniqueSubcategoryIds.add(item.subcategory_id);
-      }
-    });
+    menuItems
+      .filter(item => allRelevantIds.includes(item.category_id) && item.subcategory_id)
+      .forEach(item => uniqueSubcategoryIds.add(item.subcategory_id!));
     
-    // Obtener los nombres de las subcategorías desde supabaseCategories
-    const subcategoriesWithNames = Array.from(uniqueSubcategoryIds).map(subId => {
-      const subCatObj = supabaseCategories.find(c => c.id === subId);
-      return {
-        id: subId,
-        name: subCatObj?.name || subId
-      };
-    });
+    // Obtener subcategorías desde supabaseCategories ordenadas por sort_order (como en el admin)
+    const allSubcategoriesOrdered = supabaseCategories
+      .filter(c => c.parent_id === parentCatObj.id)
+      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+      .map(c => ({ id: c.id, name: c.name }));
     
-    return subcategoriesWithNames;
+    // Solo incluir las que tienen productos, manteniendo el orden del admin
+    return allSubcategoriesOrdered.filter(sub => uniqueSubcategoryIds.has(sub.id));
   }, [initialCategory, menuItems, supabaseCategories]);
 
   // Verificar si la categoría tiene subcategorías
   const hasSubcategories = availableSubcategories.length > 0;
+
+  // Descripción de la categoría/subcategoría activa (desde tabla categories)
+  const activeCategoryDescription = useMemo(() => {
+    if (selectedSubcategory) {
+      const subCat = supabaseCategories.find(c => c.id === selectedSubcategory);
+      return subCat?.description?.trim() || null;
+    }
+    if (initialCategory === 'Destacados') return null;
+    const mainCat = supabaseCategories.find(c => c.name === initialCategory && c.parent_id === null);
+    return mainCat?.description?.trim() || null;
+  }, [initialCategory, selectedSubcategory, supabaseCategories]);
 
   // Cantidad por subcategoría del comensal seleccionado (igual que categoryCounts)
   const subcategoryCounts = useMemo(() => {
@@ -615,6 +846,36 @@ const MenuView: React.FC<MenuViewProps> = ({
     return items;
   }, [initialCategory, menuItems, supabaseCategories, selectedSubcategory]);
 
+  // Agrupar items por menu_section_headers (subtítulos definidos en admin).
+  // Solo aplicar agrupación cuando hay una subcategoría seleccionada (ej. "Cafés Especiales").
+  // En "Todos" no mostrar subtítulos, ya que la agrupación fue pensada para subcategorías específicas.
+  const itemsGroupedBySectionHeader = useMemo(() => {
+    if (filteredItems.length === 0) return [{ sectionId: null as string | null, sectionTitle: null as string | null, items: [] as MenuItem[] }];
+    if (selectedSubcategory === null) {
+      return [{ sectionId: null, sectionTitle: null, items: filteredItems }];
+    }
+    const headerMap = new Map(sectionHeaders.map(h => [h.id, h]));
+    const sectionIdsInUse = [...new Set(filteredItems.map(i => i.section_id).filter(Boolean))] as string[];
+    const orderedHeaders = sectionIdsInUse
+      .map(id => headerMap.get(id))
+      .filter(Boolean)
+      .sort((a, b) => (a!.sort_order ?? 0) - (b!.sort_order ?? 0));
+    const placedIds = new Set<string>();
+    const groups: { sectionId: string | null; sectionTitle: string | null; items: MenuItem[] }[] = [];
+    for (const h of orderedHeaders) {
+      if (!h) continue;
+      const subItems = filteredItems.filter(item => item.section_id === h.id);
+      if (subItems.length > 0) {
+        groups.push({ sectionId: h.id, sectionTitle: h.title, items: subItems });
+        subItems.forEach(i => placedIds.add(i.id));
+      }
+    }
+    const ungrouped = filteredItems.filter(item => !placedIds.has(item.id));
+    if (ungrouped.length > 0) groups.push({ sectionId: null, sectionTitle: null, items: ungrouped });
+    if (groups.length === 0) return [{ sectionId: null, sectionTitle: null, items: filteredItems }];
+    return groups;
+  }, [filteredItems, sectionHeaders, selectedSubcategory]);
+
   const hasNutritionalInfo = (item: MenuItem) => {
     return item.calories !== null || item.protein_g !== null || item.total_fat_g !== null || 
            item.sat_fat_g !== null || item.carbs_g !== null || item.sugars_g !== null || 
@@ -627,17 +888,133 @@ const MenuView: React.FC<MenuViewProps> = ({
     return hasAdd || hasRemove;
   };
 
+  // Normalizar variant_groups (Supabase puede devolver variant_group u otra estructura)
+  const normalizedVariantGroups = useMemo((): VariantGroup[] => {
+    if (!showDetail) return [];
+    const raw = (showDetail as any).variant_groups ?? (showDetail as any).variant_group;
+    if (Array.isArray(raw)) return raw;
+    if (raw && typeof raw === 'object') return [raw];
+    return [];
+  }, [showDetail]);
+
+  const getGroupOptions = (g: any) => Array.isArray(g?.variant_options) ? g.variant_options : (Array.isArray((g as any)?.variant_option) ? (g as any).variant_option : []);
+
+  /** Si el grupo es obligatorio según variant_groups.required (TRUE en DB) */
+  const isRequiredGroup = (g: VariantGroup | { required?: boolean | string }) =>
+    g.required === true || (typeof g.required === 'string' && g.required.toLowerCase() === 'true');
+
+  /** individual=dropdown (una opción), multiple=lista con checkboxes (varias) */
+  const isSelectionIndividual = (g: VariantGroup | { selection?: string }) =>
+    ((g.selection || 'individual') as string).toLowerCase() === 'individual';
+
+  /** max_selection como número (null/undefined = sin límite) */
+  const getMaxSelection = (g: VariantGroup | { max_selection?: number | null | string }) => {
+    const v = g.max_selection;
+    if (v == null || v === '') return null;
+    const n = Number(v);
+    return n > 0 ? n : null;
+  };
+
+  // Ordenar opciones por precio ascendente (menor arriba, mayor abajo)
+  const sortByPrice = (opts: VariantOption[]) =>
+    [...opts].sort((a, b) => (Number(a.price_amount) || 0) - (Number(b.price_amount) || 0));
+
+  // Variantes: grupos replace y add del producto actual
+  const variantReplaceGroups = useMemo((): VariantGroup[] => {
+    if (!normalizedVariantGroups.length) return [];
+    return normalizedVariantGroups.filter(g => 
+      getGroupOptions(g).some((o: VariantOption) => (o.price_type || '').toLowerCase() === 'replace')
+    ).map(g => ({
+      ...g,
+      variant_options: sortByPrice(getGroupOptions(g).filter((o: VariantOption) => (o.price_type || '').toLowerCase() === 'replace'))
+    })).filter(g => g.variant_options.length > 0);
+  }, [normalizedVariantGroups]);
+
+  const variantAddGroups = useMemo((): VariantGroup[] => {
+    if (!normalizedVariantGroups.length) return [];
+    return normalizedVariantGroups.filter(g => 
+      getGroupOptions(g).some((o: VariantOption) => (o.price_type || '').toLowerCase() === 'add')
+    ).map(g => ({
+      ...g,
+      variant_options: sortByPrice(getGroupOptions(g).filter((o: VariantOption) => (o.price_type || '').toLowerCase() === 'add'))
+    })).filter(g => g.variant_options.length > 0);
+  }, [normalizedVariantGroups]);
+
+  const hasVariants = variantReplaceGroups.length > 0 || variantAddGroups.length > 0;
+
+  // Precio efectivo según variantes seleccionadas
+  const variantUnitPrice = useMemo((): number => {
+    if (!showDetail) return 0;
+    let base = Number(showDetail.price) || 0;
+    if (variantReplaceGroups.length > 0) {
+      const allReplaceOpts = variantReplaceGroups.flatMap(g => g.variant_options);
+      const singleOpt = allReplaceOpts.find(o => o.id === selectedReplaceOptionId);
+      const multiIds = variantReplaceGroups.flatMap(g => selectedReplaceOptionIds[g.id] || []);
+      const multiOpts = multiIds.map(id => allReplaceOpts.find(o => o.id === id)).filter(Boolean);
+      if (singleOpt || multiOpts.length > 0) {
+        base = (singleOpt ? Number(singleOpt.price_amount) || 0 : 0) + multiOpts.reduce((s, o) => s + (Number(o?.price_amount) || 0), 0);
+      }
+    }
+    variantAddGroups.forEach(g => {
+      (g.variant_options || []).forEach(opt => {
+        if (selectedAddOptionIds.includes(opt.id)) base += Number(opt.price_amount) || 0;
+      });
+    });
+    return base;
+  }, [showDetail, variantReplaceGroups, variantAddGroups, selectedReplaceOptionId, selectedReplaceOptionIds, selectedAddOptionIds]);
+
+  // Rango min-max para productos con replace (sin selección aún)
+  const variantPriceRange = useMemo((): { min: number; max: number } | null => {
+    if (variantReplaceGroups.length === 0) return null;
+    const allPrices = variantReplaceGroups.flatMap(g => g.variant_options).map(o => Number(o.price_amount) || 0);
+    if (allPrices.length === 0) return null;
+    return { min: Math.min(...allPrices), max: Math.max(...allPrices) };
+  }, [variantReplaceGroups]);
+
+  // Resetear variantes al cerrar PDP
+  useEffect(() => {
+    if (!showDetail) {
+      setSelectedReplaceOptionId(null);
+      setSelectedReplaceOptionIds({});
+      setSelectedAddOptionIds([]);
+    }
+  }, [showDetail]);
+
   return (
-    <div className="flex flex-col flex-1 h-screen bg-background-dark text-white overflow-hidden font-display relative">
-      <header className="sticky top-0 z-40 bg-background-dark/95 backdrop-blur-md pb-4 border-b border-white/5">
-        <div className="px-6 flex items-center justify-between pt-6 mb-4">
+    <div className="fixed inset-0 flex flex-col w-full max-w-md mx-auto bg-background-dark text-white font-display overflow-hidden relative">
+      {/* Área de scroll: solo esta parte hace scroll. Footer y campana quedan fijos abajo. */}
+      <div
+        ref={mainScrollRef}
+        className="flex-1 min-h-0 flex flex-col overflow-y-auto overflow-x-hidden no-scrollbar"
+        style={{ WebkitOverflowScrolling: 'touch' } as React.CSSProperties}
+      >
+      {/* Header fijo: oculta en scroll down, muestra en scroll up. No tapa contenido: padding dinámico */}
+      <div
+        ref={(el) => {
+          headerBlockRef.current = el;
+          if (el) {
+            const h = el.offsetHeight;
+            if (h > 0) setHeaderHeight(h);
+          }
+        }}
+        onMouseEnter={() => { headerHoveredRef.current = true; }}
+        onMouseLeave={() => { headerHoveredRef.current = false; }}
+        className={`fixed top-0 left-0 right-0 z-40 max-w-md mx-auto bg-background-dark/95 backdrop-blur-md transition-transform duration-200 ${
+          headerHidden ? '-translate-y-full' : 'translate-y-0'
+        }`}
+      >
+        <header className="pb-2 border-b border-white/5">
+        <div className="px-6 flex items-center justify-between pt-1 mb-4">
           <div className="flex flex-col">
-            <span className="text-[10px] font-black text-primary uppercase tracking-[0.2em] mb-1">MESA {table?.table_number?.toString().padStart(2, '0') || '04'}</span>
-            <h1 className="text-2xl font-black text-white tracking-tight leading-none uppercase">{restaurant?.name || 'The Burger Joint'}</h1>
+            <h1 className="text-[10px] font-black uppercase tracking-widest flex items-baseline gap-2 flex-wrap">
+              <span className="text-primary">MESA {table?.table_number?.toString().padStart(2, '0') || '04'}</span>
+              <span className="text-white/60">·</span>
+              <span className="text-white">{restaurant?.name || 'The Burger Joint'}</span>
+            </h1>
           </div>
         </div>
 
-        <div ref={guestsRowRef} className="flex gap-4 overflow-x-auto no-scrollbar px-6 pt-2 pb-2 items-start flex-nowrap snap-x touch-pan-x">
+        <div ref={guestsRowRef} className="flex gap-4 overflow-x-auto no-scrollbar px-6 pt-2 pb-1 items-start flex-nowrap snap-x touch-pan-x">
           {guests.map((g) => (
             <div key={g.id} data-guest-id={g.id} className="flex flex-col items-center gap-2 shrink-0 max-w-[60px] snap-start">
               <button
@@ -651,9 +1028,11 @@ const MenuView: React.FC<MenuViewProps> = ({
                 <div className={`w-full h-full rounded-full overflow-hidden flex items-center justify-center font-black text-sm ${getGuestColor(g.id)}`}>
                   {getInitials(g.name)}
                 </div>
-                {selectedGuestId === g.id && (
-                  <div className="absolute -bottom-1 -right-1 bg-primary text-background-dark rounded-full size-5 flex items-center justify-center border-2 border-background-dark shadow-lg">
-                    <span className="material-symbols-outlined text-[12px] font-black">check</span>
+                {guestItemCounts[g.id] > 0 && (
+                  <div className={`absolute -bottom-1 -right-1 rounded-full min-w-[18px] h-[18px] flex items-center justify-center border-2 border-background-dark shadow-lg text-[10px] font-black ${
+                    selectedGuestId === g.id ? 'bg-primary text-background-dark' : 'bg-white/20 text-white'
+                  }`}>
+                    {guestItemCounts[g.id]}
                   </div>
                 )}
               </button>
@@ -670,12 +1049,11 @@ const MenuView: React.FC<MenuViewProps> = ({
             >
               <span className="material-symbols-outlined text-lg">group</span>
             </button>
-            <span className="text-[9px] font-black uppercase tracking-widest text-text-secondary opacity-60 text-center leading-tight">Ajustes /<br/>Compartir</span>
           </div>
         </div>
       </header>
 
-      <nav className="flex gap-4 overflow-x-auto no-scrollbar p-4 bg-background-dark border-b border-white/5">
+      <nav className="flex gap-4 overflow-x-auto no-scrollbar px-4 py-1 bg-background-dark border-b border-white/5 shrink-0">
         {categoriesList.map(cat => {
           const isDestacados = cat === 'Destacados';
           const isSelected = initialCategory === cat;
@@ -697,27 +1075,35 @@ const MenuView: React.FC<MenuViewProps> = ({
               }`}
           >
             {isDestacados && <span className="material-symbols-outlined text-[14px]">star</span>}
-            {cat} {categoryCounts[cat] > 0 && <span className="ml-1 opacity-60">({categoryCounts[cat]})</span>}
+            {cat} {categoryCounts[cat] > 0 && (
+              <span className="ml-1.5 inline-flex min-w-[18px] h-[18px] rounded-full bg-red-500 items-center justify-center text-[10px] font-black text-white">
+                {categoryCounts[cat]}
+              </span>
+            )}
           </button>
           );
         })}
       </nav>
 
       {hasSubcategories && (
-        <nav className="flex gap-3 overflow-x-auto no-scrollbar px-4 py-3 bg-background-dark border-b border-white/5">
+        <nav className="flex gap-3 overflow-x-auto no-scrollbar px-4 py-3 bg-background-dark border-b border-white/5 shrink-0">
           <button
             onClick={() => {
               const categorySlug = initialCategory === 'Destacados' ? 'destacados' : categoryToSlug(initialCategory);
               setSelectedSubcategory(null);
               window.history.replaceState(null, '', `/menu/${categorySlug}`);
             }}
-            className={`px-3 py-1.5 rounded-full whitespace-nowrap text-xs font-bold transition-colors shrink-0 ${
+            className={`flex items-center px-3 py-1.5 rounded-full whitespace-nowrap text-xs font-bold transition-colors shrink-0 ${
               selectedSubcategory === null
                 ? 'bg-primary/30 text-primary border border-primary/50'
                 : 'bg-white/5 text-text-secondary border border-white/5'
             }`}
           >
-            Todos {categoryCounts[initialCategory] > 0 && <span className="ml-1 opacity-60">({categoryCounts[initialCategory]})</span>}
+            Todos {categoryCounts[initialCategory] > 0 && (
+              <span className="ml-1.5 inline-flex min-w-[18px] h-[18px] rounded-full bg-red-500 items-center justify-center text-[10px] font-black text-white">
+                {categoryCounts[initialCategory]}
+              </span>
+            )}
           </button>
           {availableSubcategories.map(subcat => {
             const isSelected = selectedSubcategory === subcat.id;
@@ -731,22 +1117,42 @@ const MenuView: React.FC<MenuViewProps> = ({
                   setSelectedSubcategory(subcat.id);
                   window.history.replaceState(null, '', `/menu/${categorySlug}/${subcategorySlug}`);
                 }}
-                className={`px-3 py-1.5 rounded-full whitespace-nowrap text-xs font-bold transition-colors shrink-0 ${
+                className={`flex items-center px-3 py-1.5 rounded-full whitespace-nowrap text-xs font-bold transition-colors shrink-0 ${
                   isSelected
                     ? 'bg-primary/30 text-primary border border-primary/50'
                     : 'bg-white/5 text-text-secondary border border-white/5'
                 }`}
               >
-                {subcat.name} {count > 0 && <span className="ml-1 opacity-60">({count})</span>}
+                {subcat.name} {count > 0 && (
+                  <span className="ml-1.5 inline-flex min-w-[18px] h-[18px] rounded-full bg-red-500 items-center justify-center text-[10px] font-black text-white">
+                    {count}
+                  </span>
+                )}
               </button>
             );
           })}
         </nav>
       )}
 
-      <main ref={mainScrollRef} className="flex-1 overflow-y-auto p-4 pb-32 no-scrollbar">
-        <div className="grid grid-cols-1 gap-4">
-          {filteredItems.map(item => {
+      {activeCategoryDescription && (
+        <div className="px-5 py-5 bg-background-dark border-b border-white/5 shrink-0">
+          <p className="text-white/90 text-base font-medium leading-relaxed">{activeCategoryDescription}</p>
+        </div>
+      )}
+      </div>
+
+      <div style={{ paddingTop: scrollTop <= 10 ? headerHeight : 0 }} className="transition-[padding] duration-200">
+      <main className="p-4 pb-32 flex-1">
+        <div className="flex flex-col gap-6">
+          {itemsGroupedBySectionHeader.map((group, groupIdx) => (
+            <section key={group.sectionId ?? `ungrouped-${groupIdx}`} className="flex flex-col gap-3">
+              {group.sectionTitle && (
+                <h3 className="text-sm font-bold text-text-secondary uppercase tracking-wider px-1">
+                  {group.sectionTitle}
+                </h3>
+              )}
+              <div className="grid grid-cols-1 gap-4">
+                {group.items.map(item => {
             const totalQty = getDishQuantityForGuest(item.id);
             const simpleItem = getSimpleCartItemForGuest(item.id);
             const showTrash = totalQty === 1;
@@ -761,7 +1167,7 @@ const MenuView: React.FC<MenuViewProps> = ({
                 className="bg-surface-dark border border-white/5 rounded-3xl p-4 flex flex-col transition-all cursor-pointer group relative overflow-hidden"
               >
                 <div className="flex gap-4">
-                  <div className="size-24 rounded-2xl bg-center bg-cover border border-white/5 shrink-0 shadow-lg" style={{ backgroundImage: `url('${item.image_url}')` }}></div>
+                  <div className="size-24 rounded-2xl bg-center bg-cover border border-white/5 shrink-0 shadow-lg bg-white/5" style={{ backgroundImage: getItemImageUrl(item.image_url) ? `url("${getItemImageUrl(item.image_url).replace(/"/g, '\\"')}")` : undefined }}></div>
                   <div className="flex-1 flex flex-col justify-center min-w-0">
                   <div className="flex items-center gap-2 mb-1.5">
                     <h3 className="font-bold text-base truncate">{item.name}</h3>
@@ -798,7 +1204,11 @@ const MenuView: React.FC<MenuViewProps> = ({
                       className="flex items-center z-10 shrink-0"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      {addingItems.has(item.id) ? (
+                      {item.availability === false ? (
+                        <span className="px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest text-white/60">
+                          AGOTADO
+                        </span>
+                      ) : addingItems.has(item.id) ? (
                         // Mostrar spinner mientras se guarda
                         <div className="px-4 py-2 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center">
                           <div className="size-4 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
@@ -845,6 +1255,13 @@ const MenuView: React.FC<MenuViewProps> = ({
                 </div>
                 </div>
 
+                {/* Mensaje de últimas unidades cuando stock_quantity < 5 y está disponible */}
+                {item.availability !== false && item.stock_quantity != null && item.stock_quantity < 5 && (
+                  <p className="mt-3 text-[10px] font-black uppercase tracking-wider text-amber-400/90">
+                    Últimas unidades! {item.stock_quantity} disponible{item.stock_quantity !== 1 ? 's' : ''}
+                  </p>
+                )}
+
                 {/* Visualización de personalizaciones del comensal seleccionado */}
                 {tableItemsForDish
                   .filter(i => i.guestId === selectedGuestId && (i.extras?.length || i.removedIngredients?.length))
@@ -861,11 +1278,16 @@ const MenuView: React.FC<MenuViewProps> = ({
                   ))}
               </div>
             );
-          })}
+                })}
+              </div>
+            </section>
+          ))}
         </div>
       </main>
-
-      <footer className="fixed bottom-0 left-0 w-full p-4 bg-gradient-to-t from-background-dark via-background-dark to-transparent pt-12 pb-6 z-[60] pointer-events-none">
+      </div>
+      </div>
+      {/* Footer: fixed al bottom del viewport, siempre visible */}
+      <footer className="fixed bottom-0 left-0 right-0 max-w-md mx-auto p-4 bg-gradient-to-t from-background-dark via-background-dark to-transparent pt-12 pb-6 z-[60] pointer-events-none">
         <button 
           onClick={onNext}
           disabled={cart.length === 0}
@@ -894,24 +1316,30 @@ const MenuView: React.FC<MenuViewProps> = ({
             </div>
             <div className="overflow-y-auto flex-1 no-scrollbar">
               <div 
-                className="h-64 w-full relative flex items-center justify-center bg-white cursor-pointer overflow-hidden"
-                onClick={(e) => { e.stopPropagation(); setShowImageModal(true); }}
+                className={`h-64 w-full relative flex items-center justify-center cursor-pointer overflow-hidden ${getItemImageUrl(showDetail.image_url) ? 'bg-white' : 'bg-white/5'}`}
+                onClick={(e) => { e.stopPropagation(); getItemImageUrl(showDetail.image_url) && setShowImageModal(true); }}
               >
-                <img 
-                  src={showDetail.image_url} 
-                  alt={showDetail.name}
-                  className="h-full w-auto max-w-full object-contain object-center"
-                />
-                <div className="absolute bottom-3 right-3 size-9 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center border border-white/20 pointer-events-none">
-                  <span className="material-symbols-outlined text-white text-xl">zoom_in</span>
-                </div>
+                {getItemImageUrl(showDetail.image_url) ? (
+                  <>
+                    <img 
+                      src={getItemImageUrl(showDetail.image_url)} 
+                      alt={showDetail.name}
+                      className="h-full w-auto max-w-full object-contain object-center"
+                    />
+                    <div className="absolute bottom-3 right-3 size-9 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center border border-white/20 pointer-events-none">
+                      <span className="material-symbols-outlined text-white text-xl">zoom_in</span>
+                    </div>
+                  </>
+                ) : (
+                  <span className="material-symbols-outlined text-6xl text-white/20">restaurant</span>
+                )}
               </div>
 
-              {showImageModal && (
+              {showImageModal && getItemImageUrl(showDetail.image_url) && (
                 <div className="fixed inset-0 z-[110] flex items-center justify-center animate-fade-in" onClick={() => setShowImageModal(false)}>
                   <div className="absolute inset-0 bg-black/95" />
                   <img 
-                    src={showDetail.image_url} 
+                    src={getItemImageUrl(showDetail.image_url)} 
                     alt={showDetail.name}
                     className="relative z-10 max-h-[90vh] max-w-[90vw] w-auto h-auto object-contain"
                     onClick={(e) => e.stopPropagation()}
@@ -934,8 +1362,194 @@ const MenuView: React.FC<MenuViewProps> = ({
                       </span>
                     )}
                   </div>
-                  <span className="text-2xl font-black text-primary">${formatPrice(Number(showDetail.price))}</span>
+                  {hasVariants && variantPriceRange && variantReplaceGroups.length > 0 && !selectedReplaceOptionId ? (
+                    <span className="text-2xl font-black text-primary">
+                      ${formatPrice(variantPriceRange.min)} - ${formatPrice(variantPriceRange.max)}
+                    </span>
+                  ) : (
+                    <span className="text-2xl font-black text-primary">${formatPrice(variantUnitPrice)}</span>
+                  )}
                 </div>
+
+                <p className="text-text-secondary leading-relaxed mb-8">{showDetail.description}</p>
+
+                {/* Variantes: selection=individual (dropdown) o selection=multiple (checkboxes) */}
+                {hasVariants && (
+                  <div className="mb-6 space-y-4">
+                    {variantReplaceGroups.map(group => {
+                      const useDropdown = isSelectionIndividual(group);
+                      const selectedInGroup = useDropdown ? (selectedReplaceOptionId ? [selectedReplaceOptionId] : []) : (selectedReplaceOptionIds[group.id] || []);
+                      const isRequiredAndError = isRequiredGroup(group) && requiredVariantError && selectedInGroup.length === 0;
+                      const maxSel = getMaxSelection(group);
+                      const atLimit = !useDropdown && maxSel != null && selectedInGroup.length >= maxSel;
+                      return (
+                      <div key={group.id} className={`rounded-2xl p-4 border ${isRequiredAndError ? 'border-red-500 bg-red-500/5' : 'bg-background-dark/30 border-white/5'}`}>
+                        <label className="text-[10px] font-black uppercase text-text-secondary tracking-widest mb-3 block">
+                          {group.name}{isRequiredGroup(group) && <span className="text-primary ml-1">(obligatorio)</span>}
+                          {!useDropdown && maxSel != null && <span className="text-white/50 font-normal ml-1">— hasta {maxSel} {maxSel === 1 ? 'opción' : 'opciones'}</span>}
+                        </label>
+                        {useDropdown ? (
+                          <select
+                            value={selectedReplaceOptionId || ''}
+                            onChange={(e) => {
+                              setSelectedReplaceOptionId(e.target.value || null);
+                              if (e.target.value) setRequiredVariantError(false);
+                            }}
+                            className={`w-full bg-white/5 rounded-xl px-4 py-3 text-white font-bold focus:ring-2 outline-none ${
+                              isRequiredAndError ? 'border-2 border-red-500 focus:ring-red-500' : 'border border-white/10 focus:ring-primary'
+                            }`}
+                          >
+                            {isRequiredGroup(group) && (
+                              <option value="" className="bg-surface-dark text-white/60">Seleccione una opción</option>
+                            )}
+                            {group.variant_options.map(opt => (
+                              <option key={opt.id} value={opt.id} className="bg-surface-dark text-white" title={opt.description}>
+                                {opt.name} — ${formatPrice(Number(opt.price_amount))}{opt.description ? ` · ${opt.description}` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <div className="space-y-2">
+                            {group.variant_options.map(opt => {
+                              const isChecked = selectedInGroup.includes(opt.id);
+                              const wouldExceedLimit = !isChecked && atLimit;
+                              return (
+                                <label
+                                  key={opt.id}
+                                  className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                                    isChecked ? 'bg-primary/10 border-primary/40' : wouldExceedLimit ? 'bg-white/5 border-white/10 opacity-60' : 'bg-white/5 border-white/10'
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    disabled={wouldExceedLimit}
+                                    onChange={() => {
+                                      if (wouldExceedLimit) return;
+                                      setSelectedReplaceOptionIds(prev => {
+                                        const current = prev[group.id] || [];
+                                        const next = current.includes(opt.id) ? current.filter(id => id !== opt.id) : [...current, opt.id];
+                                        return { ...prev, [group.id]: next };
+                                      });
+                                      setRequiredVariantError(false);
+                                    }}
+                                    className="mt-0.5 size-5 rounded-sm border-2 border-white/20 text-primary focus:ring-primary disabled:opacity-50"
+                                  />
+                                  <div className="flex-1 min-w-0">
+                                    <span className="font-bold text-white block">{opt.name} — ${formatPrice(Number(opt.price_amount))}</span>
+                                    {opt.description && <span className="text-[11px] text-white/60 block mt-0.5">{opt.description}</span>}
+                                  </div>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {!useDropdown && maxSel != null && (
+                          <p className="mt-2 text-[11px] text-white/50">
+                            Podés seleccionar hasta {maxSel} {maxSel === 1 ? 'opción' : 'opciones'}.
+                          </p>
+                        )}
+                        {isRequiredAndError && (
+                          <p className="mt-2 text-sm font-bold text-red-400 flex items-center gap-1.5">
+                            <span className="material-symbols-outlined text-base">error</span>
+                            Debes seleccionar una opción obligatoria antes de agregar al pedido.
+                          </p>
+                        )}
+                      </div>
+                    );
+                    })}
+                    {variantAddGroups.map(group => {
+                      const hasRequiredAddSelection = (group.variant_options || []).some(opt => selectedAddOptionIds.includes(opt.id));
+                      const isRequiredAddAndError = isRequiredGroup(group) && requiredVariantError && !hasRequiredAddSelection;
+                      const useDropdown = isSelectionIndividual(group);
+                      const maxSel = getMaxSelection(group);
+                      const optIds = (group.variant_options || []).map(o => o.id);
+                      const selectedInGroup = selectedAddOptionIds.filter(id => optIds.includes(id));
+                      const atLimit = maxSel != null && selectedInGroup.length >= maxSel;
+                      return (
+                      <div key={group.id} className={`rounded-2xl p-4 border ${isRequiredAddAndError ? 'border-red-500 bg-red-500/5' : 'bg-background-dark/30 border-white/5'}`}>
+                        <label className="text-[10px] font-black uppercase text-text-secondary tracking-widest mb-3 block">
+                          {group.name}{isRequiredGroup(group) && <span className="text-primary ml-1">(obligatorio)</span>}
+                          {maxSel != null && <span className="text-white/50 font-normal ml-1">— hasta {maxSel} {maxSel === 1 ? 'opción' : 'opciones'}</span>}
+                        </label>
+                        {useDropdown ? (
+                          <select
+                            value={selectedInGroup[0] || ''}
+                            onChange={(e) => {
+                              const val = e.target.value || null;
+                              setSelectedAddOptionIds(prev => {
+                                const fromOtherGroups = prev.filter(id => !optIds.includes(id));
+                                return val ? [...fromOtherGroups, val] : fromOtherGroups;
+                              });
+                              if (isRequiredGroup(group)) setRequiredVariantError(false);
+                            }}
+                            className={`w-full bg-white/5 rounded-xl px-4 py-3 text-white font-bold focus:ring-2 outline-none ${
+                              isRequiredAddAndError ? 'border-2 border-red-500 focus:ring-red-500' : 'border border-white/10 focus:ring-primary'
+                            }`}
+                          >
+                            <option value="" className="bg-surface-dark text-white/60">Seleccione una opción</option>
+                            {group.variant_options.map(opt => (
+                              <option key={opt.id} value={opt.id} className="bg-surface-dark text-white" title={opt.description}>
+                                {opt.name} +${formatPrice(Number(opt.price_amount))}{opt.description ? ` · ${opt.description}` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <div className="space-y-2">
+                            {group.variant_options.map(opt => {
+                              const isChecked = selectedAddOptionIds.includes(opt.id);
+                              const wouldExceedLimit = !isChecked && atLimit;
+                              return (
+                                <label
+                                  key={opt.id}
+                                  className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                                    isChecked ? 'bg-primary/10 border-primary/40' : wouldExceedLimit ? 'bg-white/5 border-white/10 opacity-60' : 'bg-white/5 border-white/10'
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    disabled={wouldExceedLimit}
+                                    onChange={() => {
+                                      if (wouldExceedLimit) return;
+                                      setSelectedAddOptionIds(prev => {
+                                        const fromOtherGroups = prev.filter(id => !optIds.includes(id));
+                                        const selectedInGroup = prev.filter(id => optIds.includes(id));
+                                        if (prev.includes(opt.id)) {
+                                          return [...fromOtherGroups, ...selectedInGroup.filter(id => id !== opt.id)];
+                                        }
+                                        return [...fromOtherGroups, ...selectedInGroup, opt.id];
+                                      });
+                                      if (isRequiredGroup(group)) setRequiredVariantError(false);
+                                    }}
+                                    className="mt-0.5 size-5 rounded-sm border-2 border-white/20 text-primary focus:ring-primary disabled:opacity-50"
+                                  />
+                                  <div className="flex-1 min-w-0">
+                                    <span className="font-bold text-white block">{opt.name}</span>
+                                    {opt.description && <span className="text-[11px] text-white/60 block mt-0.5">{opt.description}</span>}
+                                  </div>
+                                  <span className="text-primary font-black">+${formatPrice(Number(opt.price_amount))}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {maxSel != null && !useDropdown && (
+                          <p className="mt-2 text-[11px] text-white/50">
+                            Podés seleccionar hasta {maxSel} {maxSel === 1 ? 'opción' : 'opciones'}.
+                          </p>
+                        )}
+                        {isRequiredAddAndError && (
+                          <p className="mt-2 text-sm font-bold text-red-400 flex items-center gap-1.5">
+                            <span className="material-symbols-outlined text-base">error</span>
+                            Debes seleccionar al menos una opción obligatoria antes de agregar al pedido.
+                          </p>
+                        )}
+                      </div>
+                    );
+                    })}
+                  </div>
+                )}
                 {showDetail.dietary_tags && showDetail.dietary_tags.length > 0 && (
                   <div className="flex flex-wrap gap-2 mb-6">
                     {showDetail.dietary_tags.map((tag, idx) => {
@@ -956,7 +1570,6 @@ const MenuView: React.FC<MenuViewProps> = ({
                     })}
                   </div>
                 )}
-                <p className="text-text-secondary leading-relaxed mb-8">{showDetail.description}</p>
                 <div className="space-y-6">
                   {hasCustomization(showDetail) && (
                     <div className="bg-background-dark/30 rounded-[2.5rem] p-6 border border-white/5">
@@ -1005,7 +1618,16 @@ const MenuView: React.FC<MenuViewProps> = ({
             </div>
             
             <div className="p-4 bg-surface-dark border-t border-white/5 space-y-3">
-              {existingInCart ? (
+              {showDetail.availability !== false && showDetail.stock_quantity != null && showDetail.stock_quantity < 5 && (
+                <p className="text-[10px] font-black uppercase tracking-wider text-amber-400/90 mb-2">
+                  Últimas unidades! {showDetail.stock_quantity} disponible{showDetail.stock_quantity !== 1 ? 's' : ''}
+                </p>
+              )}
+              {showDetail.availability === false ? (
+                <div className="w-full h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-white/60">AGOTADO</span>
+                </div>
+              ) : existingInCart ? (
                 <div className="flex flex-col gap-3">
                   <button 
                     onClick={handleUpdateCurrent} 
@@ -1150,6 +1772,22 @@ const MenuView: React.FC<MenuViewProps> = ({
         </div>
       )}
 
+      {/* Modal Producto no disponible - al hacer click en Aceptar se cierra y el producto queda marcado AGOTADO */}
+      {showUnavailableModal && (
+        <div className="fixed inset-0 z-[115] flex flex-col items-center justify-center animate-fade-in">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowUnavailableModal(false)} />
+          <div className="relative z-10 bg-surface-dark rounded-3xl p-8 mx-4 max-w-sm w-full border border-white/10 shadow-2xl flex flex-col items-center gap-6">
+            <p className="text-white font-bold text-center text-lg">Producto no disponible</p>
+            <button
+              onClick={() => setShowUnavailableModal(false)}
+              className="w-full h-14 bg-primary text-background-dark rounded-2xl font-black text-lg shadow-xl shadow-primary/20 active:scale-[0.98] transition-all"
+            >
+              Aceptar
+            </button>
+          </div>
+        </div>
+      )}
+
       {showQrModal && activeOrderId && (
         <div className="fixed inset-0 z-[120] flex flex-col items-center justify-center animate-fade-in">
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowQrModal(false)} />
@@ -1177,17 +1815,20 @@ const MenuView: React.FC<MenuViewProps> = ({
         </div>
       )}
 
-      {/* Botón flotante para solicitar al mesero - arriba del footer, separado */}
+      {/* Botón flotante: foto del mesero asignado - arriba del footer, siempre visible */}
       {waiter ? (
         <button
           onClick={() => setIsWaiterModalOpen(true)}
-          className="fixed bottom-28 right-4 z-[70] size-14 bg-primary hover:bg-green-400 text-background-dark rounded-full shadow-lg shadow-primary/30 flex items-center justify-center transition-all active:scale-95"
+          className="fixed bottom-28 right-4 z-[70] size-14 rounded-full shadow-lg shadow-primary/30 flex items-center justify-center overflow-hidden border-2 border-primary/50 transition-all active:scale-95 hover:ring-4 hover:ring-primary/30"
           title="Solicitar al mesero"
         >
-          <span className="material-symbols-outlined text-2xl">notifications</span>
+          <img
+            src={waiter?.profile_photo_url || 'https://lh3.googleusercontent.com/aida-public/AB6AXuDyiwOtsINFh8RspVDg_Wx4QKXthNxCS7ZJlDSZvL6ADwFD3WRUpKHGhrscxV9dcR7w7guM4E-iFCNXx-tDgHs1BrbfGjolJoASehM-SEc4Pe6bKEx7zjcF4WAcON7mbdWJCepEdMPkBZ36lB_4tPTsJeNzTNqRNGKgusVb3U_X0WGEAgij6Y48HIunhj_BC8lxMdsB5ublmAltnyYerUKa_NkT8aybLFkaaRkQGQ_irdtS2ZQwrNGNj6b1ZrWY1HRClBeExJL615bG'}
+            alt={waiter?.nickname || waiter?.full_name || 'Mesero'}
+            className="w-full h-full object-cover"
+          />
         </button>
       ) : (
-        // Debug: Botón temporal para verificar que el componente se renderiza
         <div className="fixed bottom-28 right-4 z-[70] size-14 bg-red-500 rounded-full flex items-center justify-center text-white text-xs" title="DEBUG: No hay waiter">
           ?
         </div>

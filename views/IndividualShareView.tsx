@@ -81,7 +81,8 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
     // Si no hay splitData ni individualAmount, calcular desde los items del comensal
     const calculated = myCartItems.reduce((sum, item) => {
       const menuItem = menuItems.find(m => m.id === item.itemId);
-      const itemTotal = menuItem ? Number(menuItem.price) * item.quantity : 0;
+      const unitPrice = item.unitPrice ?? (menuItem ? Number(menuItem.price) : 0);
+      const itemTotal = unitPrice * item.quantity;
       console.log('[IndividualShareView] Item:', item.itemId, 'quantity:', item.quantity, 'price:', menuItem?.price, 'total:', itemTotal);
       return sum + itemTotal;
     }, 0);
@@ -264,7 +265,7 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
         </section>
       </div>
 
-      <div className="fixed bottom-0 z-50 w-full border-t border-white/5 bg-background-dark/95 backdrop-blur-xl p-6 pb-10 shadow-[0_-10px_50px_rgba(0,0,0,0.6)]">
+      <div className="fixed bottom-0 left-0 right-0 z-50 max-w-md mx-auto w-full border-t border-white/5 bg-background-dark/95 backdrop-blur-xl p-6 pb-10 shadow-[0_-10px_50px_rgba(0,0,0,0.6)]">
         <button 
           onClick={handleProcessPayment}
           disabled={isProcessing}

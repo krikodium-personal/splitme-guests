@@ -11,7 +11,8 @@ export type AppView =
   | 'INDIVIDUAL_SHARE' 
   | 'TRANSFER_PAYMENT'
   | 'CASH_PAYMENT'
-  | 'CHECKOUT' 
+  | 'CHECKOUT'
+  | 'TIP'
   | 'FEEDBACK'
   | 'CONFIRMATION';
 
@@ -28,6 +29,36 @@ export interface Guest {
   payment_method?: string | null;
 }
 
+export interface VariantOption {
+  id: string;
+  name: string;
+  description?: string;
+  price_type: 'replace' | 'add';
+  price_amount: number;
+}
+
+export interface VariantGroup {
+  id: string;
+  name: string;
+  /** individual=dropdown (una opción), multiple=lista con checkboxes (varias opciones) */
+  selection?: 'individual' | 'multiple';
+  /** Límite de selección cuando selection=multiple (ej. 2 = hasta 2 opciones) */
+  max_selection?: number | null;
+  /** Si true, el usuario debe seleccionar una opción antes de agregar (ej. Tamaño) */
+  required?: boolean;
+  variant_options: VariantOption[];
+}
+
+/** Subtítulo para agrupar productos en la lista (menu_section_headers) */
+export interface MenuSectionHeader {
+  id: string;
+  restaurant_id: string;
+  category_id: string;
+  subcategory_id?: string | null;
+  title: string;
+  sort_order: number;
+}
+
 export interface MenuItem {
   id: string;
   restaurant_id: string;
@@ -37,6 +68,8 @@ export interface MenuItem {
   image_url: string; 
   category_id: string;
   subcategory_id?: string;
+  /** Sección/subtítulo al que pertenece (menu_section_headers). NULL = sin sección. */
+  section_id?: string | null;
   average_rating?: number; 
   is_featured?: boolean;
   is_new?: boolean;
@@ -50,10 +83,15 @@ export interface MenuItem {
   fiber_g?: number;
   sodium_mg?: number;
   sort_order?: number;
+  /** Si false, el producto no está disponible (mostrar AGOTADO). */
+  availability?: boolean;
+  /** Cantidad en stock. Si < 5, mostrar "Últimas unidades! X disponibles". */
+  stock_quantity?: number | null;
   customer_customization?: {
     ingredientsToAdd?: string[];
     ingredientsToRemove?: string[];
   };
+  variant_groups?: VariantGroup[];
 }
 
 export interface OrderBatch {
@@ -76,6 +114,14 @@ export interface OrderItem {
   batch_id?: string | null;
   isConfirmed?: boolean;
   status?: 'elegido' | 'pedido'; // Estado del item: elegido (sin enviar) o pedido (enviado a cocina)
+  /** Precio unitario cuando hay variantes (reemplaza menuItem.price) */
+  unitPrice?: number;
+  /** Opción replace seleccionada (id de variant_option) */
+  selectedReplaceOptionId?: string | null;
+  /** Opciones add seleccionadas (ids de variant_options) */
+  selectedAddOptionIds?: string[];
+  /** IDs de variant_options seleccionados (persistido en DB como variant_selections) */
+  variant_selections?: string[];
 }
 
 export interface BillSplit {

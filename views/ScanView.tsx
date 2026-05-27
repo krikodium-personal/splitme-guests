@@ -10,7 +10,7 @@ interface ScanViewProps {
 
 const ScanView: React.FC<ScanViewProps> = ({ onNext, restaurantName }) => {
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
-  const [restaurantCode, setRestaurantCode] = useState('LAP006');
+  const [restaurantCode, setRestaurantCode] = useState('SOR047');
   const [tableNumber, setTableNumber] = useState('');
   const [scannerError, setScannerError] = useState<string | null>(null);
   const [isCameraActive, setIsCameraActive] = useState(false);
@@ -186,6 +186,10 @@ const ScanView: React.FC<ScanViewProps> = ({ onNext, restaurantName }) => {
         </div>
       </div>
 
+      <footer className="shrink-0 py-4 flex justify-center">
+        <span className="text-[10px] font-medium text-white/30 tracking-widest">v{__APP_VERSION__}</span>
+      </footer>
+
       {isManualModalOpen && (
         <div className="fixed inset-0 z-[100] flex flex-col justify-end animate-fade-in">
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setIsManualModalOpen(false)}></div>
@@ -197,7 +201,7 @@ const ScanView: React.FC<ScanViewProps> = ({ onNext, restaurantName }) => {
                 <label className="text-[10px] font-black text-text-secondary uppercase tracking-widest block mb-2 ml-1">Código del Local</label>
                 <input 
                   type="text" value={restaurantCode} onChange={e => setRestaurantCode(e.target.value.toUpperCase())}
-                  placeholder="Ej: LAP006" className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-5 text-white text-xl font-bold outline-none focus:ring-2 focus:ring-primary transition-all"
+                  placeholder="Ej: SOR047" className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-5 text-white text-xl font-bold outline-none focus:ring-2 focus:ring-primary transition-all"
                 />
               </div>
               <div>

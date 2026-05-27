@@ -56,7 +56,8 @@ const GuestSelectionView: React.FC<GuestSelectionViewProps> = ({
       const guestItems = cart.filter(item => item.guestId === guest.id);
       const total = guestItems.reduce((sum, item) => {
         const menuItem = menuItems.find(m => m.id === item.itemId);
-        return sum + (menuItem ? Number(menuItem.price) * item.quantity : 0);
+        const unitPrice = item.unitPrice ?? (menuItem ? Number(menuItem.price) : 0);
+        return sum + unitPrice * item.quantity;
       }, 0);
       
       return {

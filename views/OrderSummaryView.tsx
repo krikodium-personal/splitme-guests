@@ -4,6 +4,7 @@ import { formatPrice } from './MenuView';
 import { getInitials, getGuestColor } from './GuestInfoView';
 import WaiterRequestModal from './WaiterRequestModal';
 import { getGroupKeyForCategoryId, ORDER_GROUP_LABELS, type OrderGroupKey } from '../lib/orderGroups';
+import { getReplaceVariantInfo, getAddVariantLabels } from '../lib/variantDisplay';
 
 // Función helper para calcular tiempo transcurrido desde created_at
 const getTimeAgo = (createdAt: string | undefined): string => {
@@ -55,18 +56,23 @@ interface OrderSummaryViewProps {
   onPay?: () => void;
   sendingGroup?: OrderGroupKey | null;
   onUpdateQuantity: (id: string, delta: number) => void;
+  onRemoveItemFromBatch?: (cartItemId: string) => Promise<void>;
   menuItems: MenuItem[];
   categories: any[];
   tableNumber?: number;
   waiter?: any;
   currentGuestId?: string | null;
   activeOrderId?: string | null;
+  restaurant?: { logo_url?: string | null } | null;
 }
 
 const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({ 
-  guests, cart, batches, onBack, onSendGroup, onPay, sendingGroup = null, onUpdateQuantity, menuItems, categories, currentGuestId, waiter, tableNumber, activeOrderId
+  guests, cart, batches, onBack, onSendGroup, onPay, sendingGroup = null, onUpdateQuantity, onRemoveItemFromBatch, menuItems, categories, currentGuestId, waiter, tableNumber, activeOrderId, restaurant
 }) => {
+  const getItemImageUrl = (imageUrl?: string | null) => (imageUrl || '').trim() || restaurant?.logo_url || '';
   const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
+  const [showUnsentProductsModal, setShowUnsentProductsModal] = useState(false);
+  const [itemToRemoveFromBatch, setItemToRemoveFromBatch] = useState<OrderItem | null>(null);
 
   // Debug: Log waiter data
   useEffect(() => {
@@ -120,7 +126,8 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
     const isInCreatedBatch = !item.batch_id || batches.some(b => b.id === item.batch_id && (b.status || '').toUpperCase() === 'CREADO');
     if (isInCreatedBatch) return sum;
     const menuItem = menuItems.find(m => m.id === item.itemId);
-    return sum + (menuItem ? menuItem.price * item.quantity : 0);
+    const unitPrice = item.unitPrice ?? menuItem?.price ?? 0;
+    return sum + unitPrice * item.quantity;
   }, 0);
 
   // Agrupar items por comensal para la vista de comensales
@@ -129,7 +136,8 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
       const guestItems = cart.filter(item => item.guestId === guest.id);
       const guestTotal = guestItems.reduce((sum, item) => {
         const menuItem = menuItems.find(m => m.id === item.itemId);
-        return sum + (menuItem ? menuItem.price * item.quantity : 0);
+        const unitPrice = item.unitPrice ?? menuItem?.price ?? 0;
+        return sum + unitPrice * item.quantity;
       }, 0);
       return {
         guest,
@@ -249,17 +257,22 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                       {items.map(item => {
                         const dish = menuItems.find(m => m.id === item.itemId);
                         const guest = guests.find(g => g.id === item.guestId);
+                        const replaceInfo = getReplaceVariantInfo(dish, item);
+                        const addLabels = getAddVariantLabels(dish, item);
                         return (
                           <div key={item.id} className="flex flex-col gap-2">
                             <div className="flex items-center gap-4">
                               <div className={`size-5 rounded-full ${getGuestColor(item.guestId)} flex items-center justify-center shrink-0`}>
                                 <span className="text-[7px] font-black text-white">{getInitials(guest?.name || '?')}</span>
                               </div>
-                              <div className="size-12 rounded-xl bg-cover bg-center shrink-0 border border-white/5" style={{ backgroundImage: `url("${dish?.image_url}")` }}></div>
+                              <div className="size-12 rounded-xl bg-cover bg-center shrink-0 border border-white/5 bg-white/5" style={{ backgroundImage: getItemImageUrl(dish?.image_url) ? `url("${getItemImageUrl(dish?.image_url).replace(/"/g, '\\"')}")` : undefined }}></div>
                               <div className="flex-1 min-w-0">
                                 <p className="text-[10px] text-white/50 truncate">{guest?.name}</p>
                                 <p className="text-sm font-bold truncate">{dish?.name}</p>
-                                <p className="text-primary text-xs font-bold">${formatPrice(Number(dish?.price || 0))}</p>
+                                {replaceInfo && (
+                                  <p className="text-[10px] uppercase"><span className="text-white/60">{replaceInfo.groupName}: </span><span className="font-bold text-white">{replaceInfo.optionNames.join(', ')}</span></p>
+                                )}
+                                <p className="text-primary text-xs font-bold">${formatPrice(item.unitPrice ?? Number(dish?.price || 0))}</p>
                               </div>
                               <div className="flex items-center gap-3 bg-background-dark/50 rounded-full px-2 py-1 shrink-0 border border-white/5">
                                 <button onClick={() => onUpdateQuantity(item.id, -1)} className="size-6 rounded-full hover:bg-white/10 flex items-center justify-center"><span className="material-symbols-outlined text-xs">remove</span></button>
@@ -267,10 +280,13 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                                 <button onClick={() => onUpdateQuantity(item.id, 1)} className="size-6 rounded-full bg-white/10 flex items-center justify-center"><span className="material-symbols-outlined text-xs">add</span></button>
                               </div>
                             </div>
-                            {(item.extras?.length > 0 || item.removedIngredients?.length > 0) && (
+                            {(item.extras?.length > 0 || item.removedIngredients?.length > 0 || addLabels.length > 0) && (
                               <div className="flex flex-wrap items-center gap-1.5 ml-16">
+                                {addLabels.map(label => (
+                                  <span key={label} className="text-[9px] font-black uppercase bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-md border border-blue-500/40">{label}</span>
+                                ))}
                                 {item.extras?.filter(ex => ex && ex.trim()).map(ex => (
-                                  <span key={ex} className="text-[9px] font-black uppercase bg-primary/10 text-primary px-2 py-0.5 rounded-md border border-primary/20">+{ex}</span>
+                                  <span key={ex} className="text-[9px] font-black uppercase bg-green-500/20 text-green-400 px-2 py-0.5 rounded-md border border-green-500/40">+{ex}</span>
                                 ))}
                                 {item.removedIngredients?.filter(rem => rem && rem.trim()).map(rem => (
                                   <span key={rem} className="text-[9px] font-black uppercase bg-red-500/10 text-red-400 px-2 py-0.5 rounded-md border border-red-500/20">-{rem}</span>
@@ -320,10 +336,13 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                       {batch.items.map(item => {
                         const dish = menuItems.find(m => m.id === item.itemId);
                         const guest = guests.find(g => g.id === item.guestId);
+                        const replaceInfo = getReplaceVariantInfo(dish, item);
+                        const addLabels = getAddVariantLabels(dish, item);
+                        const canRemove = (batch.status || '').toUpperCase() === 'ENVIADO' && onRemoveItemFromBatch;
                         return (
                           <div key={item.id} className="p-4 flex flex-col gap-2">
                             <div className="flex items-center gap-4">
-                            <div className="size-11 rounded-xl bg-cover bg-center shrink-0 grayscale opacity-40 border border-white/5" style={{ backgroundImage: `url("${dish?.image_url}")` }}></div>
+                            <div className="size-11 rounded-xl bg-cover bg-center shrink-0 grayscale opacity-40 border border-white/5 bg-white/5" style={{ backgroundImage: getItemImageUrl(dish?.image_url) ? `url("${getItemImageUrl(dish?.image_url).replace(/"/g, '\\"')}")` : undefined }}></div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-0.5">
                                 <div className={`size-4 rounded-full ${getGuestColor(item.guestId)} flex items-center justify-center shrink-0`}>
@@ -331,15 +350,30 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                                 </div>
                                 <p className="text-sm font-bold text-white/80 truncate">{dish?.name}</p>
                               </div>
+                              {replaceInfo && (
+                                <p className="text-[10px] uppercase"><span className="text-white/50">{replaceInfo.groupName}: </span><span className="font-bold text-white">{replaceInfo.optionNames.join(', ')}</span></p>
+                              )}
                               <p className="text-white/30 text-[10px] font-black uppercase tracking-widest">Cantidad: {item.quantity}</p>
                             </div>
-                            <span className="text-xs font-black text-white/40 tabular-nums">${formatPrice((dish?.price || 0) * item.quantity)}</span>
+                            <span className="text-xs font-black text-white/40 tabular-nums">${formatPrice((item.unitPrice ?? dish?.price ?? 0) * item.quantity)}</span>
+                            {canRemove && (
+                              <button
+                                onClick={() => setItemToRemoveFromBatch(item)}
+                                className="size-9 shrink-0 flex items-center justify-center rounded-full hover:bg-red-500/20 text-red-400 transition-colors"
+                                title="Quitar del pedido"
+                              >
+                                <span className="material-symbols-outlined text-lg">delete</span>
+                              </button>
+                            )}
                             </div>
-                            {/* Personalizaciones */}
-                            {(item.extras?.length > 0 || item.removedIngredients?.length > 0) && (
+                            {/* Variantes add y personalizaciones */}
+                            {(item.extras?.length > 0 || item.removedIngredients?.length > 0 || addLabels.length > 0) && (
                               <div className="flex flex-wrap items-center gap-1.5 ml-[60px]">
+                                {addLabels.map(label => (
+                                  <span key={label} className="text-[9px] font-black uppercase bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-md border border-blue-500/40">{label}</span>
+                                ))}
                                 {item.extras?.filter(ex => ex && ex.trim()).map(ex => (
-                                  <span key={ex} className="text-[9px] font-black uppercase bg-primary/10 text-primary px-2 py-0.5 rounded-md border border-primary/20">+{ex}</span>
+                                  <span key={ex} className="text-[9px] font-black uppercase bg-green-500/20 text-green-400 px-2 py-0.5 rounded-md border border-green-500/40">+{ex}</span>
                                 ))}
                                 {item.removedIngredients?.filter(rem => rem && rem.trim()).map(rem => (
                                   <span key={rem} className="text-[9px] font-black uppercase bg-red-500/10 text-red-400 px-2 py-0.5 rounded-md border border-red-500/20">-{rem}</span>
@@ -394,28 +428,37 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                     <div className="space-y-4">
                       {items.map(item => {
                         const dish = menuItems.find(m => m.id === item.itemId);
-                        const itemTotal = (dish?.price || 0) * item.quantity;
+                        const unitPrice = item.unitPrice ?? (dish?.price ?? 0);
+                        const itemTotal = unitPrice * item.quantity;
+                        const replaceInfo = getReplaceVariantInfo(dish, item);
+                        const addLabels = getAddVariantLabels(dish, item);
                         return (
                           <div key={item.id} className="flex flex-col gap-2">
                             <div className="flex items-start gap-4">
-                              <div className="size-14 rounded-xl bg-cover bg-center shrink-0 border border-white/5" style={{ backgroundImage: `url("${dish?.image_url}")` }}></div>
+                              <div className="size-14 rounded-xl bg-cover bg-center shrink-0 border border-white/5 bg-white/5" style={{ backgroundImage: getItemImageUrl(dish?.image_url) ? `url("${getItemImageUrl(dish?.image_url).replace(/"/g, '\\"')}")` : undefined }}></div>
                               <div className="flex-1 min-w-0">
                                 <p className="text-sm font-bold mb-1">{dish?.name}</p>
+                                {replaceInfo && (
+                                  <p className="text-[10px] uppercase mb-1"><span className="text-white/60">{replaceInfo.groupName}: </span><span className="font-bold text-white">{replaceInfo.optionNames.join(', ')}</span></p>
+                                )}
                                 <div className="flex items-center gap-3 text-xs text-white/60">
                                   <span className="font-medium">Cantidad: {item.quantity}</span>
                                   <span className="text-white/40">×</span>
-                                  <span className="font-black tabular-nums">${formatPrice(dish?.price || 0)}</span>
+                                  <span className="font-black tabular-nums">${formatPrice(unitPrice)}</span>
                                 </div>
                               </div>
                               <div className="text-right shrink-0">
                                 <p className="text-sm font-black tabular-nums">${formatPrice(itemTotal)}</p>
                               </div>
                             </div>
-                            {/* Personalizaciones */}
-                            {(item.extras?.length > 0 || item.removedIngredients?.length > 0) && (
+                            {/* Variantes add y personalizaciones */}
+                            {(item.extras?.length > 0 || item.removedIngredients?.length > 0 || addLabels.length > 0) && (
                               <div className="flex flex-wrap items-center gap-1.5 ml-[72px]">
+                                {addLabels.map(label => (
+                                  <span key={label} className="text-[9px] font-black uppercase bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-md border border-blue-500/40">{label}</span>
+                                ))}
                                 {item.extras?.filter(ex => ex && ex.trim()).map(ex => (
-                                  <span key={ex} className="text-[9px] font-black uppercase bg-primary/10 text-primary px-2 py-0.5 rounded-md border border-primary/20">+{ex}</span>
+                                  <span key={ex} className="text-[9px] font-black uppercase bg-green-500/20 text-green-400 px-2 py-0.5 rounded-md border border-green-500/40">+{ex}</span>
                                 ))}
                                 {item.removedIngredients?.filter(rem => rem && rem.trim()).map(rem => (
                                   <span key={rem} className="text-[9px] font-black uppercase bg-red-500/10 text-red-400 px-2 py-0.5 rounded-md border border-red-500/20">-{rem}</span>
@@ -447,7 +490,10 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
         
         <div className="flex flex-col gap-3">
           {confirmedItems.length > 0 && (isCurrentUserHost ? (
-            <button onClick={onPay} className={`w-full h-14 rounded-2xl font-black flex items-center justify-center gap-2 transition-all ${pendingItems.length > 0 ? 'bg-white/5 text-white/60 border border-white/10' : 'bg-primary text-background-dark shadow-xl shadow-primary/20 active:scale-[0.98]'}`}>
+            <button onClick={() => {
+              if (pendingItems.length > 0) setShowUnsentProductsModal(true);
+              else onPay?.();
+            }} className="w-full h-14 rounded-2xl font-black flex items-center justify-center gap-2 transition-all bg-primary hover:bg-green-400 active:scale-[0.98] text-background-dark shadow-xl shadow-primary/20">
               <span className="material-symbols-outlined font-black">payments</span>
               <span>Dividir y pagar cuenta</span>
             </button>
@@ -472,6 +518,60 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
         // Debug: Botón temporal para verificar que el componente se renderiza
         <div className="fixed bottom-28 right-4 z-[70] size-14 bg-red-500 rounded-full flex items-center justify-center text-white text-xs" title="DEBUG: No hay waiter">
           ?
+        </div>
+      )}
+
+      {/* Modal: confirmar quitar producto del pedido (solo batches ENVIADO) */}
+      {itemToRemoveFromBatch && (
+        <div className="fixed inset-0 z-[120] flex flex-col items-center justify-center animate-fade-in">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setItemToRemoveFromBatch(null)} />
+          <div className="relative z-10 bg-surface-dark rounded-3xl p-8 mx-4 max-w-sm w-full border border-white/10 shadow-2xl flex flex-col gap-6">
+            <h3 className="text-xl font-black text-white">¿Estás seguro de quitar el producto del pedido?</h3>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={async () => {
+                  if (onRemoveItemFromBatch && itemToRemoveFromBatch) {
+                    await onRemoveItemFromBatch(itemToRemoveFromBatch.id);
+                    setItemToRemoveFromBatch(null);
+                  }
+                }}
+                className="w-full h-14 bg-red-500/20 text-red-400 border border-red-500/40 rounded-2xl font-black active:scale-[0.98] transition-all"
+              >
+                Sí, quitar
+              </button>
+              <button
+                onClick={() => setItemToRemoveFromBatch(null)}
+                className="w-full h-14 bg-white/5 border border-white/10 text-white rounded-2xl font-bold active:scale-[0.98] transition-all"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: productos sin enviar al hacer clic en Dividir y pagar */}
+      {showUnsentProductsModal && (
+        <div className="fixed inset-0 z-[120] flex flex-col items-center justify-center animate-fade-in">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowUnsentProductsModal(false)} />
+          <div className="relative z-10 bg-surface-dark rounded-3xl p-8 mx-4 max-w-sm w-full border border-white/10 shadow-2xl flex flex-col gap-6">
+            <h3 className="text-xl font-black text-white">Tenés productos sin enviar</h3>
+            <p className="text-text-secondary text-sm leading-relaxed">¿Estás seguro que querés pagar o preferís mandarlos?</p>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={() => { setShowUnsentProductsModal(false); onPay?.(); }}
+                className="w-full h-14 bg-primary text-background-dark rounded-2xl font-black text-lg shadow-xl shadow-primary/20 active:scale-[0.98] transition-all"
+              >
+                Prefiero pagar
+              </button>
+              <button
+                onClick={() => setShowUnsentProductsModal(false)}
+                className="w-full h-14 bg-white/5 border border-white/10 text-white rounded-2xl font-bold active:scale-[0.98] transition-all"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

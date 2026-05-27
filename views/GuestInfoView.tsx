@@ -104,14 +104,14 @@ const GuestInfoView: React.FC<GuestInfoViewProps> = ({ guests, setGuests, onBack
     if (isSubmitting) return;
     setIsSubmitting(true);
 
+    const trimmed = names.slice(0, guestCount).map((n) => (n ?? '').trim());
+    const vacios = trimmed.some((t) => !t);
+    if (vacios) {
+      setError('Cada comensal debe tener un nombre.');
+      setIsSubmitting(false);
+      return;
+    }
     if (guestCount > 1) {
-      const trimmed = names.slice(0, guestCount).map((n) => (n ?? '').trim());
-      const vacios = trimmed.some((t) => !t);
-      if (vacios) {
-        setError('Cada comensal debe tener un nombre.');
-        setIsSubmitting(false);
-        return;
-      }
       const lower = trimmed.map((t) => t.toLowerCase());
       const unicos = new Set(lower);
       if (unicos.size !== lower.length) {

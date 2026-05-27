@@ -66,7 +66,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
     const units: BillItemAssignment[] = [];
     cart.forEach(item => {
       const menuItem = menuItems.find(m => m.id === item.itemId);
-      const unitPrice = (menuItem?.price || 0);
+      const unitPrice = item.unitPrice ?? (menuItem?.price || 0);
       for (let i = 0; i < item.quantity; i++) {
         units.push({
           id: `${item.id}-${i}`,
@@ -118,9 +118,10 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
     } else if (method === 'guest') {
       cart.forEach(item => {
         const menuItem = menuItems.find(m => m.id === item.itemId);
-        if (menuItem) {
+        const unitPrice = item.unitPrice ?? (menuItem?.price ?? 0);
+        if (unitPrice > 0 || menuItem) {
           const current: number = Number(shares[item.guestId] || 0);
-          shares[item.guestId] = current + (Number(menuItem.price) * item.quantity);
+          shares[item.guestId] = current + (Number(unitPrice) * item.quantity);
         }
       });
     } else if (method === 'custom') {
@@ -139,10 +140,11 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
         .filter(item => item.guestId === g.id)
         .map(item => {
           const menuItem = menuItems.find(m => m.id === item.itemId);
+          const unitPrice = item.unitPrice ?? (menuItem?.price || 0);
           return {
             name: menuItem?.name || 'Producto',
             quantity: item.quantity,
-            price: menuItem?.price || 0
+            price: unitPrice
           };
         });
 

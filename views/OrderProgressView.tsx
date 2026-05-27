@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import { OrderItem, OrderBatch, MenuItem } from '../types';
 import { formatPrice } from './MenuView';
 import { getGroupKeyForCategoryId, ORDER_GROUP_LABELS } from '../lib/orderGroups';
+import { getReplaceVariantInfo, getAddVariantLabels } from '../lib/variantDisplay';
 
 // Función helper para calcular tiempo transcurrido desde created_at
 const getTimeAgo = (createdAt: string | undefined): string => {
@@ -51,19 +52,21 @@ interface OrderProgressViewProps {
   onNext: () => void;
   onBack: () => void;
   onRedirectToFeedback?: () => void;
+  onRemoveItemFromBatch?: (cartItemId: string) => Promise<void>;
   tableNumber?: number;
   menuItems: MenuItem[];
   categories?: { id: string; name: string; parent_id?: string | null }[];
 }
 
 const OrderProgressView: React.FC<OrderProgressViewProps> = ({ 
-  cart, batches: initialBatches, activeOrderId, onNext, onBack, onRedirectToFeedback, tableNumber, menuItems, categories = []
+  cart, batches: initialBatches, activeOrderId, onNext, onBack, onRedirectToFeedback, onRemoveItemFromBatch, tableNumber, menuItems, categories = []
 }) => {
   const [localBatches, setLocalBatches] = useState<OrderBatch[]>(initialBatches);
   const [orderStatus, setOrderStatus] = useState<string>('ABIERTO');
   const [isFlickering, setIsFlickering] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
   const [currentTime, setCurrentTime] = useState(new Date()); // Para actualizar el tiempo cada minuto
+  const [itemToRemoveFromBatch, setItemToRemoveFromBatch] = useState<OrderItem | null>(null);
   
   const orderId = activeOrderId;
   const orderChannelRef = useRef<any>(null);
@@ -280,14 +283,45 @@ const OrderProgressView: React.FC<OrderProgressViewProps> = ({
                     <div className="divide-y divide-white/5">
                       {items.map(item => {
                         const dish = menuItems.find(m => m.id === item.itemId);
+                        const replaceInfo = getReplaceVariantInfo(dish, item);
+                        const addLabels = getAddVariantLabels(dish, item);
+                        const unitPrice = item.unitPrice ?? dish?.price ?? 0;
+                        const canRemove = batchStatus === 'ENVIADO' && onRemoveItemFromBatch;
                         return (
-                          <div key={item.id} className="p-4 flex items-center gap-4">
-                            <div className="size-14 rounded-xl bg-center bg-cover border border-white/5 shrink-0" style={{ backgroundImage: `url('${dish?.image_url}')` }}></div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-bold truncate">{dish?.name}</p>
-                              <p className="text-text-secondary text-[10px] font-medium">Cantidad: {item.quantity}</p>
+                          <div key={item.id} className="p-4 flex flex-col gap-2">
+                            <div className="flex items-center gap-4">
+                              <div className="size-14 rounded-xl bg-center bg-cover border border-white/5 shrink-0" style={{ backgroundImage: `url('${dish?.image_url}')` }}></div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-bold truncate">{dish?.name}</p>
+                                {replaceInfo && (
+                                  <p className="text-[10px] uppercase"><span className="text-white/60">{replaceInfo.groupName}: </span><span className="font-bold text-white">{replaceInfo.optionNames.join(', ')}</span></p>
+                                )}
+                                <p className="text-text-secondary text-[10px] font-medium">Cantidad: {item.quantity}</p>
+                              </div>
+                              <span className="text-xs font-black tabular-nums text-white/40">${formatPrice(unitPrice * item.quantity)}</span>
+                              {canRemove && (
+                                <button
+                                  onClick={() => setItemToRemoveFromBatch(item)}
+                                  className="size-9 shrink-0 flex items-center justify-center rounded-full hover:bg-red-500/20 text-red-400 transition-colors"
+                                  title="Quitar del pedido"
+                                >
+                                  <span className="material-symbols-outlined text-lg">delete</span>
+                                </button>
+                              )}
                             </div>
-                            <span className="text-xs font-black tabular-nums text-white/40">${formatPrice((dish?.price || 0) * item.quantity)}</span>
+                            {(addLabels.length > 0 || item.extras?.length || item.removedIngredients?.length) && (
+                              <div className="flex flex-wrap items-center gap-1.5 ml-[72px]">
+                                {addLabels.map(label => (
+                                  <span key={label} className="text-[9px] font-black uppercase bg-green-500/20 text-green-400 px-2 py-0.5 rounded-md border border-green-500/40">{label}</span>
+                                ))}
+                                {item.extras?.filter(ex => ex && ex.trim()).map(ex => (
+                                  <span key={ex} className="text-[9px] font-black uppercase bg-primary/10 text-primary px-2 py-0.5 rounded-md border border-primary/20">+{ex}</span>
+                                ))}
+                                {item.removedIngredients?.filter(rem => rem && rem.trim()).map(rem => (
+                                  <span key={rem} className="text-[9px] font-black uppercase bg-red-500/10 text-red-400 px-2 py-0.5 rounded-md border border-red-500/20">-{rem}</span>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -322,6 +356,35 @@ const OrderProgressView: React.FC<OrderProgressViewProps> = ({
           <span>Pedir algo más</span>
         </button>
       </div>
+
+      {/* Modal: confirmar quitar producto del pedido (solo batches ENVIADO) */}
+      {itemToRemoveFromBatch && (
+        <div className="fixed inset-0 z-[120] flex flex-col items-center justify-center animate-fade-in">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setItemToRemoveFromBatch(null)} />
+          <div className="relative z-10 bg-surface-dark rounded-3xl p-8 mx-4 max-w-sm w-full border border-white/10 shadow-2xl flex flex-col gap-6">
+            <h3 className="text-xl font-black text-white">¿Estás seguro de quitar el producto del pedido?</h3>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={async () => {
+                  if (onRemoveItemFromBatch && itemToRemoveFromBatch) {
+                    await onRemoveItemFromBatch(itemToRemoveFromBatch.id);
+                    setItemToRemoveFromBatch(null);
+                  }
+                }}
+                className="w-full h-14 bg-red-500/20 text-red-400 border border-red-500/40 rounded-2xl font-black active:scale-[0.98] transition-all"
+              >
+                Sí, quitar
+              </button>
+              <button
+                onClick={() => setItemToRemoveFromBatch(null)}
+                className="w-full h-14 bg-white/5 border border-white/10 text-white rounded-2xl font-bold active:scale-[0.98] transition-all"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

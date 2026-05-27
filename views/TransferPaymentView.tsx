@@ -164,7 +164,7 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
   };
 
   const handleNavigateToConfirmation = () => {
-    navigate('/feedback');
+    navigate('/tip');
   };
 
   // Determinar el texto y acción del botón según el estado

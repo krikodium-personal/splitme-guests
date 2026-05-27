@@ -127,7 +127,8 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
   // Total global de la mesa (precios ya incluyen impuestos)
   const grandTotal = useMemo(() => cart.reduce((sum, item) => {
     const menuItem = menuItems.find(m => m.id === item.itemId);
-    return sum + (menuItem ? menuItem.price * item.quantity : 0);
+    const unitPrice = item.unitPrice ?? (menuItem?.price ?? 0);
+    return sum + unitPrice * item.quantity;
   }, 0), [cart, menuItems]);
 
   // Identificar al usuario actual (prioridad: currentGuestId de URL > host > primer guest)

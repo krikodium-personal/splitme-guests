@@ -21,6 +21,7 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
   const [isLoading, setIsLoading] = useState(false);
   const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
   const [waiterData, setWaiterData] = useState<any>(waiter);
+  const [totalAmount, setTotalAmount] = useState<number>(0);
 
   // Debug: Log waiter data
   useEffect(() => {
@@ -29,9 +30,25 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
     console.log('[ConfirmationView] Will show button?', !!waiterData);
   }, [waiter, waiterData]);
 
-  // Cargar guests y waiter desde la base de datos si no se pasaron como prop y hay activeOrderId
+  // Cargar guests, waiter y total_amount desde la base de datos si no se pasaron como prop y hay activeOrderId
   useEffect(() => {
     const loadDataFromDB = async () => {
+      // Cargar total_amount de la orden desde la columna total_amount de la tabla orders
+      if (activeOrderId && supabase) {
+        try {
+          const { data: orderRow } = await supabase
+            .from('orders')
+            .select('total_amount')
+            .eq('id', activeOrderId)
+            .maybeSingle();
+          setTotalAmount(Number(orderRow?.total_amount || 0));
+        } catch (error) {
+          console.error('[ConfirmationView] Error al cargar total_amount:', error);
+        }
+      } else {
+        setTotalAmount(0);
+      }
+
       // Si ya hay guests pasados como prop, usarlos
       if (guests.length > 0) {
         setLoadedGuests(guests);
@@ -252,7 +269,7 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
 
       <div className="flex flex-wrap gap-3 px-4 py-3">
         <div className="flex min-w-[111px] flex-1 basis-[fit-content] flex-col gap-1 rounded-2xl bg-white dark:bg-surface-dark border border-slate-200 dark:border-border-dark p-4 items-center text-center shadow-sm">
-          <p className="text-slate-900 dark:text-white tracking-tight text-2xl font-bold leading-tight">${formatPrice(105.50)}</p>
+          <p className="text-slate-900 dark:text-white tracking-tight text-2xl font-bold leading-tight">${formatPrice(totalAmount)}</p>
           <div className="flex items-center gap-1.5"><span className="material-symbols-outlined text-slate-400 dark:text-text-secondary text-sm">receipt_long</span><p className="text-slate-500 dark:text-text-secondary text-sm font-medium">Total Cuenta</p></div>
         </div>
       </div>
@@ -344,7 +361,7 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
         ) : (
           <button onClick={onRestart} className="w-full bg-primary hover:bg-green-400 text-background-dark font-bold text-lg h-14 rounded-xl flex items-center justify-between px-6 shadow-lg shadow-primary/20 group">
             <span>Pagar mi parte</span>
-            <div className="flex items-center gap-2"><span>$${formatPrice((currentGuestId ? dinerShares.find(g => g.id === currentGuestId) : dinerShares.find(g => g.isHost))?.individualAmount || 0)}</span><span className="material-symbols-outlined group-hover:translate-x-1 transition-transform">arrow_forward</span></div>
+            <div className="flex items-center gap-2"><span>{'$' + formatPrice((currentGuestId ? dinerShares.find(g => g.id === currentGuestId) : dinerShares.find(g => g.isHost))?.individualAmount || 0)}</span><span className="material-symbols-outlined group-hover:translate-x-1 transition-transform">arrow_forward</span></div>
           </button>
         )}
       </div>
