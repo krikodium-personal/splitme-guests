@@ -1847,40 +1847,42 @@ const App: React.FC = () => {
           has_key_alias_test: !!config.key_alias_test,
         });
 
-        const useTestCredentials = config.oauth_test_mode === true
-          || (!config.oauth_test_mode && !config.token_cbu && !!config.token_cbu_test);
+        const useSandboxCheckout = config.oauth_test_mode === true;
 
-        let accessToken = useTestCredentials ? config.token_cbu_test : config.token_cbu;
-        let sellerPublicKey = (useTestCredentials ? config.key_alias_test : config.key_alias)?.trim() || '';
-
-        if (config.oauth_test_mode === true && !config.token_cbu_test) {
-          console.warn('[DineSplit] oauth_test_mode=true pero token_cbu_test ausente; usando token_cbu como fallback');
-          accessToken = config.token_cbu;
-          sellerPublicKey = config.key_alias?.trim() || '';
-        }
+        // OAuth con test_token devuelve TEST- que MP rechaza en Preferences API (401).
+        // APP_USR funciona y la preferencia incluye sandbox_init_point para checkout sandbox.
+        let accessToken = config.token_cbu?.trim() || config.token_cbu_test?.trim() || '';
+        const sellerPublicKey = (config.key_alias || config.key_alias_test)?.trim() || '';
 
         if (!accessToken) {
           throw new Error("El token de acceso de Mercado Pago no está configurado.");
         }
-        if (!accessToken.trim()) {
-          throw new Error("El token de acceso de Mercado Pago está vacío.");
-        }
 
-        const isAppTestCredential =
-          accessToken.startsWith('TEST-') || sellerPublicKey.startsWith('TEST-');
+        const legacyTestOnlyToken =
+          accessToken.startsWith('TEST-') && !config.token_cbu?.trim();
+        const redirectToSandbox = useSandboxCheckout || legacyTestOnlyToken;
+
         console.log('[DineSplit] Credenciales MP del vendedor:', {
-          useTestCredentials,
           oauth_test_mode: config.oauth_test_mode,
-          isAppTestCredential,
+          useSandboxCheckout,
+          redirectToSandbox,
+          apiTokenSource: config.token_cbu ? 'APP_USR (token_cbu)' : 'TEST (token_cbu_test)',
           sellerUserId: config.user_account || null,
           tokenPrefix: accessToken.substring(0, 12) + '...',
           publicKeyPrefix: sellerPublicKey ? sellerPublicKey.substring(0, 12) + '...' : '(sin public key)',
-          note: isAppTestCredential
-            ? 'Credenciales TEST (sandbox). Checkout con sandbox_init_point.'
-            : 'Credenciales APP_USR (producción). Checkout con init_point.'
+          note: redirectToSandbox
+            ? 'API con APP_USR; checkout sandbox_init_point.'
+            : 'Checkout producción (init_point).'
         });
 
-        const cleanUrl = window.location.origin + window.location.pathname;
+        const pageOrigin = window.location.origin + window.location.pathname;
+        const publicGuestsUrl = (import.meta as any).env?.VITE_GUESTS_PUBLIC_URL?.trim()
+          || 'https://splitme-guests.vercel.app';
+        const isLocalhostOrigin = pageOrigin.includes('localhost') || pageOrigin.includes('127.0.0.1') || pageOrigin.includes('0.0.0.0');
+        const checkoutOrigin = isLocalhostOrigin && publicGuestsUrl.startsWith('http')
+          ? publicGuestsUrl.replace(/\/$/, '')
+          : window.location.origin;
+        const cleanUrl = checkoutOrigin + window.location.pathname;
         const supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL || 'https://hqaiuywzklrwywdhmqxw.supabase.co';
         const webhookBase = `${supabaseUrl.replace(/\/$/, '')}/functions/v1/mercadopago-webhook`;
         const notificationUrl = `${webhookBase}?source_news=webhooks`;
@@ -1908,9 +1910,11 @@ const App: React.FC = () => {
           throw new Error("La URL de éxito (back_urls.success) es requerida y debe ser una URL válida para usar auto_return.");
         }
         
-        // Mercado Pago NO acepta localhost cuando se usa auto_return
-        // Solo usar auto_return si la URL es pública (no localhost)
+        // Mercado Pago NO acepta localhost en back_urls / auto_return
         const isLocalhost = cleanUrl.includes('localhost') || cleanUrl.includes('127.0.0.1') || cleanUrl.includes('0.0.0.0');
+        if (isLocalhostOrigin && !isLocalhost) {
+          console.log('[DineSplit] back_urls usan URL pública para dev local:', cleanUrl);
+        }
         
         const tableNum = currentTable?.table_number || 'N/A';
         
@@ -1980,7 +1984,7 @@ const App: React.FC = () => {
             statusText: response.statusText,
             errorCode: errorData.error,
             errorMessage: errorData.message,
-            isAppTestCredential,
+            isSandboxCheckout: redirectToSandbox,
             sellerUserId: config.user_account,
             accessTokenPrefix: accessToken.substring(0, 12)
           });
@@ -1990,7 +1994,7 @@ const App: React.FC = () => {
             let helpfulMessage = 'Error de configuración de Mercado Pago:\n\n';
             helpfulMessage += 'Cada restaurante debe usar el Public Key y Access Token de SU cuenta vendedora en Settings.\n';
             helpfulMessage += 'No uses las credenciales de prueba genéricas de la aplicación SplitMe.\n\n';
-            helpfulMessage += `Tipo detectado: ${isAppTestCredential ? 'credenciales TEST de app' : 'credenciales de vendedor (APP_USR)'}\n\n`;
+            helpfulMessage += `Modo checkout: ${redirectToSandbox ? 'sandbox' : 'producción'}\n\n`;
             helpfulMessage += 'Solución:\n';
             helpfulMessage += '- Iniciá sesión como el vendedor de prueba de ESTE local en mercadopago.com.ar\n';
             helpfulMessage += '- Copiá Public Key y Access Token de producción de ese vendedor (y su User ID)\n';
@@ -2008,7 +2012,7 @@ const App: React.FC = () => {
         console.log('[DineSplit] Preference ID:', pref.id);
         console.log('[DineSplit] Sandbox URL:', pref.sandbox_init_point || 'No disponible');
         
-        const paymentUrl = isAppTestCredential
+        const paymentUrl = redirectToSandbox
           ? (pref.sandbox_init_point || pref.init_point)
           : pref.init_point;
         
