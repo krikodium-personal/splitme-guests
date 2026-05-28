@@ -1839,33 +1839,45 @@ const App: React.FC = () => {
         console.log('[DineSplit] Configuración de Mercado Pago encontrada:', {
           restaurant_id: restaurant.id,
           provider: config.provider,
+          oauth_test_mode: config.oauth_test_mode,
           has_token_cbu: !!config.token_cbu,
+          has_token_cbu_test: !!config.token_cbu_test,
           has_user_account: !!config.user_account,
-          has_key_alias: !!config.key_alias
+          has_key_alias: !!config.key_alias,
+          has_key_alias_test: !!config.key_alias_test,
         });
-        
-        // Token del vendedor del restaurante (payment_configs.token_cbu). Debe ser de la cuenta que cobra.
-        const accessToken = config.token_cbu;
-        const sellerPublicKey = config.key_alias?.trim() || '';
+
+        const useTestCredentials = config.oauth_test_mode === true
+          || (!config.oauth_test_mode && !config.token_cbu && !!config.token_cbu_test);
+
+        let accessToken = useTestCredentials ? config.token_cbu_test : config.token_cbu;
+        let sellerPublicKey = (useTestCredentials ? config.key_alias_test : config.key_alias)?.trim() || '';
+
+        if (config.oauth_test_mode === true && !config.token_cbu_test) {
+          console.warn('[DineSplit] oauth_test_mode=true pero token_cbu_test ausente; usando token_cbu como fallback');
+          accessToken = config.token_cbu;
+          sellerPublicKey = config.key_alias?.trim() || '';
+        }
+
         if (!accessToken) {
-          throw new Error("El token de acceso de Mercado Pago (token_cbu) no está configurado.");
+          throw new Error("El token de acceso de Mercado Pago no está configurado.");
         }
         if (!accessToken.trim()) {
           throw new Error("El token de acceso de Mercado Pago está vacío.");
         }
-        
-        // Credenciales genéricas TEST- de la app SplitMe → sandbox_init_point.
-        // Credenciales APP_USR del vendedor (incluso en prueba) → init_point.
+
         const isAppTestCredential =
           accessToken.startsWith('TEST-') || sellerPublicKey.startsWith('TEST-');
         console.log('[DineSplit] Credenciales MP del vendedor:', {
+          useTestCredentials,
+          oauth_test_mode: config.oauth_test_mode,
           isAppTestCredential,
           sellerUserId: config.user_account || null,
           tokenPrefix: accessToken.substring(0, 12) + '...',
           publicKeyPrefix: sellerPublicKey ? sellerPublicKey.substring(0, 12) + '...' : '(sin public key)',
           note: isAppTestCredential
-            ? 'Credenciales TEST de app detectadas. Preferí credenciales de producción del vendedor de prueba (Settings).'
-            : 'Credenciales de vendedor (APP_USR). Checkout con tarjetas/usuarios de prueba de MP.'
+            ? 'Credenciales TEST (sandbox). Checkout con sandbox_init_point.'
+            : 'Credenciales APP_USR (producción). Checkout con init_point.'
         });
 
         const cleanUrl = window.location.origin + window.location.pathname;
@@ -1998,7 +2010,7 @@ const App: React.FC = () => {
         
         const paymentUrl = isAppTestCredential
           ? (pref.sandbox_init_point || pref.init_point)
-          : (pref.init_point || pref.sandbox_init_point);
+          : pref.init_point;
         
         if (paymentUrl) {
           try {

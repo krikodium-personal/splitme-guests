@@ -4,6 +4,7 @@ import {
   exchangeMpOAuthCode,
   getMpConfig,
   parseOAuthState,
+  refreshMpOAuthToken,
 } from "../_shared/mp-oauth.ts";
 
 function redirectWithMessage(returnUrl: string, params: Record<string, string>): Response {
@@ -39,8 +40,43 @@ Deno.serve(async (req) => {
     const { redirectUri, stateSecret } = getMpConfig();
     const statePayload = await parseOAuthState(state, stateSecret);
     const returnUrl = statePayload.return_url || fallbackReturn;
+    const primaryIsTest = statePayload.test_token;
 
-    const tokenData = await exchangeMpOAuthCode(code, redirectUri, statePayload.test_token);
+    const tokenData = await exchangeMpOAuthCode(code, redirectUri, primaryIsTest);
+
+    if (primaryIsTest && !tokenData.access_token.startsWith("TEST-")) {
+      console.warn(
+        "[mp-oauth-callback] test_token solicitado pero access_token primario no empieza con TEST-:",
+        tokenData.access_token.substring(0, 12),
+      );
+    }
+
+    let prodAccessToken = primaryIsTest ? null : tokenData.access_token;
+    let prodPublicKey = primaryIsTest ? null : (tokenData.public_key || null);
+    let testAccessToken = primaryIsTest ? tokenData.access_token : null;
+    let testPublicKey = primaryIsTest ? (tokenData.public_key || null) : null;
+
+    if (tokenData.refresh_token) {
+      try {
+        const complementary = await refreshMpOAuthToken(
+          tokenData.refresh_token,
+          !primaryIsTest,
+          redirectUri,
+        );
+        if (primaryIsTest) {
+          prodAccessToken = complementary.access_token;
+          prodPublicKey = complementary.public_key || null;
+        } else {
+          testAccessToken = complementary.access_token;
+          testPublicKey = complementary.public_key || null;
+        }
+      } catch (refreshErr) {
+        console.warn(
+          "[mp-oauth-callback] No se pudieron obtener credenciales complementarias:",
+          refreshErr?.message || refreshErr,
+        );
+      }
+    }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -54,8 +90,11 @@ Deno.serve(async (req) => {
 
     const payload = {
       restaurant_id: statePayload.restaurant_id,
-      token_cbu: tokenData.access_token,
-      key_alias: tokenData.public_key || null,
+      token_cbu: prodAccessToken,
+      key_alias: prodPublicKey,
+      token_cbu_test: testAccessToken,
+      key_alias_test: testPublicKey,
+      oauth_test_mode: primaryIsTest,
       user_account: tokenData.user_id ? String(tokenData.user_id) : null,
       refresh_token: tokenData.refresh_token || null,
       oauth_connected_at: new Date().toISOString(),

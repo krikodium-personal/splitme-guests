@@ -81,7 +81,7 @@ export function getMpConfig() {
   const clientSecret = Deno.env.get("MERCADOPAGO_CLIENT_SECRET")?.trim();
   const redirectUri = Deno.env.get("MERCADOPAGO_OAUTH_REDIRECT_URI")?.trim();
   const stateSecret = Deno.env.get("MERCADOPAGO_OAUTH_STATE_SECRET")?.trim();
-  const sandboxByDefault = Deno.env.get("MERCADOPAGO_OAUTH_TEST_MODE") !== "false";
+  const sandboxByDefault = Deno.env.get("MERCADOPAGO_OAUTH_TEST_MODE") === "true";
 
   if (!clientId || !clientSecret || !redirectUri || !stateSecret) {
     throw new Error("OAuth de Mercado Pago no configurado en el servidor");
@@ -126,6 +126,45 @@ export async function exchangeMpOAuthCode(
   }
 
   if (!data.access_token) throw new Error("Mercado Pago no devolvió access_token");
+  return data;
+}
+
+export async function refreshMpOAuthToken(
+  refreshToken: string,
+  testToken: boolean,
+  redirectUri?: string,
+): Promise<{
+  access_token: string;
+  refresh_token?: string;
+  public_key?: string;
+  live_mode?: boolean;
+  expires_in?: number;
+}> {
+  const { clientId, clientSecret, redirectUri: defaultRedirectUri } = getMpConfig();
+
+  const body: Record<string, string> = {
+    client_id: clientId,
+    client_secret: clientSecret,
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+  };
+  if (testToken) body.test_token = "true";
+  const resolvedRedirectUri = redirectUri ?? defaultRedirectUri;
+  if (resolvedRedirectUri) body.redirect_uri = resolvedRedirectUri;
+
+  const response = await fetch("https://api.mercadopago.com/oauth/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = data?.message || data?.error || response.statusText;
+    throw new Error(`Mercado Pago OAuth refresh: ${message}`);
+  }
+
+  if (!data.access_token) throw new Error("Mercado Pago no devolvió access_token en refresh");
   return data;
 }
 
