@@ -1847,10 +1847,8 @@ const App: React.FC = () => {
           has_key_alias_test: !!config.key_alias_test,
         });
 
-        const useSandboxCheckout = config.oauth_test_mode === true;
-
-        // OAuth con test_token devuelve TEST- que MP rechaza en Preferences API (401).
-        // APP_USR funciona y la preferencia incluye sandbox_init_point para checkout sandbox.
+        // OAuth: APP_USR crea la preferencia; TEST OAuth suele ser inválido (401).
+        // Nunca mezclar preferencia APP_USR + sandbox_init_point (404 en card-form/association).
         let accessToken = config.token_cbu?.trim() || config.token_cbu_test?.trim() || '';
         const sellerPublicKey = (config.key_alias || config.key_alias_test)?.trim() || '';
 
@@ -1858,21 +1856,20 @@ const App: React.FC = () => {
           throw new Error("El token de acceso de Mercado Pago no está configurado.");
         }
 
-        const legacyTestOnlyToken =
-          accessToken.startsWith('TEST-') && !config.token_cbu?.trim();
-        const redirectToSandbox = useSandboxCheckout || legacyTestOnlyToken;
+        // sandbox_init_point solo si la preferencia se creó con TEST- válido (ej. credenciales manuales).
+        // Con OAuth APP_USR + modo prueba → init_point (prod) logueado como comprador test de la app.
+        const redirectToSandbox = accessToken.startsWith('TEST-');
 
         console.log('[DineSplit] Credenciales MP del vendedor:', {
           oauth_test_mode: config.oauth_test_mode,
-          useSandboxCheckout,
           redirectToSandbox,
           apiTokenSource: config.token_cbu ? 'APP_USR (token_cbu)' : 'TEST (token_cbu_test)',
           sellerUserId: config.user_account || null,
           tokenPrefix: accessToken.substring(0, 12) + '...',
           publicKeyPrefix: sellerPublicKey ? sellerPublicKey.substring(0, 12) + '...' : '(sin public key)',
           note: redirectToSandbox
-            ? 'API con APP_USR; checkout sandbox_init_point.'
-            : 'Checkout producción (init_point).'
+            ? 'Checkout sandbox (token TEST válido).'
+            : 'Checkout producción (init_point). Con oauth_test_mode, pagá logueado como comprador test MP.'
         });
 
         const pageOrigin = window.location.origin + window.location.pathname;
