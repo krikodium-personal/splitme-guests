@@ -17,7 +17,7 @@ import ConfirmationView from './views/ConfirmationView';
 import FeedbackView from './views/FeedbackView';
 import TipView from './views/TipView';
 import JoinTableView from './views/JoinTableView';
-import { getSession, setSession, getOrderId, setOrderId, removeOrderId, clearSession, getActiveGuestId, setActiveGuestIdCookie, setTableAndRestaurant, getTableAndRestaurant } from './lib/sessionCookies';
+import { getSession, setSession, getOrderId, setOrderId, removeOrderId, clearSession, getActiveGuestId, setActiveGuestIdCookie, setTableAndRestaurant, getTableAndRestaurant, isGuestEntryPath } from './lib/sessionCookies';
 import { getGroupKeyForCategoryId, type OrderGroupKey } from './lib/orderGroups';
 import { getVariantGroups } from './lib/variantDisplay';
 
@@ -1221,6 +1221,35 @@ const App: React.FC = () => {
       const isAnyMpReturn = ['success','approved','rejected','failure','pending'].includes(paymentStatus || '');
       const orderIdForLoad = orderIdParam || (isAnyMpReturn && mpReturn?.orderId) || undefined;
 
+      // Entrada nueva en / o /scan sin parámetros: no restaurar cookies (permitir otra mesa/sesión).
+      // Sí restauramos si hay res/table/orderId/guestId en URL o retorno de Mercado Pago.
+      const isFreshEntry =
+        isGuestEntryPath(location.pathname) &&
+        !resParam &&
+        !tableParam &&
+        !orderIdParam &&
+        !guestIdParam &&
+        !isAnyMpReturn;
+
+      if (isFreshEntry) {
+        clearSession();
+        setRestaurant(null);
+        setCurrentTable(null);
+        setCurrentWaiter(null);
+        setMenuItems([]);
+        setCategories([]);
+        setSectionHeaders([]);
+        setActiveOrderId(null);
+        setCart([]);
+        setBatches([]);
+        setGuests([{ id: '1', name: 'Comensal 1 (Tú)', isHost: true }]);
+        setActiveGuestId('1');
+        setError(null);
+        setLoading(false);
+        navigate('/scan');
+        return;
+      }
+
       // Si hay orderId en la URL o en sessionStorage (return de MP), cargar datos
       if (orderIdForLoad) {
         setLoading(true);
@@ -1326,7 +1355,7 @@ const App: React.FC = () => {
           const currentPath = location.pathname;
           const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/checkout', '/individual-share', '/transfer-payment', '/cash-payment', '/tip', '/feedback', '/confirmation', '/guest-selection'];
           
-          if (!routesRequiringSession.includes(currentPath)) {
+          if (!routesRequiringSession.includes(currentPath) && !isGuestEntryPath(currentPath)) {
             const preserveQuery = location.search || '';
             if (guestIdParam) {
               navigate('/individual-share' + (preserveQuery || `?orderId=${orderIdForLoad}&guestId=${guestIdParam}`));
@@ -1352,8 +1381,9 @@ const App: React.FC = () => {
         // Sin parámetros en URL: intentar restaurar sesión desde cookies (o sessionStorage si volvemos de MP)
         const orderId = getOrderId() || (isPaymentReturn ? (mpReturn?.orderId || null) : null);
         const session = getSession();
+        const onEntryPath = isGuestEntryPath(location.pathname);
 
-        if (orderId) {
+        if (orderId && !onEntryPath) {
           // Restaurar desde orden guardada en cookie (p. ej. tras recargar en /menu)
           setLoading(true);
           try {
@@ -1486,10 +1516,8 @@ const App: React.FC = () => {
             }
             await fetchOrderItemsFromDB(orderId);
 
-            // Si volvemos de MP con success/approved, no forzar /menu: el efecto de paymentStatus llevará a /confirmation
-            if (!isPaymentReturn && (location.pathname === '/' || location.pathname === '/scan')) {
-              navigate('/menu');
-            }
+            // Mantener la ruta actual al refrescar (p. ej. /menu, /individual-share).
+            // Ya no redirigimos desde /scan: la entrada fresca limpia cookies arriba.
             setLoading(false);
           } catch (e: any) {
             console.error("[DineSplit] Error al restaurar sesión desde cookie:", e);
@@ -1498,10 +1526,26 @@ const App: React.FC = () => {
             navigate('/scan');
             setLoading(false);
           }
-        } else if (session?.res && session?.table) {
+        } else if (session?.res && session?.table && !onEntryPath) {
           console.log("[DineSplit] Restaurando sesión desde cookie:", session.res, session.table);
           await handleStartSession(session.res, session.table, getActiveGuestId() || undefined);
           setLoading(false);
+        } else if (onEntryPath) {
+          clearSession();
+          setRestaurant(null);
+          setCurrentTable(null);
+          setCurrentWaiter(null);
+          setMenuItems([]);
+          setCategories([]);
+          setSectionHeaders([]);
+          setActiveOrderId(null);
+          setCart([]);
+          setBatches([]);
+          setGuests([{ id: '1', name: 'Comensal 1 (Tú)', isHost: true }]);
+          setActiveGuestId('1');
+          setError(null);
+          setLoading(false);
+          navigate('/scan');
         } else {
           // Sin cookies válidas: ir a escanear
           clearSession();
@@ -1542,7 +1586,7 @@ const App: React.FC = () => {
       cancelled = true;
       clearTimeout(timeoutId);
     };
-  }, [resParam, tableParam, orderIdParam, guestIdParam, clearParam, paymentStatus, handleStartSession, fetchOrderItemsFromDB, navigate]);
+  }, [resParam, tableParam, orderIdParam, guestIdParam, clearParam, paymentStatus, location.pathname, handleStartSession, fetchOrderItemsFromDB, navigate]);
 
   // Función para procesar el pago exitoso
   const handlePaymentSuccess = useCallback(async (guestId: string, paymentAmount: number, paymentMethod: string, mpTransactionId?: string) => {

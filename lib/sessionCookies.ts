@@ -76,19 +76,26 @@ export function removeActiveGuestId(): void {
   remove(ACTIVE_GUEST_NAME);
 }
 
+const TABLE_STORAGE_KEY = 'splitme_table';
+const RESTAURANT_STORAGE_KEY = 'splitme_restaurant';
+const MP_RETURN_STORAGE_KEY = 'splitme_mp_return';
+
+/** Rutas de entrada: visitar / o /scan sin params debe iniciar sesión nueva. */
+export function isGuestEntryPath(pathname: string): boolean {
+  return pathname === '/' || pathname === '/scan';
+}
+
 /** Limpia sesión, orden y comensal identificado (usar al salir de mesa o tras pago completo). */
 export function clearSession(): void {
   removeSession();
   removeOrderId();
   removeActiveGuestId();
   if (typeof sessionStorage !== 'undefined') {
-    sessionStorage.removeItem('splitme_table');
-    sessionStorage.removeItem('splitme_restaurant');
+    sessionStorage.removeItem(TABLE_STORAGE_KEY);
+    sessionStorage.removeItem(RESTAURANT_STORAGE_KEY);
+    sessionStorage.removeItem(MP_RETURN_STORAGE_KEY);
   }
 }
-
-const TABLE_STORAGE_KEY = 'splitme_table';
-const RESTAURANT_STORAGE_KEY = 'splitme_restaurant';
 
 /** Guarda mesa y restaurante para recuperar al crear orden (evita problemas de closure/timing). */
 export function setTableAndRestaurant(table: unknown, restaurant: unknown): void {
