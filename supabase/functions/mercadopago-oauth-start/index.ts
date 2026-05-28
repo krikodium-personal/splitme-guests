@@ -60,10 +60,10 @@ Deno.serve(async (req) => {
 
     await assertRestaurantPaymentAccess(supabaseAdmin, user.id, restaurant_id);
 
-    const { clientId, redirectUri, stateSecret } = getMpConfig();
-    // Production OAuth (APP_USR) by default — even for test seller accounts.
-    // Only opt into sandbox TEST credentials when test_mode is explicitly true.
-    const useTestToken = test_mode === true;
+    const { clientId, redirectUri, stateSecret, sandboxByDefault } = getMpConfig();
+    // Sandbox OAuth (TEST credentials + sandbox_init_point) by default for integration testing.
+    // Pass test_mode: false explicitly to obtain production APP_USR tokens.
+    const useTestToken = test_mode === false ? false : (test_mode === true || sandboxByDefault);
     const fallbackReturn = Deno.env.get("MERCADOPAGO_ADMIN_RETURN_URL")?.trim()
       || "http://localhost:3002/settings?tab=payments";
 
