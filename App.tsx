@@ -1891,66 +1891,7 @@ const App: React.FC = () => {
           has_key_alias_test: !!config.key_alias_test,
         });
 
-        // Modo sandbox (oauth_test_mode): preferir TEST- válido; si OAuth TEST falla, fallback APP_USR del vendedor test.
-        const sandboxMode = config.oauth_test_mode === true;
-        const prodToken = config.token_cbu?.trim() || '';
-        const testToken = config.token_cbu_test?.trim() || '';
-
-        let accessToken = '';
-        let sellerPublicKey = '';
-        type CheckoutEnv = 'sandbox' | 'production_test_users' | 'production';
-        let checkoutEnv: CheckoutEnv = 'production';
-
-        if (sandboxMode) {
-          // OAuth marketplace + test users: crear preferencia con TEST-/APP_USR- del vendedor test
-          // pero abrir siempre init_point (www.mercadopago.com.ar). sandbox_init_point rompe
-          // card-form/association (404) con credenciales OAuth de vendedor integrado.
-          if (testToken) {
-            accessToken = testToken;
-            sellerPublicKey = config.key_alias_test?.trim() || '';
-            checkoutEnv = 'production_test_users';
-          } else if (prodToken.startsWith('TEST-')) {
-            accessToken = prodToken;
-            sellerPublicKey = config.key_alias?.trim() || '';
-            checkoutEnv = 'production_test_users';
-          } else if (prodToken.startsWith('APP_USR-')) {
-            accessToken = prodToken;
-            sellerPublicKey = config.key_alias?.trim() || '';
-            checkoutEnv = 'production_test_users';
-          }
-
-          if (!accessToken) {
-            throw new Error(
-              'Modo sandbox activo pero no hay credenciales configuradas. ' +
-              'Pegá Access Token y Public Key TEST del vendedor de prueba en Admin → Settings, ' +
-              'o reconectá OAuth logueado como vendedor test con Modo sandbox activo.'
-            );
-          }
-        } else {
-          accessToken = prodToken;
-          sellerPublicKey = config.key_alias?.trim() || '';
-          if (!accessToken) {
-            throw new Error('El token de acceso de Mercado Pago no está configurado.');
-          }
-          checkoutEnv = accessToken.startsWith('TEST-') ? 'sandbox' : 'production';
-        }
-
-        const redirectToSandbox = checkoutEnv === 'sandbox';
-
-        console.log('[DineSplit] Credenciales MP del vendedor:', {
-          sandboxMode,
-          checkoutEnv,
-          redirectToSandbox,
-          oauth_test_mode: config.oauth_test_mode,
-          sellerUserId: config.user_account || null,
-          tokenPrefix: accessToken.substring(0, 12) + '...',
-          publicKeyPrefix: sellerPublicKey ? sellerPublicKey.substring(0, 12) + '...' : '(sin public key)',
-          note: checkoutEnv === 'production_test_users'
-            ? 'Checkout prod (init_point) con vendedor/comprador test — login comprador test en ventana incógnito.'
-            : redirectToSandbox
-              ? 'Sandbox URL (sandbox_init_point) con token TEST-.'
-              : 'Producción.',
-        });
+        const oauthTestMode = config.oauth_test_mode === true;
 
         const pageOrigin = window.location.origin + window.location.pathname;
         const publicGuestsUrl = (import.meta as any).env?.VITE_GUESTS_PUBLIC_URL?.trim()
@@ -2043,64 +1984,83 @@ const App: React.FC = () => {
         
         // Log del payload antes de enviar
         console.log('[DineSplit] Payload completo antes de enviar:', JSON.stringify(preferencesPayload, null, 2));
-        
-        const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
-          method: 'POST',
-          headers: { 
-            'Authorization': `Bearer ${accessToken}`, 
-            'Content-Type': 'application/json' 
-          },
-          body: JSON.stringify(preferencesPayload)
+        console.log('[DineSplit] Creando preferencia vía edge function (APP_USR en oauth_test_mode):', {
+          oauth_test_mode: oauthTestMode,
+          sellerUserId: config.user_account || null,
+          note: oauthTestMode
+            ? 'Preferencia con APP_USR del vendedor test; checkout en www.mercadopago.com.ar (nunca sandbox_init_point).'
+            : 'Preferencia según credenciales de producción del restaurante.',
         });
 
-        if (!response.ok) {
-          const errorData = await response.json();
-          console.error('[DineSplit] Error de Mercado Pago:', errorData);
+        const { data: createPrefData, error: createPrefError } = await supabase.functions.invoke(
+          'mercadopago-create-preference',
+          {
+            body: {
+              restaurant_id: restaurant.id,
+              preferences: preferencesPayload,
+            },
+          },
+        );
+
+        if (createPrefError || !createPrefData) {
+          console.error('[DineSplit] Error al crear preferencia:', createPrefError, createPrefData);
+          throw new Error(createPrefError?.message || 'No se pudo crear la preferencia de Mercado Pago.');
+        }
+
+        if (createPrefData.error) {
+          console.error('[DineSplit] Error al crear preferencia:', createPrefData);
           console.error('[DineSplit] Detalles del error:', {
-            status: response.status,
-            statusText: response.statusText,
-            errorCode: errorData.error,
-            errorMessage: errorData.message,
-            isSandboxCheckout: redirectToSandbox,
+            checkoutEnv: createPrefData.checkout_env,
+            tokenSource: createPrefData.token_source,
             sellerUserId: config.user_account,
-            accessTokenPrefix: accessToken.substring(0, 12)
           });
-          
-          const errorMessage = errorData.message || '';
-          if (errorMessage.includes('prueba') || errorMessage.includes('test') || errorData.error === 'bad_request') {
+
+          const errorMessage = createPrefData.error || '';
+          if (errorMessage.includes('prueba') || errorMessage.includes('test')) {
             let helpfulMessage = 'Error de configuración de Mercado Pago:\n\n';
             helpfulMessage += 'Cada restaurante debe usar el Public Key y Access Token de SU cuenta vendedora en Settings.\n';
             helpfulMessage += 'No uses las credenciales de prueba genéricas de la aplicación SplitMe.\n\n';
-            helpfulMessage += `Modo checkout: ${redirectToSandbox ? 'sandbox' : 'producción'}\n\n`;
+            helpfulMessage += `Modo checkout: ${createPrefData.checkout_env || 'desconocido'}\n\n`;
             helpfulMessage += 'Solución:\n';
             helpfulMessage += '- Iniciá sesión como el vendedor de prueba de ESTE local en mercadopago.com.ar\n';
-            helpfulMessage += '- Copiá Public Key y Access Token de producción de ese vendedor (y su User ID)\n';
+            helpfulMessage += '- Reconectá OAuth en Admin → Settings con Modo sandbox activo\n';
             helpfulMessage += '- Guardá en Settings → Medios de Pago con credenciales distintas por restaurante';
-            
+
             throw new Error(helpfulMessage);
           }
-          
-          throw new Error(`Error de Mercado Pago: ${errorData.message || response.statusText || 'Error desconocido'}`);
+
+          throw new Error(`Error de Mercado Pago: ${errorMessage}`);
         }
 
-        const pref = await response.json();
-        console.log('[DineSplit] Preferencia creada exitosamente:', pref);
-        console.log('[DineSplit] init_point:', pref.init_point);
-        console.log('[DineSplit] Preference ID:', pref.id);
-        console.log('[DineSplit] Sandbox URL:', pref.sandbox_init_point || 'No disponible');
-        
-        const paymentUrl = redirectToSandbox
-          ? (pref.sandbox_init_point || pref.init_point)
-          : pref.init_point;
-        
+        const paymentUrl = createPrefData.payment_url as string | undefined;
+        const checkoutHost = createPrefData.checkout_host as string | undefined;
+
+        console.log('[DineSplit] Preferencia creada exitosamente:', {
+          preference_id: createPrefData.preference_id,
+          checkout_env: createPrefData.checkout_env,
+          token_source: createPrefData.token_source,
+          oauth_test_mode: createPrefData.oauth_test_mode,
+          redirect_to_sandbox: createPrefData.redirect_to_sandbox,
+        });
+        console.log('[DineSplit] init_point:', createPrefData.init_point);
+        console.log('[DineSplit] Preference ID:', createPrefData.preference_id);
+        console.log('[DineSplit] Sandbox URL (no usada en oauth_test_mode):', createPrefData.sandbox_init_point || 'No disponible');
+
         if (paymentUrl) {
           try {
             sessionStorage.setItem('splitme_mp_return', JSON.stringify({ orderId: activeOrderId, guestId }));
           } catch (e) { /* sessionStorage puede no estar disponible */ }
+          const resolvedHost = checkoutHost || (() => {
+            try { return new URL(paymentUrl).hostname; } catch { return '(invalid url)'; }
+          })();
+          console.log('[DineSplit] paymentUrl host:', resolvedHost);
+          if (oauthTestMode && resolvedHost.includes('sandbox')) {
+            console.warn('[DineSplit] ADVERTENCIA: oauth_test_mode activo pero paymentUrl apunta a sandbox. Reconectá OAuth del vendedor test.');
+          }
           console.log('[DineSplit] Redirigiendo a:', paymentUrl);
           window.location.href = paymentUrl;
         } else {
-          console.error('[DineSplit] No se recibió ningún link de pago. Respuesta completa:', pref);
+          console.error('[DineSplit] No se recibió ningún link de pago. Respuesta completa:', createPrefData);
           throw new Error("No se recibió el link de pago de Mercado Pago. Verifica la configuración de tu cuenta.");
         }
       } catch (err: any) { 

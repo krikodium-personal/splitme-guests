@@ -226,3 +226,142 @@ export function sanitizeReturnUrl(raw: string | undefined, fallback: string): st
     return fallback;
   }
 }
+
+export type CheckoutEnv = "sandbox" | "production_test_users" | "production";
+
+export type PaymentConfigTokens = {
+  id?: string;
+  oauth_test_mode?: boolean | null;
+  token_cbu?: string | null;
+  token_cbu_test?: string | null;
+  key_alias?: string | null;
+  refresh_token?: string | null;
+  token_expires_at?: string | null;
+};
+
+export type ResolvedCheckoutToken = {
+  accessToken: string;
+  checkoutEnv: CheckoutEnv;
+  tokenSource: string;
+};
+
+type SupabaseAdmin = ReturnType<
+  typeof import("https://esm.sh/@supabase/supabase-js@2").createClient
+>;
+
+async function persistRefreshedProdToken(
+  supabaseAdmin: SupabaseAdmin | null,
+  configId: string | undefined,
+  refreshToken: string,
+  refreshed: Awaited<ReturnType<typeof refreshMpOAuthToken>>,
+): Promise<string | null> {
+  const accessToken = refreshed.access_token?.trim();
+  if (!accessToken?.startsWith("APP_USR-")) return null;
+
+  if (supabaseAdmin && configId) {
+    const { error } = await supabaseAdmin
+      .from("payment_configs")
+      .update({
+        token_cbu: accessToken,
+        key_alias: refreshed.public_key || undefined,
+        refresh_token: refreshed.refresh_token || refreshToken,
+        token_expires_at: refreshed.expires_in
+          ? new Date(Date.now() + refreshed.expires_in * 1000).toISOString()
+          : undefined,
+      })
+      .eq("id", configId);
+    if (error) {
+      console.warn("[mp-oauth] No se pudo persistir token refrescado:", error.message);
+    }
+  }
+
+  return accessToken;
+}
+
+async function refreshProdAccessToken(
+  refreshToken: string,
+  supabaseAdmin: SupabaseAdmin | null,
+  configId?: string,
+): Promise<string | null> {
+  try {
+    const refreshed = await refreshMpOAuthToken(refreshToken, false);
+    return await persistRefreshedProdToken(supabaseAdmin, configId, refreshToken, refreshed);
+  } catch (err) {
+    console.warn("[mp-oauth] refresh APP_USR falló:", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+/** Resuelve el access token del vendedor para crear preferencias de Checkout Pro. */
+export async function resolveSellerAccessToken(
+  config: PaymentConfigTokens,
+  supabaseAdmin: SupabaseAdmin | null = null,
+): Promise<ResolvedCheckoutToken> {
+  const sandboxMode = config.oauth_test_mode === true;
+  const prodToken = config.token_cbu?.trim() || "";
+  const testToken = config.token_cbu_test?.trim() || "";
+  const refreshToken = config.refresh_token?.trim() || "";
+
+  if (sandboxMode) {
+    // MP: credenciales de producción del vendedor test + comprador test → www (no sandbox).
+    if (prodToken.startsWith("APP_USR-")) {
+      const validation = await validateMpAccessToken(prodToken);
+      if (validation.ok) {
+        return {
+          accessToken: prodToken,
+          checkoutEnv: "production_test_users",
+          tokenSource: "token_cbu",
+        };
+      }
+    }
+
+    if (refreshToken) {
+      const refreshed = await refreshProdAccessToken(refreshToken, supabaseAdmin, config.id);
+      if (refreshed) {
+        return {
+          accessToken: refreshed,
+          checkoutEnv: "production_test_users",
+          tokenSource: "token_cbu_refreshed",
+        };
+      }
+    }
+
+    if (testToken) {
+      console.warn(
+        "[mp-oauth] oauth_test_mode sin APP_USR válido; fallback TEST- puede redirigir a sandbox.",
+      );
+      return {
+        accessToken: testToken,
+        checkoutEnv: "production_test_users",
+        tokenSource: "token_cbu_test_fallback",
+      };
+    }
+
+    throw new Error(
+      "Modo sandbox activo pero no hay credenciales APP_USR del vendedor test. Reconectá OAuth en Admin → Settings.",
+    );
+  }
+
+  if (prodToken.startsWith("TEST-")) {
+    return { accessToken: prodToken, checkoutEnv: "sandbox", tokenSource: "token_cbu_test" };
+  }
+
+  if (prodToken.startsWith("APP_USR-")) {
+    const validation = await validateMpAccessToken(prodToken);
+    if (validation.ok) {
+      return { accessToken: prodToken, checkoutEnv: "production", tokenSource: "token_cbu" };
+    }
+    if (refreshToken) {
+      const refreshed = await refreshProdAccessToken(refreshToken, supabaseAdmin, config.id);
+      if (refreshed) {
+        return { accessToken: refreshed, checkoutEnv: "production", tokenSource: "token_cbu_refreshed" };
+      }
+    }
+  }
+
+  if (prodToken) {
+    return { accessToken: prodToken, checkoutEnv: "production", tokenSource: "token_cbu" };
+  }
+
+  throw new Error("El token de acceso de Mercado Pago no está configurado.");
+}
