@@ -235,6 +235,7 @@ export type PaymentConfigTokens = {
   token_cbu?: string | null;
   token_cbu_test?: string | null;
   key_alias?: string | null;
+  key_alias_test?: string | null;
   refresh_token?: string | null;
   token_expires_at?: string | null;
 };
@@ -292,6 +293,78 @@ async function refreshProdAccessToken(
   }
 }
 
+async function persistRefreshedTestToken(
+  supabaseAdmin: SupabaseAdmin | null,
+  configId: string | undefined,
+  refreshToken: string,
+  refreshed: Awaited<ReturnType<typeof refreshMpOAuthToken>>,
+): Promise<string | null> {
+  const accessToken = refreshed.access_token?.trim();
+  if (!accessToken?.startsWith("TEST-")) return null;
+
+  if (supabaseAdmin && configId) {
+    const { error } = await supabaseAdmin
+      .from("payment_configs")
+      .update({
+        token_cbu_test: accessToken,
+        key_alias_test: refreshed.public_key || undefined,
+        refresh_token: refreshed.refresh_token || refreshToken,
+      })
+      .eq("id", configId);
+    if (error) {
+      console.warn("[mp-oauth] No se pudo persistir token TEST refrescado:", error.message);
+    }
+  }
+
+  return accessToken;
+}
+
+async function refreshTestAccessToken(
+  refreshToken: string,
+  supabaseAdmin: SupabaseAdmin | null,
+  configId?: string,
+): Promise<string | null> {
+  try {
+    const refreshed = await refreshMpOAuthToken(refreshToken, true);
+    return await persistRefreshedTestToken(supabaseAdmin, configId, refreshToken, refreshed);
+  } catch (err) {
+    console.warn("[mp-oauth] refresh TEST- falló:", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+async function resolveSandboxCheckoutToken(
+  config: PaymentConfigTokens,
+  supabaseAdmin: SupabaseAdmin | null,
+): Promise<ResolvedCheckoutToken | null> {
+  const testToken = config.token_cbu_test?.trim() || "";
+  const refreshToken = config.refresh_token?.trim() || "";
+
+  if (testToken.startsWith("TEST-")) {
+    const validation = await validateMpAccessToken(testToken);
+    if (validation.ok) {
+      return {
+        accessToken: testToken,
+        checkoutEnv: "sandbox",
+        tokenSource: "token_cbu_test",
+      };
+    }
+  }
+
+  if (refreshToken) {
+    const refreshed = await refreshTestAccessToken(refreshToken, supabaseAdmin, config.id);
+    if (refreshed) {
+      return {
+        accessToken: refreshed,
+        checkoutEnv: "sandbox",
+        tokenSource: "token_cbu_test_refreshed",
+      };
+    }
+  }
+
+  return null;
+}
+
 /** Resuelve el access token del vendedor para crear preferencias de Checkout Pro. */
 export async function resolveSellerAccessToken(
   config: PaymentConfigTokens,
@@ -299,46 +372,16 @@ export async function resolveSellerAccessToken(
 ): Promise<ResolvedCheckoutToken> {
   const sandboxMode = config.oauth_test_mode === true;
   const prodToken = config.token_cbu?.trim() || "";
-  const testToken = config.token_cbu_test?.trim() || "";
   const refreshToken = config.refresh_token?.trim() || "";
 
   if (sandboxMode) {
-    // MP: credenciales de producción del vendedor test + comprador test → www (no sandbox).
-    if (prodToken.startsWith("APP_USR-")) {
-      const validation = await validateMpAccessToken(prodToken);
-      if (validation.ok) {
-        return {
-          accessToken: prodToken,
-          checkoutEnv: "production_test_users",
-          tokenSource: "token_cbu",
-        };
-      }
-    }
-
-    if (refreshToken) {
-      const refreshed = await refreshProdAccessToken(refreshToken, supabaseAdmin, config.id);
-      if (refreshed) {
-        return {
-          accessToken: refreshed,
-          checkoutEnv: "production_test_users",
-          tokenSource: "token_cbu_refreshed",
-        };
-      }
-    }
-
-    if (testToken) {
-      console.warn(
-        "[mp-oauth] oauth_test_mode sin APP_USR válido; fallback TEST- puede redirigir a sandbox.",
-      );
-      return {
-        accessToken: testToken,
-        checkoutEnv: "production_test_users",
-        tokenSource: "token_cbu_test_fallback",
-      };
-    }
+    // Marketplace OAuth: APP_USR + compradores @testuser.com devuelve 2034 en checkout.
+    // Preferir credenciales TEST- válidas y sandbox_init_point.
+    const sandboxToken = await resolveSandboxCheckoutToken(config, supabaseAdmin);
+    if (sandboxToken) return sandboxToken;
 
     throw new Error(
-      "Modo sandbox activo pero no hay credenciales APP_USR del vendedor test. Reconectá OAuth en Admin → Settings.",
+      "Modo prueba activo pero no hay credenciales TEST- válidas. Reconectá OAuth en Admin → Settings con Modo sandbox marcado.",
     );
   }
 

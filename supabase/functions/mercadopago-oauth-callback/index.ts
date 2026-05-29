@@ -77,6 +77,25 @@ Deno.serve(async (req) => {
           refreshErr?.message || refreshErr,
         );
       }
+
+      if (primaryIsTest) {
+        try {
+          const testComplementary = await refreshMpOAuthToken(
+            tokenData.refresh_token,
+            true,
+            redirectUri,
+          );
+          if (testComplementary.access_token?.startsWith("TEST-")) {
+            testAccessToken = testComplementary.access_token;
+            testPublicKey = testComplementary.public_key || null;
+          }
+        } catch (refreshErr) {
+          console.warn(
+            "[mp-oauth-callback] No se pudieron obtener credenciales TEST complementarias:",
+            refreshErr?.message || refreshErr,
+          );
+        }
+      }
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;

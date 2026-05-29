@@ -1991,11 +1991,11 @@ const App: React.FC = () => {
         
         // Log del payload antes de enviar
         console.log('[DineSplit] Payload completo antes de enviar:', JSON.stringify(preferencesPayload, null, 2));
-        console.log('[DineSplit] Creando preferencia vía edge function (APP_USR en oauth_test_mode):', {
+        console.log('[DineSplit] Creando preferencia vía edge function:', {
           oauth_test_mode: oauthTestMode,
           sellerUserId: config.user_account || null,
           note: oauthTestMode
-            ? 'Preferencia con APP_USR del vendedor test; checkout en www.mercadopago.com.ar (nunca sandbox_init_point).'
+            ? 'Modo prueba: preferencia con TEST- y checkout en sandbox.mercadopago.com.ar.'
             : 'Preferencia según credenciales de producción del restaurante.',
         });
 
@@ -2051,7 +2051,7 @@ const App: React.FC = () => {
         });
         console.log('[DineSplit] init_point:', createPrefData.init_point);
         console.log('[DineSplit] Preference ID:', createPrefData.preference_id);
-        console.log('[DineSplit] Sandbox URL (no usada en oauth_test_mode):', createPrefData.sandbox_init_point || 'No disponible');
+        console.log('[DineSplit] Sandbox URL:', createPrefData.sandbox_init_point || 'No disponible');
 
         if (paymentUrl) {
           try {
@@ -2061,14 +2061,13 @@ const App: React.FC = () => {
             try { return new URL(paymentUrl).hostname; } catch { return '(invalid url)'; }
           })();
           console.log('[DineSplit] paymentUrl host:', resolvedHost);
-          if (oauthTestMode && resolvedHost.includes('sandbox')) {
-            console.warn('[DineSplit] ADVERTENCIA: oauth_test_mode activo pero paymentUrl apunta a sandbox. Reconectá OAuth del vendedor test.');
+          if (oauthTestMode && !resolvedHost.includes('sandbox')) {
+            console.warn('[DineSplit] ADVERTENCIA: oauth_test_mode activo pero paymentUrl no apunta a sandbox. Reconectá OAuth con Modo sandbox.');
           }
           if (oauthTestMode) {
             console.warn(
-              '[DineSplit] MODO PRUEBA MP: iniciá sesión como comprador test (3433468460). '
-              + 'Evitá la tarjeta guardada (express); elegí "Otra tarjeta" y usá Visa 4509…3704, '
-              + 'titular APRO, DNI 12345678, venc. 11/30, CVV 123.',
+              '[DineSplit] MODO PRUEBA MP (sandbox): no hace falta login de comprador. '
+              + 'Usá Visa 4509…3704, titular APRO, DNI 12345678, venc. 11/30, CVV 123.',
             );
           }
           console.log('[DineSplit] Redirigiendo a:', paymentUrl);

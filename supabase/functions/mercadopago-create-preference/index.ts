@@ -55,7 +55,7 @@ Deno.serve(async (req) => {
       supabaseAdmin,
     );
     const oauthTestMode = config.oauth_test_mode === true;
-    const redirectToSandbox = !oauthTestMode && checkoutEnv === "sandbox";
+    const redirectToSandbox = checkoutEnv === "sandbox";
 
     const response = await fetch("https://api.mercadopago.com/checkout/preferences", {
       method: "POST",
