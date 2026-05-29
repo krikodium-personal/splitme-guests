@@ -1896,43 +1896,31 @@ const App: React.FC = () => {
         const prodToken = config.token_cbu?.trim() || '';
         const testToken = config.token_cbu_test?.trim() || '';
 
-        const probeMpToken = async (token: string) => {
-          const res = await fetch('https://api.mercadopago.com/users/me', {
-            headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-          });
-          const body = res.ok ? null : await res.json().catch(() => ({}));
-          return { ok: res.ok, status: res.status, body };
-        };
-
         let accessToken = '';
         let sellerPublicKey = '';
         type CheckoutEnv = 'sandbox' | 'production_test_users' | 'production';
         let checkoutEnv: CheckoutEnv = 'production';
 
         if (sandboxMode) {
-          const candidates: Array<{ token: string; publicKey: string; env: CheckoutEnv }> = [];
-          if (testToken) candidates.push({ token: testToken, publicKey: config.key_alias_test?.trim() || '', env: 'sandbox' });
-          if (prodToken.startsWith('TEST-')) {
-            candidates.push({ token: prodToken, publicKey: config.key_alias?.trim() || '', env: 'sandbox' });
-          }
-          if (prodToken.startsWith('APP_USR-')) {
-            candidates.push({ token: prodToken, publicKey: config.key_alias?.trim() || '', env: 'production_test_users' });
-          }
-
-          for (const candidate of candidates) {
-            const probe = await probeMpToken(candidate.token);
-            if (probe.ok) {
-              accessToken = candidate.token;
-              sellerPublicKey = candidate.publicKey;
-              checkoutEnv = candidate.env;
-              break;
-            }
+          // Prioridad sin validación en browser (MP /users/me bloquea CORS desde el frontend).
+          if (testToken) {
+            accessToken = testToken;
+            sellerPublicKey = config.key_alias_test?.trim() || '';
+            checkoutEnv = 'sandbox';
+          } else if (prodToken.startsWith('TEST-')) {
+            accessToken = prodToken;
+            sellerPublicKey = config.key_alias?.trim() || '';
+            checkoutEnv = 'sandbox';
+          } else if (prodToken.startsWith('APP_USR-')) {
+            accessToken = prodToken;
+            sellerPublicKey = config.key_alias?.trim() || '';
+            checkoutEnv = 'production_test_users';
           }
 
           if (!accessToken) {
             throw new Error(
-              'Modo sandbox activo pero no hay credenciales válidas. ' +
-              'El token TEST de OAuth suele ser inválido (401). Pegá Access Token y Public Key TEST del vendedor de prueba en Admin → Settings, ' +
+              'Modo sandbox activo pero no hay credenciales configuradas. ' +
+              'Pegá Access Token y Public Key TEST del vendedor de prueba en Admin → Settings, ' +
               'o reconectá OAuth logueado como vendedor test con Modo sandbox activo.'
             );
           }
@@ -1941,11 +1929,6 @@ const App: React.FC = () => {
           sellerPublicKey = config.key_alias?.trim() || '';
           if (!accessToken) {
             throw new Error('El token de acceso de Mercado Pago no está configurado.');
-          }
-          const probe = await probeMpToken(accessToken);
-          if (!probe.ok) {
-            const probeErr = probe.body || {};
-            throw new Error(`Token de Mercado Pago inválido (${probeErr.message || probe.status}). Reconectá OAuth en Admin.`);
           }
           checkoutEnv = accessToken.startsWith('TEST-') ? 'sandbox' : 'production';
         }
