@@ -1964,10 +1964,17 @@ const App: React.FC = () => {
             failure: backUrls.failure,
             pending: backUrls.pending
           },
-          // Configuraciones adicionales para sandbox
-          binary_mode: false, // Permitir estados pendientes
+          // En producción permitir pendientes; en modo prueba forzar aprobado/rechazado.
+          binary_mode: oauthTestMode,
           statement_descriptor: `MESA ${tableNum}`.substring(0, 22) // Máximo 22 caracteres para el descriptor
         };
+
+        if (oauthTestMode) {
+          // MP no permite desactivar tarjetas guardadas; simplificamos medios offline en prueba.
+          preferencesPayload.payment_methods = {
+            excluded_payment_types: [{ id: 'ticket' }],
+          };
+        }
         
         // Solo agregar auto_return si NO es localhost (Mercado Pago requiere URLs públicas)
         if (!isLocalhost) {
@@ -2056,6 +2063,13 @@ const App: React.FC = () => {
           console.log('[DineSplit] paymentUrl host:', resolvedHost);
           if (oauthTestMode && resolvedHost.includes('sandbox')) {
             console.warn('[DineSplit] ADVERTENCIA: oauth_test_mode activo pero paymentUrl apunta a sandbox. Reconectá OAuth del vendedor test.');
+          }
+          if (oauthTestMode) {
+            console.warn(
+              '[DineSplit] MODO PRUEBA MP: iniciá sesión como comprador test (3433468460). '
+              + 'Evitá la tarjeta guardada (express); elegí "Otra tarjeta" y usá Visa 4509…3704, '
+              + 'titular APRO, DNI 12345678, venc. 11/30, CVV 123.',
+            );
           }
           console.log('[DineSplit] Redirigiendo a:', paymentUrl);
           window.location.href = paymentUrl;
