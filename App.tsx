@@ -1902,15 +1902,17 @@ const App: React.FC = () => {
         let checkoutEnv: CheckoutEnv = 'production';
 
         if (sandboxMode) {
-          // Prioridad sin validación en browser (MP /users/me bloquea CORS desde el frontend).
+          // OAuth marketplace + test users: crear preferencia con TEST-/APP_USR- del vendedor test
+          // pero abrir siempre init_point (www.mercadopago.com.ar). sandbox_init_point rompe
+          // card-form/association (404) con credenciales OAuth de vendedor integrado.
           if (testToken) {
             accessToken = testToken;
             sellerPublicKey = config.key_alias_test?.trim() || '';
-            checkoutEnv = 'sandbox';
+            checkoutEnv = 'production_test_users';
           } else if (prodToken.startsWith('TEST-')) {
             accessToken = prodToken;
             sellerPublicKey = config.key_alias?.trim() || '';
-            checkoutEnv = 'sandbox';
+            checkoutEnv = 'production_test_users';
           } else if (prodToken.startsWith('APP_USR-')) {
             accessToken = prodToken;
             sellerPublicKey = config.key_alias?.trim() || '';
@@ -1943,10 +1945,10 @@ const App: React.FC = () => {
           sellerUserId: config.user_account || null,
           tokenPrefix: accessToken.substring(0, 12) + '...',
           publicKeyPrefix: sellerPublicKey ? sellerPublicKey.substring(0, 12) + '...' : '(sin public key)',
-          note: redirectToSandbox
-            ? 'Sandbox URL (sandbox_init_point) con token TEST-.'
-            : checkoutEnv === 'production_test_users'
-              ? 'Checkout prod (init_point) con vendedor/comprador test — login comprador test en ventana incógnito.'
+          note: checkoutEnv === 'production_test_users'
+            ? 'Checkout prod (init_point) con vendedor/comprador test — login comprador test en ventana incógnito.'
+            : redirectToSandbox
+              ? 'Sandbox URL (sandbox_init_point) con token TEST-.'
               : 'Producción.',
         });
 
