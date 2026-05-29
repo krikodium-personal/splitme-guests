@@ -90,6 +90,26 @@ export function getMpConfig() {
   return { clientId, clientSecret, redirectUri, stateSecret, sandboxByDefault };
 }
 
+export async function validateMpAccessToken(accessToken: string): Promise<{
+  ok: boolean;
+  status: number;
+  userId?: number;
+  message?: string;
+}> {
+  const response = await fetch("https://api.mercadopago.com/users/me", {
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      message: data?.message || data?.error || response.statusText,
+    };
+  }
+  return { ok: true, status: response.status, userId: data?.id };
+}
+
 export async function exchangeMpOAuthCode(
   code: string,
   redirectUri: string,

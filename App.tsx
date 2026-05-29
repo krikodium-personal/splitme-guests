@@ -1891,29 +1891,80 @@ const App: React.FC = () => {
           has_key_alias_test: !!config.key_alias_test,
         });
 
-        // OAuth: APP_USR crea la preferencia; TEST OAuth suele ser inválido (401).
-        // Nunca mezclar preferencia APP_USR + sandbox_init_point (404 en card-form/association).
-        let accessToken = config.token_cbu?.trim() || config.token_cbu_test?.trim() || '';
-        const sellerPublicKey = (config.key_alias || config.key_alias_test)?.trim() || '';
+        // Modo sandbox (oauth_test_mode): preferir TEST- válido; si OAuth TEST falla, fallback APP_USR del vendedor test.
+        const sandboxMode = config.oauth_test_mode === true;
+        const prodToken = config.token_cbu?.trim() || '';
+        const testToken = config.token_cbu_test?.trim() || '';
 
-        if (!accessToken) {
-          throw new Error("El token de acceso de Mercado Pago no está configurado.");
+        const probeMpToken = async (token: string) => {
+          const res = await fetch('https://api.mercadopago.com/users/me', {
+            headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+          });
+          const body = res.ok ? null : await res.json().catch(() => ({}));
+          return { ok: res.ok, status: res.status, body };
+        };
+
+        let accessToken = '';
+        let sellerPublicKey = '';
+        type CheckoutEnv = 'sandbox' | 'production_test_users' | 'production';
+        let checkoutEnv: CheckoutEnv = 'production';
+
+        if (sandboxMode) {
+          const candidates: Array<{ token: string; publicKey: string; env: CheckoutEnv }> = [];
+          if (testToken) candidates.push({ token: testToken, publicKey: config.key_alias_test?.trim() || '', env: 'sandbox' });
+          if (prodToken.startsWith('TEST-')) {
+            candidates.push({ token: prodToken, publicKey: config.key_alias?.trim() || '', env: 'sandbox' });
+          }
+          if (prodToken.startsWith('APP_USR-')) {
+            candidates.push({ token: prodToken, publicKey: config.key_alias?.trim() || '', env: 'production_test_users' });
+          }
+
+          for (const candidate of candidates) {
+            const probe = await probeMpToken(candidate.token);
+            if (probe.ok) {
+              accessToken = candidate.token;
+              sellerPublicKey = candidate.publicKey;
+              checkoutEnv = candidate.env;
+              break;
+            }
+          }
+
+          if (!accessToken) {
+            throw new Error(
+              'Modo sandbox activo pero no hay credenciales válidas. ' +
+              'El token TEST de OAuth suele ser inválido (401). Pegá Access Token y Public Key TEST del vendedor de prueba en Admin → Settings, ' +
+              'o reconectá OAuth logueado como vendedor test con Modo sandbox activo.'
+            );
+          }
+        } else {
+          accessToken = prodToken;
+          sellerPublicKey = config.key_alias?.trim() || '';
+          if (!accessToken) {
+            throw new Error('El token de acceso de Mercado Pago no está configurado.');
+          }
+          const probe = await probeMpToken(accessToken);
+          if (!probe.ok) {
+            const probeErr = probe.body || {};
+            throw new Error(`Token de Mercado Pago inválido (${probeErr.message || probe.status}). Reconectá OAuth en Admin.`);
+          }
+          checkoutEnv = accessToken.startsWith('TEST-') ? 'sandbox' : 'production';
         }
 
-        // sandbox_init_point solo si la preferencia se creó con TEST- válido (ej. credenciales manuales).
-        // Con OAuth APP_USR + modo prueba → init_point (prod) logueado como comprador test de la app.
-        const redirectToSandbox = accessToken.startsWith('TEST-');
+        const redirectToSandbox = checkoutEnv === 'sandbox';
 
         console.log('[DineSplit] Credenciales MP del vendedor:', {
-          oauth_test_mode: config.oauth_test_mode,
+          sandboxMode,
+          checkoutEnv,
           redirectToSandbox,
-          apiTokenSource: config.token_cbu ? 'APP_USR (token_cbu)' : 'TEST (token_cbu_test)',
+          oauth_test_mode: config.oauth_test_mode,
           sellerUserId: config.user_account || null,
           tokenPrefix: accessToken.substring(0, 12) + '...',
           publicKeyPrefix: sellerPublicKey ? sellerPublicKey.substring(0, 12) + '...' : '(sin public key)',
           note: redirectToSandbox
-            ? 'Checkout sandbox (token TEST válido).'
-            : 'Checkout producción (init_point). Con oauth_test_mode, pagá logueado como comprador test MP.'
+            ? 'Sandbox URL (sandbox_init_point) con token TEST-.'
+            : checkoutEnv === 'production_test_users'
+              ? 'Checkout prod (init_point) con vendedor/comprador test — login comprador test en ventana incógnito.'
+              : 'Producción.',
         });
 
         const pageOrigin = window.location.origin + window.location.pathname;

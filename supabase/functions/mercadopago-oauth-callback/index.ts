@@ -5,6 +5,7 @@ import {
   getMpConfig,
   parseOAuthState,
   refreshMpOAuthToken,
+  validateMpAccessToken,
 } from "../_shared/mp-oauth.ts";
 
 function redirectWithMessage(returnUrl: string, params: Record<string, string>): Response {
@@ -84,6 +85,25 @@ Deno.serve(async (req) => {
       auth: { autoRefreshToken: false, persistSession: false },
     });
 
+    const { data: existingConfig } = await supabaseAdmin
+      .from("payment_configs")
+      .select("id, token_cbu_test, key_alias_test")
+      .eq("restaurant_id", statePayload.restaurant_id)
+      .eq("provider", "mercadopago")
+      .maybeSingle();
+
+    if (testAccessToken) {
+      const testValidation = await validateMpAccessToken(testAccessToken);
+      if (!testValidation.ok) {
+        console.warn(
+          "[mp-oauth-callback] token TEST de OAuth inválido; se conservan credenciales sandbox manuales si existen:",
+          testValidation.message || testValidation.status,
+        );
+        testAccessToken = existingConfig?.token_cbu_test || null;
+        testPublicKey = existingConfig?.key_alias_test || null;
+      }
+    }
+
     const expiresAt = tokenData.expires_in
       ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
       : null;
@@ -103,18 +123,13 @@ Deno.serve(async (req) => {
       is_active: true,
     };
 
-    const { data: existing } = await supabaseAdmin
-      .from("payment_configs")
-      .select("id")
-      .eq("restaurant_id", statePayload.restaurant_id)
-      .eq("provider", "mercadopago")
-      .maybeSingle();
+    const configId = existingConfig?.id;
 
-    if (existing?.id) {
+    if (configId) {
       const { error } = await supabaseAdmin
         .from("payment_configs")
         .update(payload)
-        .eq("id", existing.id);
+        .eq("id", configId);
       if (error) throw error;
     } else {
       const { error } = await supabaseAdmin.from("payment_configs").insert(payload);
