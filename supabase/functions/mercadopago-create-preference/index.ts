@@ -55,8 +55,19 @@ Deno.serve(async (req) => {
       config,
       supabaseAdmin,
     );
-    const oauthTestMode = config.oauth_test_mode === true;
     const redirectToSandbox = checkoutEnv === "sandbox";
+    const effectiveTestMode = redirectToSandbox;
+
+    const preferenceBody =
+      effectiveTestMode && typeof preferences === "object" && preferences !== null
+        ? {
+            ...preferences,
+            binary_mode: true,
+            payment_methods: preferences.payment_methods ?? {
+              excluded_payment_types: [{ id: "ticket" }],
+            },
+          }
+        : preferences;
 
     const response = await fetch("https://api.mercadopago.com/checkout/preferences", {
       method: "POST",
@@ -64,7 +75,7 @@ Deno.serve(async (req) => {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(preferences),
+      body: JSON.stringify(preferenceBody),
     });
 
     const pref = await response.json().catch(() => ({}));
@@ -98,7 +109,7 @@ Deno.serve(async (req) => {
       checkoutEnv,
       tokenSource,
       redirectToSandbox,
-      oauthTestMode,
+      effectiveTestMode,
       checkoutHost,
       init_point: pref.init_point,
       sandbox_init_point: pref.sandbox_init_point,
@@ -111,8 +122,9 @@ Deno.serve(async (req) => {
         checkout_host: checkoutHost,
         checkout_env: checkoutEnv,
         token_source: tokenSource,
-        oauth_test_mode: oauthTestMode,
+        oauth_test_mode: effectiveTestMode,
         redirect_to_sandbox: redirectToSandbox,
+        test_seller_auto_sandbox: tokenSource.includes("test_seller"),
         init_point: pref.init_point,
         sandbox_init_point: pref.sandbox_init_point,
       }),

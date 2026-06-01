@@ -2029,9 +2029,9 @@ const App: React.FC = () => {
             helpfulMessage += 'No uses las credenciales de prueba genéricas de la aplicación SplitMe.\n\n';
             helpfulMessage += `Modo checkout: ${createPrefData.checkout_env || 'desconocido'}\n\n`;
             helpfulMessage += 'Solución:\n';
-            helpfulMessage += '- En Admin → Settings → Medios de Pago, activá «Modo sandbox»\n';
-            helpfulMessage += '- Cargá Public Key y Access Token APP_USR de la app del restaurante\n';
-            helpfulMessage += '- Volvé a pagar con tarjeta de prueba en sandbox (titular APRO, DNI 12345678)';
+            helpfulMessage += '- Activá «Modo sandbox» en Admin → Settings (o usá vendedor de prueba MP)\n';
+            helpfulMessage += '- Cerrá sesión de tu cuenta real en Mercado Pago o usá ventana de incógnito\n';
+            helpfulMessage += '- Pagá como invitado con tarjeta de prueba (APRO, DNI 12345678), sin login con cuenta real';
 
             throw new Error(helpfulMessage);
           }
@@ -2064,11 +2064,26 @@ const App: React.FC = () => {
           if (oauthTestMode && !resolvedHost.includes('sandbox')) {
             console.warn('[DineSplit] ADVERTENCIA: oauth_test_mode activo pero paymentUrl no apunta a sandbox. Reconectá OAuth con Modo sandbox.');
           }
-          if (oauthTestMode) {
+          const isSandboxCheckout =
+            createPrefData.checkout_env === 'sandbox' ||
+            createPrefData.redirect_to_sandbox === true ||
+            resolvedHost.includes('sandbox');
+
+          if (isSandboxCheckout) {
             console.warn(
-              '[DineSplit] MODO PRUEBA MP (sandbox): no hace falta login de comprador. '
-              + 'Usá Visa 4509…3704, titular APRO, DNI 12345678, venc. 11/30, CVV 123.',
+              '[DineSplit] MODO SANDBOX: no uses tu cuenta real de Mercado Pago. '
+              + 'Cerrá sesión en MP, usá ventana de incógnito o pagá como invitado con tarjeta de prueba '
+              + '(5031 7557 3453 0604, titular APRO, DNI 12345678, CVV 123).',
             );
+            const sandboxHint =
+              'Vas a pagar en el sandbox de Mercado Pago.\n\n'
+              + '• No uses tu cuenta real (el cartel "Como usuario" suele ser el problema).\n'
+              + '• Cerrá sesión en mercadopago.com.ar o abrí esta página en incógnito.\n'
+              + '• Pagá como invitado con la tarjeta de prueba (titular APRO).\n\n'
+              + '¿Continuar al checkout?';
+            if (!window.confirm(sandboxHint)) {
+              return;
+            }
           }
           console.log('[DineSplit] Redirigiendo a:', paymentUrl);
           window.location.href = paymentUrl;

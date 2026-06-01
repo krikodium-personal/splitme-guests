@@ -94,6 +94,7 @@ export async function validateMpAccessToken(accessToken: string): Promise<{
   ok: boolean;
   status: number;
   userId?: number;
+  isTestUser?: boolean;
   message?: string;
 }> {
   const response = await fetch("https://api.mercadopago.com/users/me", {
@@ -107,7 +108,12 @@ export async function validateMpAccessToken(accessToken: string): Promise<{
       message: data?.message || data?.error || response.statusText,
     };
   }
-  return { ok: true, status: response.status, userId: data?.id };
+  const tags: string[] = Array.isArray(data?.tags) ? data.tags : [];
+  const isTestUser =
+    tags.includes("test_user") ||
+    data?.user_type === "test" ||
+    data?.site_status === "test";
+  return { ok: true, status: response.status, userId: data?.id, isTestUser };
 }
 
 export async function exchangeMpOAuthCode(
@@ -377,19 +383,6 @@ export function pickCheckoutPaymentUrl(
     return sandbox || production;
   }
 
-  // Algunas apps de vendedores de prueba devuelven ambas URLs: tarjetas de prueba requieren sandbox.
-  if (sandbox && production) {
-    try {
-      const sandboxHost = new URL(sandbox).hostname;
-      const prodHost = new URL(production).hostname;
-      if (sandboxHost.includes("sandbox") && !prodHost.includes("sandbox")) {
-        return sandbox;
-      }
-    } catch {
-      /* ignore invalid URLs */
-    }
-  }
-
   return production || sandbox;
 }
 
@@ -398,9 +391,22 @@ export async function resolveSellerAccessToken(
   config: PaymentConfigTokens,
   supabaseAdmin: SupabaseAdmin | null = null,
 ): Promise<ResolvedCheckoutToken> {
-  const sandboxMode = config.oauth_test_mode === true;
   const prodToken = config.token_cbu?.trim() || "";
   const refreshToken = config.refresh_token?.trim() || "";
+  let sandboxMode = config.oauth_test_mode === true;
+
+  if (!sandboxMode && prodToken.startsWith("APP_USR-")) {
+    const probe = await validateMpAccessToken(prodToken);
+    if (probe.ok && probe.isTestUser) {
+      sandboxMode = true;
+      if (supabaseAdmin && config.id) {
+        await supabaseAdmin
+          .from("payment_configs")
+          .update({ oauth_test_mode: true })
+          .eq("id", config.id);
+      }
+    }
+  }
 
   if (sandboxMode) {
     // Preferir TEST- si existen; si no, APP_USR de producción + checkout sandbox (tarjetas de prueba).
@@ -429,6 +435,13 @@ export async function resolveSellerAccessToken(
 
   if (prodToken.startsWith("APP_USR-")) {
     const validation = await validateMpAccessToken(prodToken);
+    if (validation.ok && validation.isTestUser) {
+      return {
+        accessToken: prodToken,
+        checkoutEnv: "sandbox",
+        tokenSource: "token_cbu_test_seller_auto",
+      };
+    }
     if (validation.ok) {
       return { accessToken: prodToken, checkoutEnv: "production", tokenSource: "token_cbu" };
     }
