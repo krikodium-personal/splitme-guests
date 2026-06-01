@@ -2029,9 +2029,9 @@ const App: React.FC = () => {
             helpfulMessage += 'No uses las credenciales de prueba genéricas de la aplicación SplitMe.\n\n';
             helpfulMessage += `Modo checkout: ${createPrefData.checkout_env || 'desconocido'}\n\n`;
             helpfulMessage += 'Solución:\n';
-            helpfulMessage += '- Iniciá sesión como el vendedor de prueba de ESTE local en mercadopago.com.ar\n';
-            helpfulMessage += '- Reconectá OAuth en Admin → Settings con Modo sandbox activo\n';
-            helpfulMessage += '- Guardá en Settings → Medios de Pago con credenciales distintas por restaurante';
+            helpfulMessage += '- En Admin → Settings → Medios de Pago, activá «Modo sandbox»\n';
+            helpfulMessage += '- Cargá Public Key y Access Token APP_USR de la app del restaurante\n';
+            helpfulMessage += '- Volvé a pagar con tarjeta de prueba en sandbox (titular APRO, DNI 12345678)';
 
             throw new Error(helpfulMessage);
           }

@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import {
   corsHeaders,
+  pickCheckoutPaymentUrl,
   resolveSellerAccessToken,
 } from "../_shared/mp-oauth.ts";
 
@@ -82,9 +83,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const paymentUrl = redirectToSandbox
-      ? (pref.sandbox_init_point || pref.init_point)
-      : pref.init_point;
+    const paymentUrl = pickCheckoutPaymentUrl(pref, redirectToSandbox);
 
     let checkoutHost = "";
     try {

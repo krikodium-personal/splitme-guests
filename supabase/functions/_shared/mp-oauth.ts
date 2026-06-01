@@ -365,6 +365,34 @@ async function resolveSandboxCheckoutToken(
   return null;
 }
 
+/** Elige init_point vs sandbox_init_point según el entorno de checkout. */
+export function pickCheckoutPaymentUrl(
+  pref: { init_point?: string; sandbox_init_point?: string },
+  redirectToSandbox: boolean,
+): string | undefined {
+  const sandbox = pref.sandbox_init_point;
+  const production = pref.init_point;
+
+  if (redirectToSandbox) {
+    return sandbox || production;
+  }
+
+  // Algunas apps de vendedores de prueba devuelven ambas URLs: tarjetas de prueba requieren sandbox.
+  if (sandbox && production) {
+    try {
+      const sandboxHost = new URL(sandbox).hostname;
+      const prodHost = new URL(production).hostname;
+      if (sandboxHost.includes("sandbox") && !prodHost.includes("sandbox")) {
+        return sandbox;
+      }
+    } catch {
+      /* ignore invalid URLs */
+    }
+  }
+
+  return production || sandbox;
+}
+
 /** Resuelve el access token del vendedor para crear preferencias de Checkout Pro. */
 export async function resolveSellerAccessToken(
   config: PaymentConfigTokens,
@@ -375,13 +403,23 @@ export async function resolveSellerAccessToken(
   const refreshToken = config.refresh_token?.trim() || "";
 
   if (sandboxMode) {
-    // Marketplace OAuth: APP_USR + compradores @testuser.com devuelve 2034 en checkout.
-    // Preferir credenciales TEST- válidas y sandbox_init_point.
+    // Preferir TEST- si existen; si no, APP_USR de producción + checkout sandbox (tarjetas de prueba).
     const sandboxToken = await resolveSandboxCheckoutToken(config, supabaseAdmin);
     if (sandboxToken) return sandboxToken;
 
+    if (prodToken.startsWith("APP_USR-")) {
+      const validation = await validateMpAccessToken(prodToken);
+      if (validation.ok) {
+        return {
+          accessToken: prodToken,
+          checkoutEnv: "sandbox",
+          tokenSource: "token_cbu_app_usr_sandbox",
+        };
+      }
+    }
+
     throw new Error(
-      "Modo prueba activo pero no hay credenciales TEST- válidas. Reconectá OAuth en Admin → Settings con Modo sandbox marcado.",
+      "Modo sandbox activo: cargá Public Key y Access Token APP_USR (producción) de la app del restaurante en Admin → Settings.",
     );
   }
 
