@@ -2061,27 +2061,25 @@ const App: React.FC = () => {
             try { return new URL(paymentUrl).hostname; } catch { return '(invalid url)'; }
           })();
           console.log('[DineSplit] paymentUrl host:', resolvedHost);
-          if (oauthTestMode && !resolvedHost.includes('sandbox')) {
-            console.warn('[DineSplit] ADVERTENCIA: oauth_test_mode activo pero paymentUrl no apunta a sandbox. Reconectá OAuth con Modo sandbox.');
-          }
-          const isSandboxCheckout =
+          const isTestCheckout =
+            oauthTestMode ||
             createPrefData.checkout_env === 'sandbox' ||
+            createPrefData.checkout_env === 'production_test_users' ||
             createPrefData.redirect_to_sandbox === true ||
             resolvedHost.includes('sandbox');
 
-          if (isSandboxCheckout) {
+          if (isTestCheckout) {
             console.warn(
-              '[DineSplit] MODO SANDBOX: no uses tu cuenta real de Mercado Pago. '
-              + 'Cerrá sesión en MP, usá ventana de incógnito o pagá como invitado con tarjeta de prueba '
-              + '(5031 7557 3453 0604, titular APRO, DNI 12345678, CVV 123).',
+              '[DineSplit] MODO PRUEBA: no uses tu cuenta real de Mercado Pago. '
+              + 'Pagá como invitado con tarjeta de prueba (Visa 4509 9535 6623 3704 o Master 5031 7557 3453 0604, titular APRO, DNI 12345678).',
             );
-            const sandboxHint =
-              'Vas a pagar en el sandbox de Mercado Pago.\n\n'
-              + '• No uses tu cuenta real (el cartel "Como usuario" suele ser el problema).\n'
-              + '• Cerrá sesión en mercadopago.com.ar o abrí esta página en incógnito.\n'
-              + '• Pagá como invitado con la tarjeta de prueba (titular APRO).\n\n'
+            const testHint =
+              'Vas a pagar en modo prueba de Mercado Pago.\n\n'
+              + '• No uses tu cuenta real ni tarjetas guardadas.\n'
+              + '• Elegí «Otra tarjeta» / pagar como invitado.\n'
+              + '• Titular: APRO, DNI 12345678, tarjeta de prueba Visa o Mastercard.\n\n'
               + '¿Continuar al checkout?';
-            if (!window.confirm(sandboxHint)) {
+            if (!window.confirm(testHint)) {
               return;
             }
           }

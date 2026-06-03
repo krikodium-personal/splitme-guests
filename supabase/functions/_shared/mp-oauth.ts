@@ -416,10 +416,12 @@ export async function resolveSellerAccessToken(
     if (prodToken.startsWith("APP_USR-")) {
       const validation = await validateMpAccessToken(prodToken);
       if (validation.ok) {
+        // APP_USR del vendedor test: preferencia OK en API, pero sandbox.mercadopago.com.ar
+        // devuelve 404 en card-form/association. Checkout prod + tarjetas de prueba (APRO).
         return {
           accessToken: prodToken,
-          checkoutEnv: "sandbox",
-          tokenSource: "token_cbu_app_usr_sandbox",
+          checkoutEnv: "production_test_users",
+          tokenSource: "token_cbu_app_usr_test_cards",
         };
       }
     }
