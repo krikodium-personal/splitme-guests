@@ -15,6 +15,7 @@ import CashPaymentView from './views/CashPaymentView';
 import CheckoutView from './views/CheckoutView';
 import ConfirmationView from './views/ConfirmationView';
 import FeedbackView from './views/FeedbackView';
+import TipView from './views/TipView';
 import MercadoPagoPaymentView from './views/MercadoPagoPaymentView';
 import JoinTableView from './views/JoinTableView';
 import { getSession, setSession, getOrderId, setOrderId, removeOrderId, clearSession, getActiveGuestId, setActiveGuestIdCookie, setTableAndRestaurant, getTableAndRestaurant, isGuestEntryPath } from './lib/sessionCookies';
