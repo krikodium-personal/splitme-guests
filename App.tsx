@@ -1970,9 +1970,8 @@ const App: React.FC = () => {
         };
 
         if (oauthTestMode) {
-          // MP no permite desactivar tarjetas guardadas; simplificamos medios offline en prueba.
           preferencesPayload.payment_methods = {
-            excluded_payment_types: [{ id: 'ticket' }],
+            excluded_payment_types: [{ id: 'ticket' }, { id: 'account_money' }],
           };
         }
         
@@ -2061,6 +2060,9 @@ const App: React.FC = () => {
             try { return new URL(paymentUrl).hostname; } catch { return '(invalid url)'; }
           })();
           console.log('[DineSplit] paymentUrl host:', resolvedHost);
+          if (createPrefData.test_payment_hint) {
+            console.warn('[DineSplit]', createPrefData.test_payment_hint);
+          }
           const isTestCheckout =
             oauthTestMode ||
             createPrefData.checkout_env === 'sandbox' ||
@@ -2076,9 +2078,11 @@ const App: React.FC = () => {
             const onSandboxHost = resolvedHost.includes('sandbox');
             const testHint = onSandboxHost
               ? 'Checkout SANDBOX (vendedor de prueba).\n\n'
-                + '• Cerrá sesión en mercadopago.com.ar o usá ventana de incógnito.\n'
-                + '• No pagues con tu cuenta real ni tarjetas guardadas (ej. Amex).\n'
-                + '• Pagá como invitado: titular APRO, DNI 12345678, Visa 4509…3704 o Master 5031…0604.\n\n'
+                + 'IMPORTANTE: no elijas «Como usuario» con tu cuenta real de Mercado Pago.\n\n'
+                + '• Usá ventana de incógnito y cerrá sesión en mercadopago.com.ar.\n'
+                + '• Opción A: pagar como invitado (Otra tarjeta), titular APRO, DNI 12345678.\n'
+                + '• Opción B: iniciar sesión con el comprador TEST de Developers (no tu cuenta real).\n'
+                + '• Tarjetas: Visa 4509 9535 6623 3704 o Master 5031 7557 3453 0604.\n\n'
                 + '¿Continuar?'
               : 'Modo prueba en mercadopago.com.ar.\n\n'
                 + '• No uses cuenta real ni tarjetas guardadas.\n'

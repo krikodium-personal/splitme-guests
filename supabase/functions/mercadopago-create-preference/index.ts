@@ -58,14 +58,35 @@ Deno.serve(async (req) => {
     const redirectToSandbox = checkoutEnv === "sandbox";
     const effectiveTestMode = redirectToSandbox;
 
+    const sandboxPaymentMethods =
+      typeof preferences === "object" && preferences !== null && preferences.payment_methods
+        ? { ...preferences.payment_methods }
+        : { excluded_payment_types: [{ id: "ticket" }] };
+    const excludedTypes = Array.isArray(sandboxPaymentMethods.excluded_payment_types)
+      ? [...sandboxPaymentMethods.excluded_payment_types]
+      : [{ id: "ticket" }];
+    if (!excludedTypes.some((t: { id?: string }) => t?.id === "account_money")) {
+      excludedTypes.push({ id: "account_money" });
+    }
+    sandboxPaymentMethods.excluded_payment_types = excludedTypes;
+
+    const sandboxBuyerEmail = Deno.env.get("MERCADOPAGO_SANDBOX_BUYER_EMAIL")?.trim();
     const preferenceBody =
       effectiveTestMode && typeof preferences === "object" && preferences !== null
         ? {
             ...preferences,
             binary_mode: true,
-            payment_methods: preferences.payment_methods ?? {
-              excluded_payment_types: [{ id: "ticket" }],
-            },
+            payment_methods: sandboxPaymentMethods,
+            ...(sandboxBuyerEmail
+              ? {
+                  payer: {
+                    ...(typeof preferences.payer === "object" && preferences.payer !== null
+                      ? preferences.payer
+                      : {}),
+                    email: sandboxBuyerEmail,
+                  },
+                }
+              : {}),
           }
         : preferences;
 
@@ -127,6 +148,9 @@ Deno.serve(async (req) => {
         test_seller_auto_sandbox: tokenSource.includes("test_seller"),
         init_point: pref.init_point,
         sandbox_init_point: pref.sandbox_init_point,
+        test_payment_hint: redirectToSandbox
+          ? "Sandbox: no uses «Como usuario» con tu cuenta real. Incógnito, cerrá sesión MP, pagá como invitado (APRO) o iniciá sesión con el comprador test de Developers."
+          : undefined,
       }),
       {
         status: 200,
