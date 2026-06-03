@@ -7,6 +7,7 @@ import {
   refreshMpOAuthToken,
   validateMpAccessToken,
 } from "../_shared/mp-oauth.ts";
+import { encryptSecret } from "../_shared/mp-crypto.ts";
 
 function redirectWithMessage(returnUrl: string, params: Record<string, string>): Response {
   const url = new URL(returnUrl);
@@ -43,7 +44,12 @@ Deno.serve(async (req) => {
     const returnUrl = statePayload.return_url || fallbackReturn;
     const primaryIsTest = statePayload.test_token;
 
-    const tokenData = await exchangeMpOAuthCode(code, redirectUri, primaryIsTest);
+    const tokenData = await exchangeMpOAuthCode(
+      code,
+      redirectUri,
+      primaryIsTest,
+      statePayload.code_verifier,
+    );
 
     if (primaryIsTest && !tokenData.access_token.startsWith("TEST-")) {
       console.warn(
@@ -129,15 +135,16 @@ Deno.serve(async (req) => {
 
     const payload = {
       restaurant_id: statePayload.restaurant_id,
-      token_cbu: prodAccessToken,
+      token_cbu: await encryptSecret(prodAccessToken),
       key_alias: prodPublicKey,
-      token_cbu_test: testAccessToken,
+      token_cbu_test: await encryptSecret(testAccessToken),
       key_alias_test: testPublicKey,
       oauth_test_mode: primaryIsTest,
       user_account: tokenData.user_id ? String(tokenData.user_id) : null,
-      refresh_token: tokenData.refresh_token || null,
+      refresh_token: await encryptSecret(tokenData.refresh_token || null),
       oauth_connected_at: new Date().toISOString(),
       token_expires_at: expiresAt,
+      oauth_requires_reconnect: false,
       provider: "mercadopago",
       is_active: true,
     };

@@ -1,5 +1,7 @@
 const encoder = new TextEncoder();
 
+import { decryptSecret, encryptSecret } from "./mp-crypto.ts";
+
 export const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -39,6 +41,7 @@ export type OAuthStatePayload = {
   test_token: boolean;
   exp: number;
   nonce: string;
+  code_verifier: string;
 };
 
 export async function createOAuthState(
@@ -71,6 +74,7 @@ export async function parseOAuthState(
   if (!payload.restaurant_id || !payload.user_id || !payload.return_url || !payload.exp) {
     throw new Error("Estado OAuth incompleto");
   }
+  if (!payload.code_verifier) throw new Error("Estado OAuth sin code_verifier (PKCE)");
   if (Date.now() > payload.exp) throw new Error("Estado OAuth expirado");
 
   return payload;
@@ -88,6 +92,27 @@ export function getMpConfig() {
   }
 
   return { clientId, clientSecret, redirectUri, stateSecret, sandboxByDefault };
+}
+
+/** Public key de la aplicación plataforma SplitMe (Payment Brick). */
+export function getPlatformPublicKey(): string {
+  const key = Deno.env.get("MERCADOPAGO_PLATFORM_PUBLIC_KEY")?.trim()
+    || Deno.env.get("MERCADOPAGO_PUBLIC_KEY")?.trim();
+  if (!key) {
+    throw new Error("MERCADOPAGO_PLATFORM_PUBLIC_KEY no configurada");
+  }
+  return key;
+}
+
+export async function decryptConfigSecrets(
+  config: PaymentConfigTokens,
+): Promise<PaymentConfigTokens> {
+  const [token_cbu, token_cbu_test, refresh_token] = await Promise.all([
+    decryptSecret(config.token_cbu),
+    decryptSecret(config.token_cbu_test),
+    decryptSecret(config.refresh_token),
+  ]);
+  return { ...config, token_cbu, token_cbu_test, refresh_token };
 }
 
 export async function validateMpAccessToken(accessToken: string): Promise<{
@@ -120,6 +145,7 @@ export async function exchangeMpOAuthCode(
   code: string,
   redirectUri: string,
   testToken: boolean,
+  codeVerifier?: string,
 ): Promise<{
   access_token: string;
   refresh_token?: string;
@@ -138,6 +164,7 @@ export async function exchangeMpOAuthCode(
   };
   // test_token=true → sandbox TEST credentials for Checkout Pro sandbox_init_point.
   if (testToken) body.test_token = "true";
+  if (codeVerifier) body.code_verifier = codeVerifier;
 
   const response = await fetch("https://api.mercadopago.com/oauth/token", {
     method: "POST",
@@ -211,14 +238,24 @@ export async function assertRestaurantPaymentAccess(
   throw new Error("No tenés permiso para configurar pagos de este restaurante");
 }
 
-export function buildMpAuthorizationUrl(clientId: string, redirectUri: string, state: string): string {
+export function buildMpAuthorizationUrl(
+  clientId: string,
+  redirectUri: string,
+  state: string,
+  pkce?: { codeChallenge: string },
+): string {
   const params = new URLSearchParams({
     response_type: "code",
     client_id: clientId,
     redirect_uri: redirectUri,
     state,
     platform_id: "mp",
+    scope: "offline_access",
   });
+  if (pkce?.codeChallenge) {
+    params.set("code_challenge", pkce.codeChallenge);
+    params.set("code_challenge_method", "S256");
+  }
   return `https://auth.mercadopago.com.ar/authorization?${params.toString()}`;
 }
 
@@ -237,13 +274,16 @@ export type CheckoutEnv = "sandbox" | "production_test_users" | "production";
 
 export type PaymentConfigTokens = {
   id?: string;
+  restaurant_id?: string;
   oauth_test_mode?: boolean | null;
+  oauth_requires_reconnect?: boolean | null;
   token_cbu?: string | null;
   token_cbu_test?: string | null;
   key_alias?: string | null;
   key_alias_test?: string | null;
   refresh_token?: string | null;
   token_expires_at?: string | null;
+  oauth_connected_at?: string | null;
 };
 
 export type ResolvedCheckoutToken = {
@@ -266,15 +306,18 @@ async function persistRefreshedProdToken(
   if (!accessToken?.startsWith("APP_USR-")) return null;
 
   if (supabaseAdmin && configId) {
+    const encryptedAccess = await encryptSecret(accessToken);
+    const encryptedRefresh = await encryptSecret(refreshed.refresh_token || refreshToken);
     const { error } = await supabaseAdmin
       .from("payment_configs")
       .update({
-        token_cbu: accessToken,
+        token_cbu: encryptedAccess,
         key_alias: refreshed.public_key || undefined,
-        refresh_token: refreshed.refresh_token || refreshToken,
+        refresh_token: encryptedRefresh,
         token_expires_at: refreshed.expires_in
           ? new Date(Date.now() + refreshed.expires_in * 1000).toISOString()
           : undefined,
+        oauth_requires_reconnect: false,
       })
       .eq("id", configId);
     if (error) {
@@ -286,13 +329,13 @@ async function persistRefreshedProdToken(
 }
 
 async function refreshProdAccessToken(
-  refreshToken: string,
+  refreshTokenPlain: string,
   supabaseAdmin: SupabaseAdmin | null,
   configId?: string,
 ): Promise<string | null> {
   try {
-    const refreshed = await refreshMpOAuthToken(refreshToken, false);
-    return await persistRefreshedProdToken(supabaseAdmin, configId, refreshToken, refreshed);
+    const refreshed = await refreshMpOAuthToken(refreshTokenPlain, false);
+    return await persistRefreshedProdToken(supabaseAdmin, configId, refreshTokenPlain, refreshed);
   } catch (err) {
     console.warn("[mp-oauth] refresh APP_USR falló:", err instanceof Error ? err.message : err);
     return null;
@@ -309,12 +352,15 @@ async function persistRefreshedTestToken(
   if (!accessToken?.startsWith("TEST-")) return null;
 
   if (supabaseAdmin && configId) {
+    const encryptedAccess = await encryptSecret(accessToken);
+    const encryptedRefresh = await encryptSecret(refreshed.refresh_token || refreshToken);
     const { error } = await supabaseAdmin
       .from("payment_configs")
       .update({
-        token_cbu_test: accessToken,
+        token_cbu_test: encryptedAccess,
         key_alias_test: refreshed.public_key || undefined,
-        refresh_token: refreshed.refresh_token || refreshToken,
+        refresh_token: encryptedRefresh,
+        oauth_requires_reconnect: false,
       })
       .eq("id", configId);
     if (error) {
@@ -343,8 +389,9 @@ async function resolveSandboxCheckoutToken(
   config: PaymentConfigTokens,
   supabaseAdmin: SupabaseAdmin | null,
 ): Promise<ResolvedCheckoutToken | null> {
-  const testToken = config.token_cbu_test?.trim() || "";
-  const refreshToken = config.refresh_token?.trim() || "";
+  const secrets = await decryptConfigSecrets(config);
+  const testToken = secrets.token_cbu_test?.trim() || "";
+  const refreshToken = secrets.refresh_token?.trim() || "";
 
   if (testToken.startsWith("TEST-")) {
     const validation = await validateMpAccessToken(testToken);
@@ -391,8 +438,13 @@ export async function resolveSellerAccessToken(
   config: PaymentConfigTokens,
   supabaseAdmin: SupabaseAdmin | null = null,
 ): Promise<ResolvedCheckoutToken> {
-  const prodToken = config.token_cbu?.trim() || "";
-  const refreshToken = config.refresh_token?.trim() || "";
+  if (config.oauth_requires_reconnect) {
+    throw new Error("El restaurante debe reconectar Mercado Pago en Admin → Settings.");
+  }
+
+  const secrets = await decryptConfigSecrets(config);
+  const prodToken = secrets.token_cbu?.trim() || "";
+  const refreshToken = secrets.refresh_token?.trim() || "";
   let sandboxMode = config.oauth_test_mode === true;
 
   if (!sandboxMode && prodToken.startsWith("APP_USR-")) {
@@ -410,7 +462,7 @@ export async function resolveSellerAccessToken(
 
   if (sandboxMode) {
     // Preferir TEST- si existen; si no, APP_USR de producción + checkout sandbox (tarjetas de prueba).
-    const sandboxToken = await resolveSandboxCheckoutToken(config, supabaseAdmin);
+    const sandboxToken = await resolveSandboxCheckoutToken(secrets, supabaseAdmin);
     if (sandboxToken) return sandboxToken;
 
     if (prodToken.startsWith("APP_USR-")) {
@@ -468,4 +520,49 @@ export async function resolveSellerAccessToken(
   }
 
   throw new Error("El token de acceso de Mercado Pago no está configurado.");
+}
+
+const REFRESH_MARGIN_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Refresca tokens OAuth próximos a vencer. Marca reconexión si falla. */
+export async function refreshExpiringRestaurantTokens(
+  supabaseAdmin: SupabaseAdmin,
+): Promise<{ refreshed: number; failed: number }> {
+  const threshold = new Date(Date.now() + REFRESH_MARGIN_MS).toISOString();
+  const { data: configs, error } = await supabaseAdmin
+    .from("payment_configs")
+    .select("id, restaurant_id, refresh_token, token_expires_at, oauth_test_mode")
+    .eq("provider", "mercadopago")
+    .eq("is_active", true)
+    .not("refresh_token", "is", null);
+
+  if (error) throw error;
+
+  let refreshed = 0;
+  let failed = 0;
+
+  for (const row of configs ?? []) {
+    if (row.token_expires_at && row.token_expires_at > threshold) continue;
+    const refreshPlain = await decryptSecret(row.refresh_token);
+    if (!refreshPlain) continue;
+
+    try {
+      const result = await refreshMpOAuthToken(refreshPlain, row.oauth_test_mode === true);
+      if (row.oauth_test_mode) {
+        await persistRefreshedTestToken(supabaseAdmin, row.id, refreshPlain, result);
+      } else {
+        await persistRefreshedProdToken(supabaseAdmin, row.id, refreshPlain, result);
+      }
+      refreshed++;
+    } catch (err) {
+      failed++;
+      console.error("[mp-oauth] refresh job failed", row.restaurant_id, err);
+      await supabaseAdmin
+        .from("payment_configs")
+        .update({ oauth_requires_reconnect: true })
+        .eq("id", row.id);
+    }
+  }
+
+  return { refreshed, failed };
 }

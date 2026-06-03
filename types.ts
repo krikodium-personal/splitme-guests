@@ -9,6 +9,7 @@ export type AppView =
   | 'SPLIT_BILL' 
   | 'GUEST_SELECTION'
   | 'INDIVIDUAL_SHARE' 
+  | 'MP_PAYMENT'
   | 'TRANSFER_PAYMENT'
   | 'CASH_PAYMENT'
   | 'CHECKOUT'

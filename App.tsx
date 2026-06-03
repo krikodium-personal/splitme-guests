@@ -15,7 +15,7 @@ import CashPaymentView from './views/CashPaymentView';
 import CheckoutView from './views/CheckoutView';
 import ConfirmationView from './views/ConfirmationView';
 import FeedbackView from './views/FeedbackView';
-import TipView from './views/TipView';
+import MercadoPagoPaymentView from './views/MercadoPagoPaymentView';
 import JoinTableView from './views/JoinTableView';
 import { getSession, setSession, getOrderId, setOrderId, removeOrderId, clearSession, getActiveGuestId, setActiveGuestIdCookie, setTableAndRestaurant, getTableAndRestaurant, isGuestEntryPath } from './lib/sessionCookies';
 import { getGroupKeyForCategoryId, type OrderGroupKey } from './lib/orderGroups';
@@ -1857,252 +1857,36 @@ const App: React.FC = () => {
     
     if (paymentData.method === 'mercadopago') {
       try {
-        // Validar que el monto sea válido
         const amount = Number(paymentData.amount);
         if (isNaN(amount) || amount <= 0) {
           throw new Error("El monto a pagar debe ser mayor a cero.");
         }
+        if (!guestId) {
+          throw new Error('No se pudo identificar al comensal. Volvé a intentar desde tu link.');
+        }
 
         const { data: config, error: configError } = await supabase
           .from('payment_configs')
-          .select('*')
+          .select('id, oauth_connected_at, oauth_requires_reconnect, token_cbu, refresh_token')
           .eq('restaurant_id', restaurant.id)
           .eq('provider', 'mercadopago')
           .maybeSingle();
-        
-        if (configError) {
-          console.error('[DineSplit] Error al obtener configuración de Mercado Pago:', configError);
-          throw new Error(`Error al obtener configuración: ${configError.message}`);
-        }
-        
-        if (!config) {
-          console.error('[DineSplit] No se encontró configuración de Mercado Pago para restaurant_id:', restaurant.id);
-          throw new Error("Mercado Pago no está configurado para este restaurante.");
-        }
-        
-        console.log('[DineSplit] Configuración de Mercado Pago encontrada:', {
-          restaurant_id: restaurant.id,
-          provider: config.provider,
-          oauth_test_mode: config.oauth_test_mode,
-          has_token_cbu: !!config.token_cbu,
-          has_token_cbu_test: !!config.token_cbu_test,
-          has_user_account: !!config.user_account,
-          has_key_alias: !!config.key_alias,
-          has_key_alias_test: !!config.key_alias_test,
-        });
 
-        const oauthTestMode = config.oauth_test_mode === true;
-
-        const pageOrigin = window.location.origin + window.location.pathname;
-        const publicGuestsUrl = (import.meta as any).env?.VITE_GUESTS_PUBLIC_URL?.trim()
-          || 'https://splitme-guests.vercel.app';
-        const isLocalhostOrigin = pageOrigin.includes('localhost') || pageOrigin.includes('127.0.0.1') || pageOrigin.includes('0.0.0.0');
-        const checkoutOrigin = isLocalhostOrigin && publicGuestsUrl.startsWith('http')
-          ? publicGuestsUrl.replace(/\/$/, '')
-          : window.location.origin;
-        const cleanUrl = checkoutOrigin + window.location.pathname;
-        const supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL || 'https://hqaiuywzklrwywdhmqxw.supabase.co';
-        const webhookBase = `${supabaseUrl.replace(/\/$/, '')}/functions/v1/mercadopago-webhook`;
-        const notificationUrl = `${webhookBase}?source_news=webhooks`;
-        // Incluir guestId en la URL de retorno para poder identificar quién pagó
-        const successUrl = `${cleanUrl}?status=success&orderId=${activeOrderId}&guestId=${guestId}`;
-        const failureUrl = `${cleanUrl}?status=failure&orderId=${activeOrderId}&guestId=${guestId}`;
-        const pendingUrl = `${cleanUrl}?status=pending&orderId=${activeOrderId}&guestId=${guestId}`;
-        
-        // Validar que las URLs estén bien formadas
-        if (!successUrl || !successUrl.startsWith('http') || successUrl.trim().length === 0) {
-          console.error('[DineSplit] URL de éxito inválida:', successUrl);
-          throw new Error("La URL de éxito no está bien formada.");
+        if (configError) throw configError;
+        if (!config?.token_cbu && !config?.refresh_token) {
+          throw new Error('Este restaurante aún no conectó Mercado Pago. Pedile al local que lo haga en Admin → Settings.');
         }
-        
-        // Construir back_urls primero y validarlo - asegurarse de que sean strings válidos
-        const backUrls: { success: string; failure: string; pending: string } = {
-          success: String(successUrl).trim(),
-          failure: String(failureUrl).trim(),
-          pending: String(pendingUrl).trim()
-        };
-        
-        // Validar que success esté definido y no vacío - esto es crítico para auto_return
-        if (!backUrls.success || backUrls.success.length === 0 || !backUrls.success.startsWith('http')) {
-          console.error('[DineSplit] back_urls.success está vacío, undefined o inválido:', backUrls.success);
-          throw new Error("La URL de éxito (back_urls.success) es requerida y debe ser una URL válida para usar auto_return.");
-        }
-        
-        // Mercado Pago NO acepta localhost en back_urls / auto_return
-        const isLocalhost = cleanUrl.includes('localhost') || cleanUrl.includes('127.0.0.1') || cleanUrl.includes('0.0.0.0');
-        if (isLocalhostOrigin && !isLocalhost) {
-          console.log('[DineSplit] back_urls usan URL pública para dev local:', cleanUrl);
-        }
-        
-        const tableNum = currentTable?.table_number || 'N/A';
-        
-        // Asegurar que el unit_price sea un número válido y esté en el formato correcto
-        // Mercado Pago espera el precio como número, no string
-        const unitPrice = parseFloat(amount.toFixed(2));
-        if (isNaN(unitPrice) || unitPrice <= 0) {
-          throw new Error(`El monto ${amount} no es válido. Debe ser un número mayor a cero.`);
-        }
-        
-        // Construir el payload base según la documentación de Mercado Pago
-        const preferencesPayload: any = {
-          items: [{ 
-            title: `Pago Mesa ${tableNum}`.substring(0, 127), // Título limitado a 127 caracteres
-            description: `Pago individual de comensal para mesa ${tableNum}`.substring(0, 255), // Descripción opcional
-            quantity: 1, 
-            unit_price: unitPrice, // Número, no string
-            currency_id: 'ARS' 
-          }],
-          external_reference: `${activeOrderId}|${guestId}`.substring(0, 256), // Máximo 256 caracteres
-          notification_url: notificationUrl,
-          metadata: {
-            restaurant_id: restaurant.id,
-            order_id: activeOrderId,
-            guest_id: guestId,
-          },
-          back_urls: {
-            success: backUrls.success,
-            failure: backUrls.failure,
-            pending: backUrls.pending
-          },
-          // En producción permitir pendientes; en modo prueba forzar aprobado/rechazado.
-          binary_mode: oauthTestMode,
-          statement_descriptor: `MESA ${tableNum}`.substring(0, 22) // Máximo 22 caracteres para el descriptor
-        };
-
-        if (oauthTestMode) {
-          preferencesPayload.payment_methods = {
-            excluded_payment_types: [{ id: 'ticket' }, { id: 'account_money' }],
-          };
-        }
-        
-        // Solo agregar auto_return si NO es localhost (Mercado Pago requiere URLs públicas)
-        if (!isLocalhost) {
-          preferencesPayload.auto_return = 'approved';
-          console.log('[DineSplit] Usando auto_return porque la URL es pública:', cleanUrl);
-        } else {
-          console.log('[DineSplit] Omitiendo auto_return porque la URL es localhost (Mercado Pago no lo permite):', cleanUrl);
-        }
-        
-        // Validar que el título no esté vacío
-        if (!preferencesPayload.items[0].title || preferencesPayload.items[0].title.trim().length === 0) {
-          preferencesPayload.items[0].title = 'Pago de Mesa';
-        }
-        
-        // Log del payload antes de enviar
-        console.log('[DineSplit] Payload completo antes de enviar:', JSON.stringify(preferencesPayload, null, 2));
-        console.log('[DineSplit] Creando preferencia vía edge function:', {
-          oauth_test_mode: oauthTestMode,
-          sellerUserId: config.user_account || null,
-          note: oauthTestMode
-            ? 'Modo prueba: preferencia con TEST- y checkout en sandbox.mercadopago.com.ar.'
-            : 'Preferencia según credenciales de producción del restaurante.',
-        });
-
-        const { data: createPrefData, error: createPrefError } = await supabase.functions.invoke(
-          'mercadopago-create-preference',
-          {
-            body: {
-              restaurant_id: restaurant.id,
-              preferences: preferencesPayload,
-            },
-          },
-        );
-
-        if (createPrefError || !createPrefData) {
-          console.error('[DineSplit] Error al crear preferencia:', createPrefError, createPrefData);
-          throw new Error(createPrefError?.message || 'No se pudo crear la preferencia de Mercado Pago.');
+        if (config.oauth_requires_reconnect) {
+          throw new Error('Mercado Pago del restaurante requiere reconexión. Pedile al local que vuelva a autorizar en Admin → Settings.');
         }
 
-        if (createPrefData.error) {
-          console.error('[DineSplit] Error al crear preferencia:', createPrefData);
-          console.error('[DineSplit] Detalles del error:', {
-            checkoutEnv: createPrefData.checkout_env,
-            tokenSource: createPrefData.token_source,
-            sellerUserId: config.user_account,
-          });
-
-          const errorMessage = createPrefData.error || '';
-          if (errorMessage.includes('prueba') || errorMessage.includes('test')) {
-            let helpfulMessage = 'Error de configuración de Mercado Pago:\n\n';
-            helpfulMessage += 'Cada restaurante debe usar el Public Key y Access Token de SU cuenta vendedora en Settings.\n';
-            helpfulMessage += 'No uses las credenciales de prueba genéricas de la aplicación SplitMe.\n\n';
-            helpfulMessage += `Modo checkout: ${createPrefData.checkout_env || 'desconocido'}\n\n`;
-            helpfulMessage += 'Solución:\n';
-            helpfulMessage += '- Activá «Modo sandbox» en Admin → Settings (o usá vendedor de prueba MP)\n';
-            helpfulMessage += '- Cerrá sesión de tu cuenta real en Mercado Pago o usá ventana de incógnito\n';
-            helpfulMessage += '- Pagá como invitado con tarjeta de prueba (APRO, DNI 12345678), sin login con cuenta real';
-
-            throw new Error(helpfulMessage);
-          }
-
-          throw new Error(`Error de Mercado Pago: ${errorMessage}`);
-        }
-
-        const paymentUrl = createPrefData.payment_url as string | undefined;
-        const checkoutHost = createPrefData.checkout_host as string | undefined;
-
-        console.log('[DineSplit] Preferencia creada exitosamente:', {
-          preference_id: createPrefData.preference_id,
-          checkout_env: createPrefData.checkout_env,
-          token_source: createPrefData.token_source,
-          oauth_test_mode: createPrefData.oauth_test_mode,
-          redirect_to_sandbox: createPrefData.redirect_to_sandbox,
-        });
-        console.log('[DineSplit] init_point:', createPrefData.init_point);
-        console.log('[DineSplit] Preference ID:', createPrefData.preference_id);
-        console.log('[DineSplit] Sandbox URL:', createPrefData.sandbox_init_point || 'No disponible');
-
-        if (paymentUrl) {
-          try {
-            sessionStorage.setItem('splitme_mp_return', JSON.stringify({ orderId: activeOrderId, guestId }));
-          } catch (e) { /* sessionStorage puede no estar disponible */ }
-          const resolvedHost = checkoutHost || (() => {
-            try { return new URL(paymentUrl).hostname; } catch { return '(invalid url)'; }
-          })();
-          console.log('[DineSplit] paymentUrl host:', resolvedHost);
-          if (createPrefData.test_payment_hint) {
-            console.warn('[DineSplit]', createPrefData.test_payment_hint);
-          }
-          const isTestCheckout =
-            oauthTestMode ||
-            createPrefData.checkout_env === 'sandbox' ||
-            createPrefData.checkout_env === 'production_test_users' ||
-            createPrefData.redirect_to_sandbox === true ||
-            resolvedHost.includes('sandbox');
-
-          if (isTestCheckout) {
-            console.warn(
-              '[DineSplit] MODO PRUEBA: no uses tu cuenta real de Mercado Pago. '
-              + 'Pagá como invitado con tarjeta de prueba (Visa 4509 9535 6623 3704 o Master 5031 7557 3453 0604, titular APRO, DNI 12345678).',
-            );
-            const onSandboxHost = resolvedHost.includes('sandbox');
-            const testHint = onSandboxHost
-              ? 'Checkout SANDBOX (vendedor de prueba).\n\n'
-                + 'IMPORTANTE: no elijas «Como usuario» con tu cuenta real de Mercado Pago.\n\n'
-                + '• Usá ventana de incógnito y cerrá sesión en mercadopago.com.ar.\n'
-                + '• Opción A: pagar como invitado (Otra tarjeta), titular APRO, DNI 12345678.\n'
-                + '• Opción B: iniciar sesión con el comprador TEST de Developers (no tu cuenta real).\n'
-                + '• Tarjetas: Visa 4509 9535 6623 3704 o Master 5031 7557 3453 0604.\n\n'
-                + '¿Continuar?'
-              : 'Modo prueba en mercadopago.com.ar.\n\n'
-                + '• No uses cuenta real ni tarjetas guardadas.\n'
-                + '• Invitado + titular APRO + tarjeta de prueba.\n\n'
-                + '¿Continuar al checkout?';
-            if (!window.confirm(testHint)) {
-              return;
-            }
-          }
-          console.log('[DineSplit] Redirigiendo a:', paymentUrl);
-          window.location.href = paymentUrl;
-        } else {
-          console.error('[DineSplit] No se recibió ningún link de pago. Respuesta completa:', createPrefData);
-          throw new Error("No se recibió el link de pago de Mercado Pago. Verifica la configuración de tu cuenta.");
-        }
-      } catch (err: any) { 
-        console.error('[DineSplit] Error al procesar pago con Mercado Pago:', err);
-        alert(err.message || "Error al conectar con Mercado Pago. Por favor, intenta nuevamente."); 
+        setPaymentAmount(amount);
+        navigate(`/mp-payment?orderId=${activeOrderId}&guestId=${guestId}`);
+      } catch (err: any) {
+        console.error('[DineSplit] Error al iniciar pago MP:', err);
+        alert(err.message || 'Error al conectar con Mercado Pago.');
       }
-    } else { 
+    } else {
       // Para métodos de pago no-Mercado Pago (transferencia, efectivo), procesar directamente
       if (guestId) {
         await handlePaymentSuccess(guestId, paymentData.amount, paymentData.method);
@@ -2195,6 +1979,7 @@ const App: React.FC = () => {
       '/guest-selection': 'GUEST_SELECTION',
       '/checkout': 'CHECKOUT',
       '/individual-share': 'INDIVIDUAL_SHARE',
+      '/mp-payment': 'MP_PAYMENT',
       '/transfer-payment': 'TRANSFER_PAYMENT',
       '/cash-payment': 'CASH_PAYMENT',
       '/tip': 'TIP',
@@ -2220,6 +2005,7 @@ const App: React.FC = () => {
       'GUEST_SELECTION': '/guest-selection',
       'CHECKOUT': '/checkout',
       'INDIVIDUAL_SHARE': '/individual-share',
+      'MP_PAYMENT': '/mp-payment',
       'TRANSFER_PAYMENT': '/transfer-payment',
       'CASH_PAYMENT': '/cash-payment',
       'TIP': '/tip',
@@ -2711,6 +2497,23 @@ const App: React.FC = () => {
             splitData={splitData} 
             restaurant={restaurant} 
             guests={guests} 
+          />
+        } />
+        <Route path="/mp-payment" element={
+          <MercadoPagoPaymentView
+            amount={paymentAmount || 0}
+            restaurantId={restaurant?.id || ''}
+            orderId={activeOrderId || ''}
+            guestId={guestIdParam || activeGuestId || ''}
+            onBack={() => navigateToView('INDIVIDUAL_SHARE')}
+            onApproved={async (paymentId) => {
+              const gid = guestIdParam || activeGuestId;
+              if (gid && paymentAmount) {
+                await handlePaymentSuccess(gid, paymentAmount, 'mercadopago', String(paymentId));
+              }
+              navigate('/tip');
+            }}
+            onError={(message) => alert(message)}
           />
         } />
         <Route path="/transfer-payment" element={

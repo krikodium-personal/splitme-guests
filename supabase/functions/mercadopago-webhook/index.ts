@@ -1,5 +1,4 @@
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "jsr:@supabase/supabase-js@2";
+import { decryptSecret } from "../_shared/mp-crypto.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -72,11 +71,13 @@ async function resolveMercadoPagoAccessToken(
 
   for (const cfg of configs ?? []) {
     if (!cfg.token_cbu) continue;
+    const accessToken = await decryptSecret(cfg.token_cbu);
+    if (!accessToken) continue;
     const testRes = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
-      headers: { Authorization: `Bearer ${cfg.token_cbu}` },
+      headers: { Authorization: `Bearer ${accessToken}` },
     });
     if (testRes.ok) {
-      return { accessToken: cfg.token_cbu, restaurantId: cfg.restaurant_id };
+      return { accessToken, restaurantId: cfg.restaurant_id };
     }
   }
   return null;

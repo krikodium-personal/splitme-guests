@@ -8,6 +8,7 @@ import {
   getMpConfig,
   sanitizeReturnUrl,
 } from "../_shared/mp-oauth.ts";
+import { createCodeChallenge, generateCodeVerifier } from "../_shared/mp-pkce.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -66,6 +67,9 @@ Deno.serve(async (req) => {
     const fallbackReturn = Deno.env.get("MERCADOPAGO_ADMIN_RETURN_URL")?.trim()
       || "http://localhost:3002/settings?tab=payments";
 
+    const codeVerifier = generateCodeVerifier();
+    const codeChallenge = await createCodeChallenge(codeVerifier);
+
     const state = await createOAuthState(
       {
         restaurant_id,
@@ -74,11 +78,17 @@ Deno.serve(async (req) => {
         test_token: useTestToken,
         exp: Date.now() + 10 * 60 * 1000,
         nonce: crypto.randomUUID(),
+        code_verifier: codeVerifier,
       },
       stateSecret,
     );
 
-    const authorization_url = buildMpAuthorizationUrl(clientId, redirectUri, state);
+    const authorization_url = buildMpAuthorizationUrl(
+      clientId,
+      redirectUri,
+      state,
+      { codeChallenge },
+    );
 
     return new Response(JSON.stringify({
       authorization_url,

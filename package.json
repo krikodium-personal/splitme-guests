@@ -1,7 +1,7 @@
 {
   "name": "splitme---comensales",
   "private": true,
-  "version": "1.0.11",
+  "version": "1.0.12",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,9 +10,10 @@
     "deploy": "npm version patch --no-git-tag-version && npm run build && npx vercel --prod"
   },
   "dependencies": {
+    "@mercadopago/sdk-react": "^1.0.7",
+    "@supabase/supabase-js": "^2.89.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
-    "@supabase/supabase-js": "^2.89.0",
     "react-router-dom": "^6.26.0"
   },
   "devDependencies": {
