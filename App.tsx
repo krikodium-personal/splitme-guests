@@ -2073,12 +2073,17 @@ const App: React.FC = () => {
               '[DineSplit] MODO PRUEBA: no uses tu cuenta real de Mercado Pago. '
               + 'Pagá como invitado con tarjeta de prueba (Visa 4509 9535 6623 3704 o Master 5031 7557 3453 0604, titular APRO, DNI 12345678).',
             );
-            const testHint =
-              'Vas a pagar en modo prueba de Mercado Pago.\n\n'
-              + '• No uses tu cuenta real ni tarjetas guardadas.\n'
-              + '• Elegí «Otra tarjeta» / pagar como invitado.\n'
-              + '• Titular: APRO, DNI 12345678, tarjeta de prueba Visa o Mastercard.\n\n'
-              + '¿Continuar al checkout?';
+            const onSandboxHost = resolvedHost.includes('sandbox');
+            const testHint = onSandboxHost
+              ? 'Checkout SANDBOX (vendedor de prueba).\n\n'
+                + '• Cerrá sesión en mercadopago.com.ar o usá ventana de incógnito.\n'
+                + '• No pagues con tu cuenta real ni tarjetas guardadas (ej. Amex).\n'
+                + '• Pagá como invitado: titular APRO, DNI 12345678, Visa 4509…3704 o Master 5031…0604.\n\n'
+                + '¿Continuar?'
+              : 'Modo prueba en mercadopago.com.ar.\n\n'
+                + '• No uses cuenta real ni tarjetas guardadas.\n'
+                + '• Invitado + titular APRO + tarjeta de prueba.\n\n'
+                + '¿Continuar al checkout?';
             if (!window.confirm(testHint)) {
               return;
             }

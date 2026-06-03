@@ -416,8 +416,16 @@ export async function resolveSellerAccessToken(
     if (prodToken.startsWith("APP_USR-")) {
       const validation = await validateMpAccessToken(prodToken);
       if (validation.ok) {
-        // APP_USR del vendedor test: preferencia OK en API, pero sandbox.mercadopago.com.ar
-        // devuelve 404 en card-form/association. Checkout prod + tarjetas de prueba (APRO).
+        // Vendedor test (ej. 3429822713): solo sandbox_init_point. En www MP rechaza con
+        // "una de las partes con la que intentás hacer el pago es de prueba".
+        if (validation.isTestUser) {
+          return {
+            accessToken: prodToken,
+            checkoutEnv: "sandbox",
+            tokenSource: "token_cbu_app_usr_test_seller_sandbox",
+          };
+        }
+        // Vendedor producción + modo prueba: www + tarjetas APRO (sin cuenta MP real).
         return {
           accessToken: prodToken,
           checkoutEnv: "production_test_users",
