@@ -1,5 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Payment, initMercadoPago } from '@mercadopago/sdk-react';
+import {
+  detectBrickEnvMismatch,
+  formatMpPaymentError,
+  type MpPaymentErrorBody,
+} from '../lib/mercadopago-errors';
 import { supabase } from '../lib/supabase';
 
 type MercadoPagoPaymentBrickProps = {
@@ -41,6 +46,7 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
     import.meta.env.VITE_MERCADOPAGO_PLATFORM_PUBLIC_KEY?.trim() || null,
   );
   const [preferenceId, setPreferenceId] = useState<string | null>(null);
+  const [envWarning, setEnvWarning] = useState<string | null>(null);
   const idempotencyRef = useRef(crypto.randomUUID());
   const onErrorRef = useRef(onError);
   const fallbackPublicKeyRef = useRef(
@@ -95,6 +101,24 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
         configSessionRef.current = sessionKey;
         setPublicKey(pk);
         setPreferenceId(data.preference_id);
+
+        const sellerPrefix = data.seller_token_prefix as string | undefined;
+        const mismatchFromServer = data.env_mismatch as string | null | undefined;
+        setEnvWarning(
+          sellerPrefix ? detectBrickEnvMismatch(pk, sellerPrefix) : null,
+        );
+
+        if (import.meta.env.DEV) {
+          console.info('[MercadoPago] Checkout env:', {
+            checkout_env: data.checkout_env,
+            token_source: data.token_source,
+            seller_token_prefix: sellerPrefix,
+            platform_public_key_prefix: data.platform_public_key_prefix,
+            oauth_test_mode: data.oauth_test_mode,
+            seller_user_id: data.seller_user_id,
+            env_mismatch: mismatchFromServer,
+          });
+        }
       } catch (err: any) {
         if (!cancelled) onErrorRef.current(err?.message || 'Error al iniciar Mercado Pago');
       } finally {
@@ -153,21 +177,15 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
 
 async function resolveMpInvokeError(
   error: unknown,
-  data: { error?: string; status_detail?: string } | null,
+  data: MpPaymentErrorBody | null,
 ): Promise<string> {
-  if (data?.error) {
-    const detail = data.status_detail ? ` (${data.status_detail})` : '';
-    return `${data.error}${detail}`;
-  }
+  if (data?.error) return formatMpPaymentError(data);
 
   const ctx = (error as { context?: Response })?.context;
   if (ctx) {
     try {
-      const body = await ctx.json();
-      if (body?.error) {
-        const detail = body.status_detail ? ` (${body.status_detail})` : '';
-        return `${body.error}${detail}`;
-      }
+      const body = (await ctx.json()) as MpPaymentErrorBody;
+      if (body?.error) return formatMpPaymentError(body);
     } catch {
       /* ignore */
     }
@@ -188,7 +206,15 @@ async function resolveMpInvokeError(
   if (!publicKey || !preferenceId) return null;
 
   return (
-    <div className="w-full max-w-lg mx-auto" key={preferenceId}>
+    <div className="w-full max-w-lg mx-auto space-y-4" key={preferenceId}>
+      {envWarning && (
+        <div
+          role="alert"
+          className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100 leading-snug"
+        >
+          {envWarning}
+        </div>
+      )}
       <Payment
         initialization={initialization}
         customization={customization}

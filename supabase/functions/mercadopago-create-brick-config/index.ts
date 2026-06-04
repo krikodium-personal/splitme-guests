@@ -1,6 +1,11 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import {
+  accessTokenPrefix,
+  detectEnvMismatch,
+  publicKeyPrefix,
+} from "../_shared/mp-errors.ts";
+import {
   corsHeaders,
   getPlatformPublicKey,
   resolveSellerAccessToken,
@@ -54,7 +59,12 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { accessToken, checkoutEnv } = await resolveSellerAccessToken(config, supabaseAdmin);
+    const { accessToken, checkoutEnv, tokenSource } = await resolveSellerAccessToken(
+      config,
+      supabaseAdmin,
+    );
+    const publicKey = getPlatformPublicKey();
+    const envMismatch = detectEnvMismatch(publicKey, accessToken);
     const webhookBase = `${supabaseUrl.replace(/\/$/, "")}/functions/v1/mercadopago-webhook`;
     const notificationUrl = `${webhookBase}?source_news=webhooks`;
 
@@ -93,13 +103,17 @@ Deno.serve(async (req) => {
       });
     }
 
-    const publicKey = getPlatformPublicKey();
-
     return new Response(JSON.stringify({
       public_key: publicKey,
       preference_id: pref.id,
       amount: parseFloat(amount.toFixed(2)),
       checkout_env: checkoutEnv,
+      token_source: tokenSource,
+      seller_token_prefix: accessTokenPrefix(accessToken),
+      platform_public_key_prefix: publicKeyPrefix(publicKey),
+      env_mismatch: envMismatch,
+      oauth_test_mode: config.oauth_test_mode === true,
+      seller_user_id: config.user_account ?? null,
       marketplace: true,
     }), {
       status: 200,

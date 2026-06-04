@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { userMessageForMpCode } from "../_shared/mp-errors.ts";
 import { corsHeaders, resolveSellerAccessToken } from "../_shared/mp-oauth.ts";
 
 type BrickFormData = {
@@ -142,7 +143,7 @@ Deno.serve(async (req) => {
       });
       const mpCode = cause?.code != null ? String(cause.code) : undefined;
       return new Response(JSON.stringify({
-        error: mpMessage || "Error al crear pago",
+        error: userMessageForMpCode(mpCode, mpMessage),
         status: payment?.status,
         status_detail: payment?.status_detail || mpCode,
         mp_code: mpCode,
