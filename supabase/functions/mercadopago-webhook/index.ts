@@ -58,29 +58,23 @@ function parseExternalReference(ref: string | null | undefined): { orderId: stri
   return { orderId, guestId };
 }
 
-async function resolveMercadoPagoAccessToken(
+async function resolveConfigByRestaurant(
   supabase: ReturnType<typeof createClient>,
-  paymentId: string,
+  restaurantId: string,
 ): Promise<{ accessToken: string; restaurantId: string } | null> {
-  const { data: configs } = await supabase
+  const { data: cfg } = await supabase
     .from("payment_configs")
-    .select("token_cbu, restaurant_id")
+    .select("token_cbu, token_cbu_test, restaurant_id, oauth_test_mode")
     .eq("provider", "mercadopago")
     .eq("is_active", true)
-    .not("token_cbu", "is", null);
+    .eq("restaurant_id", restaurantId)
+    .maybeSingle();
 
-  for (const cfg of configs ?? []) {
-    if (!cfg.token_cbu) continue;
-    const accessToken = await decryptSecret(cfg.token_cbu);
-    if (!accessToken) continue;
-    const testRes = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (testRes.ok) {
-      return { accessToken, restaurantId: cfg.restaurant_id };
-    }
-  }
-  return null;
+  if (!cfg) return null;
+  const rawToken = cfg.oauth_test_mode ? cfg.token_cbu_test : cfg.token_cbu;
+  const accessToken = await decryptSecret(rawToken ?? cfg.token_cbu);
+  if (!accessToken) return null;
+  return { accessToken, restaurantId: cfg.restaurant_id };
 }
 
 Deno.serve(async (req: Request) => {
@@ -98,17 +92,21 @@ Deno.serve(async (req: Request) => {
 
     const url = new URL(req.url);
 
-    if (globalWebhookSecret) {
-      const signatureValid = await verifyMercadoPagoSignature(req, globalWebhookSecret);
-      if (!signatureValid) {
-        console.warn("[mercadopago-webhook] Firma inválida (MERCADOPAGO_WEBHOOK_SECRET)");
-        return new Response(JSON.stringify({ error: "Invalid signature" }), {
-          status: 401,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-    } else {
-      console.warn("[mercadopago-webhook] MERCADOPAGO_WEBHOOK_SECRET no configurado; omitiendo validación de firma");
+    if (!globalWebhookSecret) {
+      console.error("[mercadopago-webhook] MERCADOPAGO_WEBHOOK_SECRET no configurado");
+      return new Response(JSON.stringify({ error: "Webhook no configurado" }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const signatureValid = await verifyMercadoPagoSignature(req, globalWebhookSecret);
+    if (!signatureValid) {
+      console.warn("[mercadopago-webhook] Firma inválida");
+      return new Response(JSON.stringify({ error: "Invalid signature" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     let body: Record<string, unknown> = {};
@@ -140,7 +138,34 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const mpAuth = await resolveMercadoPagoAccessToken(supabase, paymentId);
+    // MP envía restaurant_id en metadata — úsalo para lookup directo sin iterar todos los configs.
+    const bodyMetadata = (body.data as { metadata?: Record<string, unknown> } | undefined)?.metadata;
+    const restaurantIdFromBodyMeta = typeof bodyMetadata?.restaurant_id === "string"
+      ? bodyMetadata.restaurant_id
+      : null;
+
+    // Extraer orderId del external_reference del body si viene (algunos eventos lo incluyen).
+    const externalRefFromBody = typeof (body.data as { external_reference?: string } | undefined)?.external_reference === "string"
+      ? parseExternalReference((body.data as { external_reference?: string }).external_reference)
+      : null;
+
+    let restaurantIdForLookup = restaurantIdFromBodyMeta;
+
+    if (!restaurantIdForLookup && externalRefFromBody?.orderId) {
+      const { data: orderRow } = await supabase
+        .from("orders")
+        .select("restaurant_id")
+        .eq("id", externalRefFromBody.orderId)
+        .maybeSingle();
+      restaurantIdForLookup = orderRow?.restaurant_id ?? null;
+    }
+
+    let mpAuth: { accessToken: string; restaurantId: string } | null = null;
+
+    if (restaurantIdForLookup) {
+      mpAuth = await resolveConfigByRestaurant(supabase, restaurantIdForLookup);
+    }
+
     if (!mpAuth) {
       console.error("[mercadopago-webhook] No access token for payment", paymentId);
       return new Response(JSON.stringify({ error: "No MP config" }), {
@@ -187,13 +212,6 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
 
     const restaurantId = orderRow?.restaurant_id ?? restaurantIdFromMetadata ?? restaurantIdFromConfig;
-    if (orderRow?.restaurant_id && restaurantIdFromConfig && orderRow.restaurant_id !== restaurantIdFromConfig) {
-      console.warn("[mercadopago-webhook] restaurant_id mismatch", {
-        orderId,
-        fromOrder: orderRow.restaurant_id,
-        fromConfig: restaurantIdFromConfig,
-      });
-    }
 
     if (status === "approved") {
       const { data: existingGuest } = await supabase
