@@ -80,6 +80,13 @@ const App: React.FC = () => {
   const paymentStatus = searchParams.get('status');
   const guestIdParam = searchParams.get('guestId');
   const orderIdParam = searchParams.get('orderId');
+  const amountParam = searchParams.get('amount');
+  const mpPaymentAmount =
+    paymentAmount > 0
+      ? paymentAmount
+      : amountParam
+        ? Number.parseFloat(amountParam)
+        : 0;
   const clearParam = searchParams.get('clear');
 
   const [currentView, setCurrentView] = useState<AppView>('INIT');
@@ -1187,7 +1194,7 @@ const App: React.FC = () => {
   }, [supabase, activeOrderId, currentTable, guests.length]);
 
   useEffect(() => {
-  const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/checkout', '/individual-share', '/transfer-payment', '/cash-payment', '/tip', '/feedback', '/confirmation', '/guest-selection', '/join-table'];
+  const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/checkout', '/individual-share', '/mp-payment', '/transfer-payment', '/cash-payment', '/tip', '/feedback', '/confirmation', '/guest-selection', '/join-table'];
     let cancelled = false;
     
     const initApp = async () => {
@@ -1354,7 +1361,7 @@ const App: React.FC = () => {
           await fetchOrderItemsFromDB(orderIdForLoad);
           
           const currentPath = location.pathname;
-          const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/checkout', '/individual-share', '/transfer-payment', '/cash-payment', '/tip', '/feedback', '/confirmation', '/guest-selection'];
+          const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/checkout', '/individual-share', '/mp-payment', '/transfer-payment', '/cash-payment', '/tip', '/feedback', '/confirmation', '/guest-selection'];
           
           if (!routesRequiringSession.includes(currentPath) && !isGuestEntryPath(currentPath)) {
             const preserveQuery = location.search || '';
@@ -1850,7 +1857,14 @@ const App: React.FC = () => {
   }, [location.pathname, splitData, guests, cart, menuItems]);
 
   const handlePayIndividual = async (paymentData: { amount: number, method: string }) => {
-    if (!activeOrderId || !restaurant) return;
+    if (!activeOrderId || !restaurant) {
+      console.warn('[DineSplit] handlePayIndividual abortado: falta orden o restaurante', {
+        activeOrderId,
+        restaurantId: restaurant?.id,
+      });
+      alert('No se pudo iniciar el pago. Recargá la página o volvé a escanear el QR de la mesa.');
+      return;
+    }
     
     // Obtener guestId de la URL si existe
     const urlParams = new URLSearchParams(window.location.search);
@@ -1882,7 +1896,8 @@ const App: React.FC = () => {
         }
 
         setPaymentAmount(amount);
-        navigate(`/mp-payment?orderId=${activeOrderId}&guestId=${guestId}`);
+        console.log('[DineSplit] Navegando a checkout MP (Brick):', { orderId: activeOrderId, guestId, amount });
+        navigate(`/mp-payment?orderId=${activeOrderId}&guestId=${guestId}&amount=${amount}`);
       } catch (err: any) {
         console.error('[DineSplit] Error al iniciar pago MP:', err);
         alert(err.message || 'Error al conectar con Mercado Pago.');
@@ -2015,8 +2030,11 @@ const App: React.FC = () => {
     };
     
     const route = routeMap[view] || '/scan';
-    navigate(route);
-  }, [navigate]);
+    const preserveQuery =
+      location.search &&
+      (view === 'INDIVIDUAL_SHARE' || view === 'MP_PAYMENT' || view === 'TRANSFER_PAYMENT' || view === 'CASH_PAYMENT');
+    navigate(preserveQuery ? `${route}${location.search}` : route);
+  }, [navigate, location.search]);
 
   // Cuando hay pending y el guest pasa a paid (p. ej. por webhook), ir a propina
   useEffect(() => {
@@ -2502,7 +2520,7 @@ const App: React.FC = () => {
         } />
         <Route path="/mp-payment" element={
           <MercadoPagoPaymentView
-            amount={paymentAmount || 0}
+            amount={mpPaymentAmount > 0 ? mpPaymentAmount : 0}
             restaurantId={restaurant?.id || ''}
             orderId={activeOrderId || ''}
             guestId={guestIdParam || activeGuestId || ''}
