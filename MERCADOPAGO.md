@@ -68,11 +68,20 @@ https://<project>.supabase.co/functions/v1/mercadopago-refresh-tokens
 Authorization: Bearer <MERCADOPAGO_CRON_SECRET>
 ```
 
-## Pruebas
+## Solo cuentas de prueba (desarrollo)
 
-- [Make test purchase (Brick)](https://www.mercadopago.com.ar/developers/en/docs/checkout-bricks/integration-test/test-payment-flow): credenciales **TEST** de la app + tarjetas de prueba + email cualquiera (≠ tu login MP).
-- [Test accounts](https://www.mercadopago.com.ar/developers/en/docs/your-integrations/test/accounts): MP aclara que **Checkout Bricks no soportan cuentas de prueba del panel** para integrar; el flujo Brick usa credenciales TEST, no el login TESTUSER del panel.
-- Marketplace + OAuth del restaurante: si el vendedor conectado es usuario de prueba (`user_account` del panel), un **2034** puede ser límite de MP, no un bug de email en SplitMe.
+1. **Supabase (secrets SplitMe):** `MERCADOPAGO_PLATFORM_PUBLIC_KEY` = **TEST-…** (credenciales de prueba de la app marketplace en Developers). Opcional: `MERCADOPAGO_OAUTH_TEST_MODE=true`.
+2. **Panel MP → [Cuentas de prueba](https://www.mercadopago.com.ar/developers/panel/test-accounts):** usuario **Vendedor (Seller)** de tu app (User ID + contraseña; no tiene email).
+3. **Admin → Medios de pago:** activar **Modo prueba (sandbox)** → **Conectar Mercado Pago (modo prueba)** → en MP iniciar sesión con ese vendedor test y autorizar SplitMe.
+4. **Guests:** cobrar con [tarjetas de prueba Brick](https://www.mercadopago.com.ar/developers/es/docs/checkout-bricks/integration-test/test-payment-flow) (titular **APRO**).
+5. Verificar en Network `mercadopago-create-brick-config`: `platform_public_key_prefix` y `seller_token_prefix` = **TEST**, `oauth_test_mode: true`.
+
+Si aparece **2034** con vendedor test + Brick, es una restricción documentada de MP; abrir ticket con `mp_causes` o pasar a OAuth producción + tarjetas de prueba.
+
+## Pruebas (referencia)
+
+- [Make test purchase (Brick)](https://www.mercadopago.com.ar/developers/en/docs/checkout-bricks/integration-test/test-payment-flow)
+- [Test accounts](https://www.mercadopago.com.ar/developers/en/docs/your-integrations/test/accounts)
 - Habilitar PKCE en la app MP (Developers → editar app)
 
 ## Docs oficiales
