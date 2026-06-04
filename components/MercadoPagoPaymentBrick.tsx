@@ -17,6 +17,10 @@ let mpInitPublicKey: string | null = null;
 
 function ensureMpInit(publicKey: string) {
   if (mpInitPublicKey === publicKey) return;
+  if (typeof window !== 'undefined' && (window as { MercadoPago?: unknown }).MercadoPago) {
+    mpInitPublicKey = publicKey;
+    return;
+  }
   initMercadoPago(publicKey, { locale: 'es-AR' });
   mpInitPublicKey = publicKey;
 }
@@ -122,24 +126,14 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
         order_id: orderId,
         guest_id: guestId,
         amount,
+        preference_id: preferenceId,
         idempotency_key: idempotencyRef.current,
         form_data: formData,
       },
     });
 
     if (error || data?.error) {
-      const ctx = (error as { context?: { body?: string } })?.context;
-      let mpError = data?.error;
-      if (!mpError && ctx?.body) {
-        try {
-          const parsed = JSON.parse(ctx.body);
-          mpError = parsed?.error;
-        } catch {
-          /* ignore */
-        }
-      }
-      const detail = data?.status_detail ? ` (${data.status_detail})` : '';
-      throw new Error(`${mpError || error?.message || 'No se pudo procesar el pago'}${detail}`);
+      throw new Error(await resolveMpInvokeError(error, data));
     }
 
     if (data.status === 'approved') {
@@ -152,7 +146,32 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
     }
 
     throw new Error(data.status_detail || `Pago ${data.status || 'rechazado'}`);
-  }, [restaurantId, orderId, guestId, amount, onApproved, onPending]);
+  }, [restaurantId, orderId, guestId, amount, preferenceId, onApproved, onPending]);
+
+async function resolveMpInvokeError(
+  error: unknown,
+  data: { error?: string; status_detail?: string } | null,
+): Promise<string> {
+  if (data?.error) {
+    const detail = data.status_detail ? ` (${data.status_detail})` : '';
+    return `${data.error}${detail}`;
+  }
+
+  const ctx = (error as { context?: Response })?.context;
+  if (ctx) {
+    try {
+      const body = await ctx.json();
+      if (body?.error) {
+        const detail = body.status_detail ? ` (${body.status_detail})` : '';
+        return `${body.error}${detail}`;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return (error as Error)?.message || 'No se pudo procesar el pago';
+}
 
   if (loading) {
     return (

@@ -72,21 +72,28 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { accessToken } = await resolveSellerAccessToken(config, supabaseAdmin);
+    const { accessToken, checkoutEnv, tokenSource } = await resolveSellerAccessToken(
+      config,
+      supabaseAdmin,
+    );
     const webhookBase = `${supabaseUrl.replace(/\/$/, "")}/functions/v1/mercadopago-webhook`;
     const notificationUrl = `${webhookBase}?source_news=webhooks`;
 
-    const payerEmail = formData.payer?.email?.trim()
-      || Deno.env.get("MERCADOPAGO_SANDBOX_BUYER_EMAIL")?.trim()
-      || "test_user_123456@testuser.com";
+    const brickAmount = Number(formData.transaction_amount);
+    const transactionAmount = Number.isFinite(brickAmount) && brickAmount > 0
+      ? parseFloat(brickAmount.toFixed(2))
+      : parseFloat(amount.toFixed(2));
+
+    const payerEmail = resolvePayerEmail(formData, config.oauth_test_mode === true);
+    const payer = buildPayerPayload(formData, payerEmail);
 
     const paymentBody: Record<string, unknown> = {
-      transaction_amount: parseFloat(amount.toFixed(2)),
+      transaction_amount: transactionAmount,
       token: formData.token,
       description: `Pago mesa SplitMe`,
       installments: Number(formData.installments ?? 1) || 1,
       payment_method_id: formData.payment_method_id,
-      // Brick + marketplace: la comisión va en marketplace_fee de la preferencia, no application_fee.
+      application_fee: 0,
       external_reference: `${orderId}|${guestId}`.substring(0, 256),
       notification_url: notificationUrl,
       metadata: {
@@ -94,14 +101,20 @@ Deno.serve(async (req) => {
         order_id: orderId,
         guest_id: guestId,
       },
-      payer: {
-        email: payerEmail,
-        identification: formData.payer?.identification ?? undefined,
-        first_name: formData.payer?.first_name ?? undefined,
-      },
+      payer,
     };
 
-    if (formData.issuer_id) paymentBody.issuer_id = formData.issuer_id;
+    if (formData.issuer_id != null && formData.issuer_id !== "") {
+      paymentBody.issuer_id = String(formData.issuer_id);
+    }
+
+    console.info("[mercadopago-create-payment] Creating payment:", {
+      checkoutEnv,
+      tokenSource,
+      transactionAmount,
+      payment_method_id: formData.payment_method_id,
+      payerEmail,
+    });
 
     const idempotency = idempotencyKey || crypto.randomUUID();
 
@@ -160,4 +173,38 @@ function normalizeBrickFormData(raw: unknown): BrickFormData {
     return obj.formData as BrickFormData;
   }
   return obj as BrickFormData;
+}
+
+function resolvePayerEmail(formData: BrickFormData, sandboxMode: boolean): string {
+  const sandboxDefault = Deno.env.get("MERCADOPAGO_SANDBOX_BUYER_EMAIL")?.trim()
+    || "test_user_123456@testuser.com";
+  const fromBrick = formData.payer?.email?.trim() || "";
+
+  if (sandboxMode) {
+    if (fromBrick.endsWith("@testuser.com")) return fromBrick;
+    return sandboxDefault;
+  }
+
+  return fromBrick || sandboxDefault;
+}
+
+function buildPayerPayload(
+  formData: BrickFormData,
+  email: string,
+): Record<string, unknown> {
+  const payer: Record<string, unknown> = { email };
+  const cardholder = typeof formData.payer?.first_name === "string"
+    ? formData.payer.first_name.trim()
+    : "";
+  if (cardholder) payer.first_name = cardholder;
+
+  const id = formData.payer?.identification;
+  if (id?.type && id.number != null && String(id.number).trim() !== "") {
+    payer.identification = {
+      type: id.type,
+      number: String(id.number).trim(),
+    };
+  }
+
+  return payer;
 }
