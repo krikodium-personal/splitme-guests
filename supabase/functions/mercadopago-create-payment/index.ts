@@ -1,6 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { corsHeaders, resolveSellerAccessToken } from "../_shared/mp-oauth.ts";
+import { corsHeaders, resolveSellerAccessToken, usesMarketplaceBrick } from "../_shared/mp-oauth.ts";
 
 type BrickFormData = {
   token?: string;
@@ -35,7 +35,7 @@ Deno.serve(async (req) => {
     const guestId = typeof body.guest_id === "string" ? body.guest_id.trim() : "";
     const amount = Number(body.amount);
     const idempotencyKey = typeof body.idempotency_key === "string" ? body.idempotency_key.trim() : "";
-    const formData = (body.form_data ?? {}) as BrickFormData;
+    const formData = normalizeBrickFormData(body.form_data);
 
     if (!restaurantId || !orderId || !guestId || !Number.isFinite(amount) || amount <= 0) {
       return new Response(JSON.stringify({ error: "Parámetros de pago incompletos" }), {
@@ -80,13 +80,13 @@ Deno.serve(async (req) => {
       || Deno.env.get("MERCADOPAGO_SANDBOX_BUYER_EMAIL")?.trim()
       || "test_user_123456@testuser.com";
 
+    const marketplace = usesMarketplaceBrick(config);
     const paymentBody: Record<string, unknown> = {
       transaction_amount: parseFloat(amount.toFixed(2)),
       token: formData.token,
       description: `Pago mesa SplitMe`,
       installments: Number(formData.installments ?? 1) || 1,
       payment_method_id: formData.payment_method_id,
-      application_fee: 0,
       external_reference: `${orderId}|${guestId}`.substring(0, 256),
       notification_url: notificationUrl,
       metadata: {
@@ -102,6 +102,7 @@ Deno.serve(async (req) => {
     };
 
     if (formData.issuer_id) paymentBody.issuer_id = formData.issuer_id;
+    if (marketplace) paymentBody.application_fee = 0;
 
     const idempotency = idempotencyKey || crypto.randomUUID();
 
@@ -117,13 +118,21 @@ Deno.serve(async (req) => {
 
     const payment = await payRes.json().catch(() => ({}));
     if (!payRes.ok) {
-      console.error("[mercadopago-create-payment] MP error:", payment);
-      return new Response(JSON.stringify({
-        error: payment?.message || payment?.cause?.[0]?.description || "Error al crear pago",
-        status: payment?.status,
-        status_detail: payment?.status_detail,
-      }), {
+      const cause = Array.isArray(payment?.cause) ? payment.cause[0] : null;
+      const mpMessage =
+        cause?.description || cause?.message || payment?.message || payRes.statusText;
+      console.error("[mercadopago-create-payment] MP error:", {
         status: payRes.status,
+        marketplace,
+        mpMessage,
+        payment,
+      });
+      return new Response(JSON.stringify({
+        error: mpMessage || "Error al crear pago",
+        status: payment?.status,
+        status_detail: payment?.status_detail || cause?.code,
+      }), {
+        status: payRes.status >= 400 && payRes.status < 600 ? payRes.status : 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -145,3 +154,12 @@ Deno.serve(async (req) => {
     );
   }
 });
+
+function normalizeBrickFormData(raw: unknown): BrickFormData {
+  if (!raw || typeof raw !== "object") return {};
+  const obj = raw as Record<string, unknown>;
+  if (obj.formData && typeof obj.formData === "object") {
+    return obj.formData as BrickFormData;
+  }
+  return obj as BrickFormData;
+}
