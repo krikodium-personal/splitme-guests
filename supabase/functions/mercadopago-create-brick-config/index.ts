@@ -3,7 +3,9 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 import {
   accessTokenPrefix,
   detectEnvMismatch,
+  getMpMarketplaceId,
   publicKeyPrefix,
+  resolveMarketplacePayerEmail,
 } from "../_shared/mp-errors.ts";
 import {
   corsHeaders,
@@ -68,11 +70,13 @@ Deno.serve(async (req) => {
     const webhookBase = `${supabaseUrl.replace(/\/$/, "")}/functions/v1/mercadopago-webhook`;
     const notificationUrl = `${webhookBase}?source_news=webhooks`;
 
-    const preferenceBody = {
+    const marketplaceId = getMpMarketplaceId();
+    const unitPrice = parseFloat(amount.toFixed(2));
+    const preferenceBody: Record<string, unknown> = {
       items: [{
         title: description.substring(0, 127),
         quantity: 1,
-        unit_price: parseFloat(amount.toFixed(2)),
+        unit_price: unitPrice,
         currency_id: "ARS",
       }],
       marketplace_fee: 0,
@@ -84,6 +88,17 @@ Deno.serve(async (req) => {
         guest_id: guestId,
       },
     };
+
+    if (marketplaceId) {
+      // @see https://www.mercadopago.com.ar/developers/en/reference/online-payments/checkout-pro/preferences/create-preference/post
+      preferenceBody.marketplace = marketplaceId;
+    }
+
+    if (config.oauth_test_mode === true) {
+      preferenceBody.payer = {
+        email: resolveMarketplacePayerEmail(true, guestId),
+      };
+    }
 
     const prefRes = await fetch("https://api.mercadopago.com/checkout/preferences", {
       method: "POST",
@@ -114,6 +129,7 @@ Deno.serve(async (req) => {
       env_mismatch: envMismatch,
       oauth_test_mode: config.oauth_test_mode === true,
       seller_user_id: config.user_account ?? null,
+      marketplace_id: marketplaceId,
       marketplace: true,
     }), {
       status: 200,

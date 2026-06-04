@@ -1,6 +1,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { userMessageForMpCode } from "../_shared/mp-errors.ts";
+import {
+  resolveMarketplacePayerEmail,
+  userMessageForMpCode,
+} from "../_shared/mp-errors.ts";
 import { corsHeaders, resolveSellerAccessToken } from "../_shared/mp-oauth.ts";
 
 type BrickFormData = {
@@ -36,6 +39,7 @@ Deno.serve(async (req) => {
     const guestId = typeof body.guest_id === "string" ? body.guest_id.trim() : "";
     const amount = Number(body.amount);
     const idempotencyKey = typeof body.idempotency_key === "string" ? body.idempotency_key.trim() : "";
+    const preferenceId = typeof body.preference_id === "string" ? body.preference_id.trim() : "";
     const formData = normalizeBrickFormData(body.form_data);
 
     if (!restaurantId || !orderId || !guestId || !Number.isFinite(amount) || amount <= 0) {
@@ -86,9 +90,9 @@ Deno.serve(async (req) => {
       : parseFloat(amount.toFixed(2));
 
     const payerEmail = resolveMarketplacePayerEmail(
-      formData,
       config.oauth_test_mode === true,
       guestId,
+      formData.payer?.email,
     );
     const payer = buildPayerPayload(formData, payerEmail);
 
@@ -107,6 +111,7 @@ Deno.serve(async (req) => {
         restaurant_id: restaurantId,
         order_id: orderId,
         guest_id: guestId,
+        ...(preferenceId ? { preference_id: preferenceId } : {}),
       },
       payer,
     };
@@ -122,6 +127,7 @@ Deno.serve(async (req) => {
       payment_method_id: formData.payment_method_id,
       payerEmail,
       brickPayerEmail: formData.payer?.email ?? null,
+      preferenceId: preferenceId || null,
       sandboxMarketplacePayer: config.oauth_test_mode === true,
     });
 
@@ -185,29 +191,6 @@ function normalizeBrickFormData(raw: unknown): BrickFormData {
     return nested as BrickFormData;
   }
   return obj as BrickFormData;
-}
-
-/**
- * Email del payer en POST /v1/payments (marketplace + Brick).
- * En sandbox, MP exige comprador de prueba (@testuser.com) aunque el Brick use otro email en UI.
- * @see https://www.mercadopago.com.ar/developers/en/docs/your-integrations/test/accounts
- * @see https://www.mercadopago.com.ar/developers/en/docs/checkout-bricks/integration-test/test-payment-flow
- */
-function resolveMarketplacePayerEmail(
-  formData: BrickFormData,
-  sandboxMode: boolean,
-  guestId: string,
-): string {
-  const configured = Deno.env.get("MERCADOPAGO_SANDBOX_BUYER_EMAIL")?.trim() || "";
-
-  if (sandboxMode) {
-    if (configured.endsWith("@testuser.com")) return configured;
-    const digits = guestId.replace(/\D/g, "").slice(0, 10) || "1";
-    return `test_payer_${digits}@testuser.com`;
-  }
-
-  const fromBrick = formData.payer?.email?.trim() || "";
-  return fromBrick || configured || "test_payer@splitme.test";
 }
 
 function buildPayerPayload(

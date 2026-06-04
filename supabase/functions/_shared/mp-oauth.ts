@@ -385,6 +385,18 @@ async function refreshTestAccessToken(
   }
 }
 
+async function tokenMatchesSeller(
+  accessToken: string,
+  config: PaymentConfigTokens,
+): Promise<boolean> {
+  const validation = await validateMpAccessToken(accessToken);
+  if (!validation.ok) return false;
+  if (config.user_account && validation.userId != null) {
+    return String(validation.userId) === String(config.user_account);
+  }
+  return true;
+}
+
 async function resolveSandboxCheckoutToken(
   config: PaymentConfigTokens,
   supabaseAdmin: SupabaseAdmin | null,
@@ -392,21 +404,31 @@ async function resolveSandboxCheckoutToken(
   const secrets = await decryptConfigSecrets(config);
   const testToken = secrets.token_cbu_test?.trim() || "";
   const refreshToken = secrets.refresh_token?.trim() || "";
+  const oauthConnected = Boolean(config.oauth_connected_at);
 
-  if (testToken.startsWith("TEST-")) {
-    const validation = await validateMpAccessToken(testToken);
-    if (validation.ok) {
+  // Con OAuth: preferir refresh TEST (misma app que autorizó el vendedor) antes de TEST manual.
+  if (oauthConnected && refreshToken) {
+    const refreshed = await refreshTestAccessToken(refreshToken, supabaseAdmin, config.id);
+    if (refreshed && await tokenMatchesSeller(refreshed, config)) {
       return {
-        accessToken: testToken,
+        accessToken: refreshed,
         checkoutEnv: "sandbox",
-        tokenSource: "token_cbu_test",
+        tokenSource: "token_cbu_test_refreshed_oauth",
       };
     }
   }
 
+  if (testToken.startsWith("TEST-") && await tokenMatchesSeller(testToken, config)) {
+    return {
+      accessToken: testToken,
+      checkoutEnv: "sandbox",
+      tokenSource: "token_cbu_test",
+    };
+  }
+
   if (refreshToken) {
     const refreshed = await refreshTestAccessToken(refreshToken, supabaseAdmin, config.id);
-    if (refreshed) {
+    if (refreshed && await tokenMatchesSeller(refreshed, config)) {
       return {
         accessToken: refreshed,
         checkoutEnv: "sandbox",

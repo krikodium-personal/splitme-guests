@@ -15,7 +15,7 @@ Integración **Marketplace (Split Payments)** con **Checkout Bricks**. El 100% d
 
 | Variable | Obligatoria | Descripción |
 |----------|-------------|-------------|
-| `MERCADOPAGO_CLIENT_ID` | Sí | App Marketplace SplitMe |
+| `MERCADOPAGO_CLIENT_ID` | Sí | App Marketplace SplitMe (genera `marketplace: MP-MKT-{client_id}` en preferencias) |
 | `MERCADOPAGO_CLIENT_SECRET` | Sí | Solo backend |
 | `MERCADOPAGO_OAUTH_REDIRECT_URI` | Sí | URL callback edge function |
 | `MERCADOPAGO_OAUTH_STATE_SECRET` | Sí | HMAC para `state` OAuth |
