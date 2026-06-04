@@ -13,12 +13,12 @@ type MercadoPagoPaymentBrickProps = {
   onPending?: () => void;
 };
 
-let mpInitPublicKey: string | null = null;
+let mpInitialized = false;
 
 function ensureMpInit(publicKey: string) {
-  if (mpInitPublicKey !== publicKey) {
+  if (!mpInitialized) {
     initMercadoPago(publicKey, { locale: 'es-AR' });
-    mpInitPublicKey = publicKey;
+    mpInitialized = true;
   }
 }
 
@@ -41,7 +41,6 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
     import.meta.env.VITE_MERCADOPAGO_PLATFORM_PUBLIC_KEY?.trim() || null,
   );
   const [preferenceId, setPreferenceId] = useState<string | null>(null);
-  const [marketplaceMode, setMarketplaceMode] = useState(false);
   const idempotencyRef = useRef(crypto.randomUUID());
 
   useEffect(() => {
@@ -78,7 +77,6 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
         ensureMpInit(pk);
         setPublicKey(pk);
         setPreferenceId(data.preference_id);
-        setMarketplaceMode(data.marketplace === true);
       } catch (err: any) {
         if (!cancelled) onError(err?.message || 'Error al iniciar Mercado Pago');
       } finally {
@@ -94,8 +92,8 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
   const initialization = useMemo(() => ({
     amount: parseFloat(amount.toFixed(2)),
     preferenceId: preferenceId || undefined,
-    ...(marketplaceMode ? { marketplace: true as const } : {}),
-  }), [amount, preferenceId, marketplaceMode]);
+    marketplace: true,
+  }), [amount, preferenceId]);
 
   // MP no acepta ticket: 'none' (solo pagofacil/rapipago). Para excluir cupones, omitir ticket.
   const customization = useMemo(() => ({
@@ -119,8 +117,7 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
     });
 
     if (error || data?.error) {
-      const detail = data?.status_detail ? ` (${data.status_detail})` : '';
-      throw new Error(`${data?.error || error?.message || 'No se pudo procesar el pago'}${detail}`);
+      throw new Error(data?.error || error?.message || 'No se pudo procesar el pago');
     }
 
     if (data.status === 'approved') {

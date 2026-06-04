@@ -104,42 +104,6 @@ export function getPlatformPublicKey(): string {
   return key;
 }
 
-/** Marketplace Brick solo si el restaurante conectó OAuth y existe PK de plataforma. */
-export function usesMarketplaceBrick(config: PaymentConfigTokens): boolean {
-  if (!config.oauth_connected_at) return false;
-  const platformPk = Deno.env.get("MERCADOPAGO_PLATFORM_PUBLIC_KEY")?.trim()
-    || Deno.env.get("MERCADOPAGO_PUBLIC_KEY")?.trim();
-  return !!platformPk;
-}
-
-/** Public key + modo Brick según credenciales del restaurante. */
-export async function resolveBrickIntegration(
-  config: PaymentConfigTokens,
-  checkoutEnv: CheckoutEnv,
-): Promise<{ marketplace: boolean; publicKey: string }> {
-  if (usesMarketplaceBrick(config)) {
-    return { marketplace: true, publicKey: getPlatformPublicKey() };
-  }
-
-  const secrets = await decryptConfigSecrets(config);
-  const sandboxPk = secrets.key_alias_test?.trim() || "";
-  const prodPk = secrets.key_alias?.trim() || "";
-  const publicKey =
-    checkoutEnv === "sandbox" && sandboxPk.startsWith("TEST-")
-      ? sandboxPk
-      : prodPk.startsWith("APP_USR-") || prodPk.startsWith("TEST-")
-        ? prodPk
-        : sandboxPk || prodPk;
-
-  if (!publicKey) {
-    throw new Error(
-      "Falta la Public Key del restaurante en Admin → Settings (misma app que el Access Token).",
-    );
-  }
-
-  return { marketplace: false, publicKey };
-}
-
 export async function decryptConfigSecrets(
   config: PaymentConfigTokens,
 ): Promise<PaymentConfigTokens> {

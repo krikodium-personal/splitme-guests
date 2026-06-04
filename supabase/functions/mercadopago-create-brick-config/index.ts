@@ -2,9 +2,8 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import {
   corsHeaders,
-  resolveBrickIntegration,
+  getPlatformPublicKey,
   resolveSellerAccessToken,
-  usesMarketplaceBrick,
 } from "../_shared/mp-oauth.ts";
 
 Deno.serve(async (req) => {
@@ -59,14 +58,14 @@ Deno.serve(async (req) => {
     const webhookBase = `${supabaseUrl.replace(/\/$/, "")}/functions/v1/mercadopago-webhook`;
     const notificationUrl = `${webhookBase}?source_news=webhooks`;
 
-    const marketplace = usesMarketplaceBrick(config);
-    const preferenceBody: Record<string, unknown> = {
+    const preferenceBody = {
       items: [{
         title: description.substring(0, 127),
         quantity: 1,
         unit_price: parseFloat(amount.toFixed(2)),
         currency_id: "ARS",
       }],
+      marketplace_fee: 0,
       external_reference: `${orderId}|${guestId}`.substring(0, 256),
       notification_url: notificationUrl,
       metadata: {
@@ -75,7 +74,6 @@ Deno.serve(async (req) => {
         guest_id: guestId,
       },
     };
-    if (marketplace) preferenceBody.marketplace_fee = 0;
 
     const prefRes = await fetch("https://api.mercadopago.com/checkout/preferences", {
       method: "POST",
@@ -95,17 +93,14 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { publicKey, marketplace: brickMarketplace } = await resolveBrickIntegration(
-      config,
-      checkoutEnv,
-    );
+    const publicKey = getPlatformPublicKey();
 
     return new Response(JSON.stringify({
       public_key: publicKey,
       preference_id: pref.id,
       amount: parseFloat(amount.toFixed(2)),
       checkout_env: checkoutEnv,
-      marketplace: brickMarketplace,
+      marketplace: true,
     }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
