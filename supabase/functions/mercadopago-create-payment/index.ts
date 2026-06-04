@@ -85,7 +85,11 @@ Deno.serve(async (req) => {
       ? parseFloat(brickAmount.toFixed(2))
       : parseFloat(amount.toFixed(2));
 
-    const payerEmail = resolvePayerEmail(formData, config.oauth_test_mode === true);
+    const payerEmail = resolveMarketplacePayerEmail(
+      formData,
+      config.oauth_test_mode === true,
+      guestId,
+    );
     const payer = buildPayerPayload(formData, payerEmail);
 
     const paymentBody: Record<string, unknown> = {
@@ -117,6 +121,8 @@ Deno.serve(async (req) => {
       transactionAmount,
       payment_method_id: formData.payment_method_id,
       payerEmail,
+      brickPayerEmail: formData.payer?.email ?? null,
+      sandboxMarketplacePayer: config.oauth_test_mode === true,
     });
 
     const idempotency = idempotencyKey || crypto.randomUUID();
@@ -181,18 +187,26 @@ function normalizeBrickFormData(raw: unknown): BrickFormData {
   return obj as BrickFormData;
 }
 
-function resolvePayerEmail(formData: BrickFormData, sandboxMode: boolean): string {
-  const fromBrick = formData.payer?.email?.trim() || "";
+/**
+ * Email del payer en POST /v1/payments (marketplace + Brick).
+ * En sandbox, MP exige comprador de prueba (@testuser.com) aunque el Brick use otro email en UI.
+ * @see https://www.mercadopago.com.ar/developers/en/docs/your-integrations/test/accounts
+ * @see https://www.mercadopago.com.ar/developers/en/docs/checkout-bricks/integration-test/test-payment-flow
+ */
+function resolveMarketplacePayerEmail(
+  formData: BrickFormData,
+  sandboxMode: boolean,
+  guestId: string,
+): string {
   const configured = Deno.env.get("MERCADOPAGO_SANDBOX_BUYER_EMAIL")?.trim() || "";
 
-  // MP Bricks + tarjetas de prueba: cualquier email distinto al de tu cuenta MP real.
-  // NO usar emails de cuentas de prueba (@testuser.com) en el campo del Brick.
   if (sandboxMode) {
-    if (fromBrick && !fromBrick.endsWith("@testuser.com")) return fromBrick;
-    if (configured && !configured.endsWith("@testuser.com")) return configured;
-    return "test_payer@splitme.test";
+    if (configured.endsWith("@testuser.com")) return configured;
+    const digits = guestId.replace(/\D/g, "").slice(0, 10) || "1";
+    return `test_payer_${digits}@testuser.com`;
   }
 
+  const fromBrick = formData.payer?.email?.trim() || "";
   return fromBrick || configured || "test_payer@splitme.test";
 }
 

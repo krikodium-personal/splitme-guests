@@ -7,9 +7,8 @@ export type MpPaymentErrorBody = {
 };
 
 export const MP_ERROR_2034_USER_MESSAGE =
-  'Mercado Pago rechazó el pago (código 2034): el restaurante y el medio de pago deben estar en el mismo entorno (prueba o producción). ' +
-  'Para probar con tarjetas de prueba: reconectá OAuth estando logueado como usuario de prueba del restaurante y verificá que el token del vendedor sea TEST (no solo APP_USR). ' +
-  'Para cobrar en vivo: desactivá modo prueba, OAuth con cuenta real y pagá con tarjeta real.';
+  'Mercado Pago rechazó el pago (código 2034): mezcla de entornos o usuarios (vendedor, comprador o integrador). ' +
+  'Si el checkout ya muestra TEST/TEST alineado, probá de nuevo tras el último deploy o configurá en Supabase MERCADOPAGO_SANDBOX_BUYER_EMAIL con el email @testuser.com del comprador de prueba de tu app SplitMe.';
 
 export function isMpError2034(body: MpPaymentErrorBody | null | undefined): boolean {
   if (!body) return false;

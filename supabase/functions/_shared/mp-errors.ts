@@ -18,8 +18,9 @@ export function userMessageForMpCode(
   const code = mpCode?.trim();
   if (code === "2034") {
     return (
-      "Mercado Pago rechazó el pago (código 2034): el restaurante y el medio de pago deben estar en el mismo entorno (prueba o producción). " +
-      "Para tarjetas de prueba: token del vendedor TEST vía OAuth de usuario de prueba. Para producción: cuenta real y tarjeta real."
+      "Mercado Pago rechazó el pago (código 2034): mezcla de usuarios o entornos (vendedor, comprador o integrador). " +
+      "En modo prueba: vendedor TEST (OAuth), public key TEST de SplitMe y comprador de prueba. " +
+      "Configurá MERCADOPAGO_SANDBOX_BUYER_EMAIL con el email @testuser.com del comprador de prueba de tu app, o probá en incógnito sin sesión MP real."
     );
   }
   return mpMessage || "Error al crear pago";
