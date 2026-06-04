@@ -1,0 +1,37 @@
+name: Deploy Supabase Functions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Deploy changed functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'supabase/functions/' \
+            | grep -oP 'supabase/functions/\K[^/]+' \
+            | grep -v '^_shared$' \
+            | sort -u)
+
+          if [ -z "$CHANGED" ]; then
+            echo "No functions changed, skipping deploy."
+            exit 0
+          fi
+
+          for fn in $CHANGED; do
+            echo "Deploying $fn..."
+            supabase functions deploy "$fn" \
+              --project-ref ${{ vars.SUPABASE_PROJECT_REF }}
+          done
