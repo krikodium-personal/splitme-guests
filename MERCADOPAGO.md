@@ -24,7 +24,7 @@ Integración **Marketplace (Split Payments)** con **Checkout Bricks**. El 100% d
 | `MERCADOPAGO_TOKEN_ENCRYPTION_KEY` | Recomendada | Base64 de 32 bytes AES-GCM |
 | `MERCADOPAGO_ADMIN_RETURN_URL` | No | Redirect post-OAuth (admin Settings) |
 | `MERCADOPAGO_OAUTH_TEST_MODE` | No | `true` → OAuth sandbox |
-| `MERCADOPAGO_SANDBOX_BUYER_EMAIL` | Recomendada en sandbox | Email **exacto** del comprador de prueba (`@testuser.com` del panel → Cuentas de prueba). Si no está, el Brick puede usar un email genérico (no `@testuser.com` ni tu login MP). |
+| `MERCADOPAGO_SANDBOX_BUYER_EMAIL` | No | Opcional; el panel de cuentas de prueba **no expone email** (solo User ID, TESTUSER, contraseña, código). |
 | `MERCADOPAGO_CRON_SECRET` | No | Bearer para job refresh tokens |
 
 ## Frontend (guests / Vercel)
@@ -70,8 +70,9 @@ Authorization: Bearer <MERCADOPAGO_CRON_SECRET>
 
 ## Pruebas
 
-- Usuarios de prueba MP (vendedor + comprador) desde Developers → Cuentas de prueba
-- Tarjetas de prueba en Brick (titular **APRO**, DNI 12345678)
+- [Make test purchase (Brick)](https://www.mercadopago.com.ar/developers/en/docs/checkout-bricks/integration-test/test-payment-flow): credenciales **TEST** de la app + tarjetas de prueba + email cualquiera (≠ tu login MP).
+- [Test accounts](https://www.mercadopago.com.ar/developers/en/docs/your-integrations/test/accounts): MP aclara que **Checkout Bricks no soportan cuentas de prueba del panel** para integrar; el flujo Brick usa credenciales TEST, no el login TESTUSER del panel.
+- Marketplace + OAuth del restaurante: si el vendedor conectado es usuario de prueba (`user_account` del panel), un **2034** puede ser límite de MP, no un bug de email en SplitMe.
 - Habilitar PKCE en la app MP (Developers → editar app)
 
 ## Docs oficiales

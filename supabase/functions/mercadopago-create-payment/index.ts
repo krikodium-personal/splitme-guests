@@ -89,25 +89,7 @@ Deno.serve(async (req) => {
       ? parseFloat(brickAmount.toFixed(2))
       : parseFloat(amount.toFixed(2));
 
-    const brickPayerEmail = typeof formData.payer?.email === "string"
-      ? formData.payer.email.trim()
-      : "";
-    if (config.oauth_test_mode === true && brickPayerEmail.endsWith("@testuser.com")) {
-      return new Response(JSON.stringify({
-        error:
-          "No uses un email @testuser.com en el Brick. Usá otro email en el formulario o configurá MERCADOPAGO_SANDBOX_BUYER_EMAIL con el comprador de prueba de tu app.",
-        mp_code: "brick_testuser_email",
-      }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const { email: payerEmail, source: payerEmailSource } = resolveMarketplacePayerEmail(
-      config.oauth_test_mode === true,
-      guestId,
-      brickPayerEmail,
-    );
+    const payerEmail = resolveMarketplacePayerEmail(guestId, formData.payer?.email);
     const payer = buildPayerPayload(formData, payerEmail);
 
     const paymentBody: Record<string, unknown> = {
@@ -140,10 +122,8 @@ Deno.serve(async (req) => {
       transactionAmount,
       payment_method_id: formData.payment_method_id,
       payerEmail,
-      payerEmailSource,
-      brickPayerEmail: brickPayerEmail || null,
       preferenceId: preferenceId || null,
-      sandboxMarketplacePayer: config.oauth_test_mode === true,
+      sellerUserId: config.user_account ?? null,
     });
 
     const idempotency = idempotencyKey || crypto.randomUUID();
@@ -169,11 +149,14 @@ Deno.serve(async (req) => {
         payment,
       });
       const mpCode = cause?.code != null ? String(cause.code) : undefined;
+      const mpCauses = Array.isArray(payment?.cause) ? payment.cause : [];
       return new Response(JSON.stringify({
         error: userMessageForMpCode(mpCode, mpMessage),
         status: payment?.status,
         status_detail: payment?.status_detail || mpCode,
         mp_code: mpCode,
+        mp_causes: mpCauses,
+        mp_raw_message: payment?.message ?? null,
       }), {
         status: payRes.status >= 400 && payRes.status < 600 ? payRes.status : 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },

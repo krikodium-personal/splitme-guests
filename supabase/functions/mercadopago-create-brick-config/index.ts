@@ -95,8 +95,6 @@ Deno.serve(async (req) => {
     }
 
     if (config.oauth_test_mode === true) {
-      const { email: prefPayerEmail } = resolveMarketplacePayerEmail(true, guestId);
-      preferenceBody.payer = { email: prefPayerEmail };
       preferenceBody.binary_mode = true;
     }
 

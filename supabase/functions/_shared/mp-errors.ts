@@ -7,37 +7,15 @@ export function getMpMarketplaceId(): string | null {
   return `MP-MKT-${clientId}`;
 }
 
-export type MarketplacePayerResolution = {
-  email: string;
-  source: "env_test_buyer" | "brick" | "fallback";
-};
-
-/**
- * Sandbox Brick: credenciales TEST + tarjetas de prueba (doc make test purchase).
- * NO usar @testuser.com en el campo del Brick. Si hay comprador de prueba MP, va en
- * MERCADOPAGO_SANDBOX_BUYER_EMAIL (email exacto del panel Cuentas de prueba).
- */
+/** Email del payer en POST /v1/payments — campo de formulario Brick, no cuenta de prueba MP. */
 export function resolveMarketplacePayerEmail(
-  sandboxMode: boolean,
   guestId: string,
   brickEmail?: string,
-): MarketplacePayerResolution {
-  const configured = Deno.env.get("MERCADOPAGO_SANDBOX_BUYER_EMAIL")?.trim() || "";
+): string {
   const fromBrick = brickEmail?.trim() || "";
-
-  if (sandboxMode) {
-    if (configured.endsWith("@testuser.com")) {
-      return { email: configured, source: "env_test_buyer" };
-    }
-    if (fromBrick && !fromBrick.endsWith("@testuser.com")) {
-      return { email: fromBrick, source: "brick" };
-    }
-    const digits = guestId.replace(/\D/g, "").slice(0, 10) || "1";
-    return { email: `guest${digits}@splitme.test`, source: "fallback" };
-  }
-
-  const email = fromBrick || configured || "test_payer@splitme.test";
-  return { email, source: fromBrick ? "brick" : configured ? "env_test_buyer" : "fallback" };
+  if (fromBrick) return fromBrick;
+  const digits = guestId.replace(/\D/g, "").slice(0, 10) || "1";
+  return `guest${digits}@splitme.test`;
 }
 
 export function accessTokenPrefix(token: string): "TEST" | "APP_USR" | "other" {
@@ -58,9 +36,9 @@ export function userMessageForMpCode(
   const code = mpCode?.trim();
   if (code === "2034") {
     return (
-      "Mercado Pago rechazó el pago (código 2034): mezcla de usuarios o entornos (vendedor, comprador o integrador). " +
-      "En modo prueba: vendedor TEST (OAuth), public key TEST de SplitMe y comprador de prueba. " +
-      "Configurá MERCADOPAGO_SANDBOX_BUYER_EMAIL con el email exacto del comprador de prueba (panel → Cuentas de prueba), o en el Brick usá un email genérico (no @testuser.com ni tu cuenta MP)."
+      "Mercado Pago rechazó el pago (código 2034): usuarios o credenciales incompatibles en marketplace. " +
+      "La doc de MP indica que Checkout Bricks no usa cuentas de prueba del panel para integrar; probá credenciales TEST del Brick + tarjetas de prueba, " +
+      "o OAuth del restaurante con cuenta real (modo producción). Detalle técnico en mp_causes de esta respuesta."
     );
   }
   return mpMessage || "Error al crear pago";

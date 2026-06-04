@@ -7,8 +7,8 @@ export type MpPaymentErrorBody = {
 };
 
 export const MP_ERROR_2034_USER_MESSAGE =
-  'Mercado Pago rechazó el pago (código 2034): mezcla de entornos o usuarios (vendedor, comprador o integrador). ' +
-  'Si el checkout ya muestra TEST/TEST alineado, probá de nuevo tras el último deploy o configurá en Supabase MERCADOPAGO_SANDBOX_BUYER_EMAIL con el email @testuser.com del comprador de prueba de tu app SplitMe.';
+  'Mercado Pago rechazó el pago (código 2034). Tu configuración TEST/TEST está alineada; MP documenta que Checkout Bricks no integra con cuentas de prueba del panel. ' +
+  'Probá tarjetas de prueba + credenciales TEST del Brick, u OAuth con cuenta real del restaurante (modo producción).';
 
 export function isMpError2034(body: MpPaymentErrorBody | null | undefined): boolean {
   if (!body) return false;
