@@ -13,9 +13,13 @@ type MercadoPagoPaymentBrickProps = {
   onPending?: () => void;
 };
 
+const mpInitRef = { publicKey: '' as string };
+
 /** @see @mercadopago/sdk-react README — initMercadoPago('YOUR_PUBLIC_KEY') antes del Brick */
 function ensureMpInit(publicKey: string) {
+  if (mpInitRef.publicKey === publicKey) return;
   initMercadoPago(publicKey, { locale: 'es-AR' });
+  mpInitRef.publicKey = publicKey;
 }
 
 function detectMpSdkBlocked(): boolean {
@@ -51,8 +55,7 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
 
     if (!restaurantId) return;
 
-    if (configSessionRef.current === sessionKey && publicKey && preferenceId) {
-      ensureMpInit(publicKey);
+    if (configSessionRef.current === sessionKey) {
       setLoading(false);
       return;
     }
@@ -102,7 +105,7 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [restaurantId, orderId, guestId, amount, description, publicKey, preferenceId]);
+  }, [restaurantId, orderId, guestId, amount, description]);
 
   const initialization = useMemo(() => ({
     amount: parseFloat(amount.toFixed(2)),

@@ -93,7 +93,9 @@ Deno.serve(async (req) => {
       description: `Pago mesa SplitMe`,
       installments: Number(formData.installments ?? 1) || 1,
       payment_method_id: formData.payment_method_id,
-      application_fee: 0,
+      // Brick + marketplace: comisión en marketplace_fee de la preferencia (no application_fee).
+      // @see https://www.mercadopago.com.ar/developers/en/docs/checkout-bricks/payment-brick/payment-submission/wallet-credits
+      // @see https://www.mercadopago.com.ar/developers/en/reference/online-payments/checkout-api-payments/create-payment/post (4039 si fee <= 0)
       external_reference: `${orderId}|${guestId}`.substring(0, 256),
       notification_url: notificationUrl,
       metadata: {
@@ -138,10 +140,12 @@ Deno.serve(async (req) => {
         mpMessage,
         payment,
       });
+      const mpCode = cause?.code != null ? String(cause.code) : undefined;
       return new Response(JSON.stringify({
         error: mpMessage || "Error al crear pago",
         status: payment?.status,
-        status_detail: payment?.status_detail || cause?.code,
+        status_detail: payment?.status_detail || mpCode,
+        mp_code: mpCode,
       }), {
         status: payRes.status >= 400 && payRes.status < 600 ? payRes.status : 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -169,8 +173,9 @@ Deno.serve(async (req) => {
 function normalizeBrickFormData(raw: unknown): BrickFormData {
   if (!raw || typeof raw !== "object") return {};
   const obj = raw as Record<string, unknown>;
-  if (obj.formData && typeof obj.formData === "object") {
-    return obj.formData as BrickFormData;
+  const nested = obj.formData ?? obj.paymentFormData;
+  if (nested && typeof nested === "object") {
+    return nested as BrickFormData;
   }
   return obj as BrickFormData;
 }
