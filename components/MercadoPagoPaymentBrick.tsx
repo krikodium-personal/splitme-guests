@@ -13,13 +13,12 @@ type MercadoPagoPaymentBrickProps = {
   onPending?: () => void;
 };
 
-let mpInitialized = false;
+let mpInitPublicKey: string | null = null;
 
 function ensureMpInit(publicKey: string) {
-  if (!mpInitialized) {
-    initMercadoPago(publicKey, { locale: 'es-AR' });
-    mpInitialized = true;
-  }
+  if (mpInitPublicKey === publicKey) return;
+  initMercadoPago(publicKey, { locale: 'es-AR' });
+  mpInitPublicKey = publicKey;
 }
 
 function detectMpSdkBlocked(): boolean {
@@ -42,14 +41,25 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
   );
   const [preferenceId, setPreferenceId] = useState<string | null>(null);
   const idempotencyRef = useRef(crypto.randomUUID());
+  const onErrorRef = useRef(onError);
+  const fallbackPublicKeyRef = useRef(
+    import.meta.env.VITE_MERCADOPAGO_PLATFORM_PUBLIC_KEY?.trim() || null,
+  );
+  const configSessionRef = useRef<string | null>(null);
+
+  onErrorRef.current = onError;
 
   useEffect(() => {
+    const sessionKey = `${restaurantId}|${orderId}|${guestId}|${amount}`;
+    if (configSessionRef.current === sessionKey) return;
+
     let cancelled = false;
+    setLoading(true);
 
     (async () => {
       try {
         if (detectMpSdkBlocked()) {
-          onError(
+          onErrorRef.current(
             'No se pudo cargar Mercado Pago. Desactivá bloqueadores de anuncios o probá en otra ventana.',
           );
           return;
@@ -70,15 +80,16 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
           throw new Error(data?.error || error?.message || 'No se pudo preparar el checkout');
         }
 
-        const pk = data.public_key || publicKey;
+        const pk = data.public_key || fallbackPublicKeyRef.current;
         if (!pk) throw new Error('Public key de SplitMe no configurada');
         if (!data.preference_id) throw new Error('No se recibió preference_id');
 
         ensureMpInit(pk);
+        configSessionRef.current = sessionKey;
         setPublicKey(pk);
         setPreferenceId(data.preference_id);
       } catch (err: any) {
-        if (!cancelled) onError(err?.message || 'Error al iniciar Mercado Pago');
+        if (!cancelled) onErrorRef.current(err?.message || 'Error al iniciar Mercado Pago');
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -87,7 +98,7 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [restaurantId, orderId, guestId, amount, description, onError, publicKey]);
+  }, [restaurantId, orderId, guestId, amount, description]);
 
   const initialization = useMemo(() => ({
     amount: parseFloat(amount.toFixed(2)),
@@ -144,13 +155,13 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
   if (!publicKey || !preferenceId) return null;
 
   return (
-    <div className="w-full max-w-lg mx-auto">
+    <div className="w-full max-w-lg mx-auto" key={preferenceId}>
       <Payment
         initialization={initialization}
         customization={customization}
         onSubmit={onSubmit}
         onReady={() => {}}
-        onError={(err) => onError(err?.message || 'Error en el formulario de pago')}
+        onError={(err) => onErrorRef.current(err?.message || 'Error en el formulario de pago')}
       />
     </div>
   );
