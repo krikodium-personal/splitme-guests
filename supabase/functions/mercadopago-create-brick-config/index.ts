@@ -89,8 +89,8 @@ Deno.serve(async (req) => {
       },
     };
 
-    if (marketplaceId) {
-      // @see https://www.mercadopago.com.ar/developers/en/reference/online-payments/checkout-pro/preferences/create-preference/post
+    // Marketplace solo en producción — en sandbox el clientId es de producción y MP rechaza la combinación.
+    if (marketplaceId && checkoutEnv === "production") {
       preferenceBody.marketplace = marketplaceId;
     }
 
