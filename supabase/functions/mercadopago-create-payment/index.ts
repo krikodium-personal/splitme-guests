@@ -89,10 +89,24 @@ Deno.serve(async (req) => {
       ? parseFloat(brickAmount.toFixed(2))
       : parseFloat(amount.toFixed(2));
 
-    const payerEmail = resolveMarketplacePayerEmail(
+    const brickPayerEmail = typeof formData.payer?.email === "string"
+      ? formData.payer.email.trim()
+      : "";
+    if (config.oauth_test_mode === true && brickPayerEmail.endsWith("@testuser.com")) {
+      return new Response(JSON.stringify({
+        error:
+          "No uses un email @testuser.com en el Brick. Usá otro email en el formulario o configurá MERCADOPAGO_SANDBOX_BUYER_EMAIL con el comprador de prueba de tu app.",
+        mp_code: "brick_testuser_email",
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const { email: payerEmail, source: payerEmailSource } = resolveMarketplacePayerEmail(
       config.oauth_test_mode === true,
       guestId,
-      formData.payer?.email,
+      brickPayerEmail,
     );
     const payer = buildPayerPayload(formData, payerEmail);
 
@@ -126,7 +140,8 @@ Deno.serve(async (req) => {
       transactionAmount,
       payment_method_id: formData.payment_method_id,
       payerEmail,
-      brickPayerEmail: formData.payer?.email ?? null,
+      payerEmailSource,
+      brickPayerEmail: brickPayerEmail || null,
       preferenceId: preferenceId || null,
       sandboxMarketplacePayer: config.oauth_test_mode === true,
     });

@@ -24,7 +24,7 @@ Integración **Marketplace (Split Payments)** con **Checkout Bricks**. El 100% d
 | `MERCADOPAGO_TOKEN_ENCRYPTION_KEY` | Recomendada | Base64 de 32 bytes AES-GCM |
 | `MERCADOPAGO_ADMIN_RETURN_URL` | No | Redirect post-OAuth (admin Settings) |
 | `MERCADOPAGO_OAUTH_TEST_MODE` | No | `true` → OAuth sandbox |
-| `MERCADOPAGO_SANDBOX_BUYER_EMAIL` | Recomendada en sandbox marketplace | Email **@testuser.com** del comprador de prueba creado en tu app SplitMe (panel → Cuentas de prueba). El Brick puede pedir otro email en UI; el backend usa este valor en `/v1/payments`. |
+| `MERCADOPAGO_SANDBOX_BUYER_EMAIL` | Recomendada en sandbox | Email **exacto** del comprador de prueba (`@testuser.com` del panel → Cuentas de prueba). Si no está, el Brick puede usar un email genérico (no `@testuser.com` ni tu login MP). |
 | `MERCADOPAGO_CRON_SECRET` | No | Bearer para job refresh tokens |
 
 ## Frontend (guests / Vercel)

@@ -95,9 +95,9 @@ Deno.serve(async (req) => {
     }
 
     if (config.oauth_test_mode === true) {
-      preferenceBody.payer = {
-        email: resolveMarketplacePayerEmail(true, guestId),
-      };
+      const { email: prefPayerEmail } = resolveMarketplacePayerEmail(true, guestId);
+      preferenceBody.payer = { email: prefPayerEmail };
+      preferenceBody.binary_mode = true;
     }
 
     const prefRes = await fetch("https://api.mercadopago.com/checkout/preferences", {
