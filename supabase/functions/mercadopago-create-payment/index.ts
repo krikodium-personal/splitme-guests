@@ -176,16 +176,18 @@ function normalizeBrickFormData(raw: unknown): BrickFormData {
 }
 
 function resolvePayerEmail(formData: BrickFormData, sandboxMode: boolean): string {
-  const sandboxDefault = Deno.env.get("MERCADOPAGO_SANDBOX_BUYER_EMAIL")?.trim()
-    || "test_user_123456@testuser.com";
   const fromBrick = formData.payer?.email?.trim() || "";
+  const configured = Deno.env.get("MERCADOPAGO_SANDBOX_BUYER_EMAIL")?.trim() || "";
 
+  // MP Bricks + tarjetas de prueba: cualquier email distinto al de tu cuenta MP real.
+  // NO usar emails de cuentas de prueba (@testuser.com) en el campo del Brick.
   if (sandboxMode) {
-    if (fromBrick.endsWith("@testuser.com")) return fromBrick;
-    return sandboxDefault;
+    if (fromBrick && !fromBrick.endsWith("@testuser.com")) return fromBrick;
+    if (configured && !configured.endsWith("@testuser.com")) return configured;
+    return "test_payer@splitme.test";
   }
 
-  return fromBrick || sandboxDefault;
+  return fromBrick || configured || "test_payer@splitme.test";
 }
 
 function buildPayerPayload(

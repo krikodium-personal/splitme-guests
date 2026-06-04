@@ -24,7 +24,7 @@ Integración **Marketplace (Split Payments)** con **Checkout Bricks**. El 100% d
 | `MERCADOPAGO_TOKEN_ENCRYPTION_KEY` | Recomendada | Base64 de 32 bytes AES-GCM |
 | `MERCADOPAGO_ADMIN_RETURN_URL` | No | Redirect post-OAuth (admin Settings) |
 | `MERCADOPAGO_OAUTH_TEST_MODE` | No | `true` → OAuth sandbox |
-| `MERCADOPAGO_SANDBOX_BUYER_EMAIL` | No | Email payer en pruebas |
+| `MERCADOPAGO_SANDBOX_BUYER_EMAIL` | No | Email payer opcional en sandbox (cualquier email ≠ tu cuenta MP; no usar @testuser.com) |
 | `MERCADOPAGO_CRON_SECRET` | No | Bearer para job refresh tokens |
 
 ## Frontend (guests / Vercel)
