@@ -128,7 +128,18 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
     });
 
     if (error || data?.error) {
-      throw new Error(data?.error || error?.message || 'No se pudo procesar el pago');
+      const ctx = (error as { context?: { body?: string } })?.context;
+      let mpError = data?.error;
+      if (!mpError && ctx?.body) {
+        try {
+          const parsed = JSON.parse(ctx.body);
+          mpError = parsed?.error;
+        } catch {
+          /* ignore */
+        }
+      }
+      const detail = data?.status_detail ? ` (${data.status_detail})` : '';
+      throw new Error(`${mpError || error?.message || 'No se pudo procesar el pago'}${detail}`);
     }
 
     if (data.status === 'approved') {
