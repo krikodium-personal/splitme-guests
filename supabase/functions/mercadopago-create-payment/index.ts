@@ -77,10 +77,18 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { accessToken, checkoutEnv, tokenSource } = await resolveSellerAccessToken(
-      config,
-      supabaseAdmin,
-    );
+    const resolved = await resolveSellerAccessToken(config, supabaseAdmin);
+    let { accessToken, checkoutEnv, tokenSource } = resolved;
+
+    // En sandbox usamos el token de la plataforma para evitar error 2034 de marketplace.
+    // En producción usamos el token OAuth del vendedor (dinero va al restaurante).
+    if (checkoutEnv === "sandbox") {
+      const platformTestToken = Deno.env.get("MERCADOPAGO_PLATFORM_TEST_ACCESS_TOKEN")?.trim();
+      if (platformTestToken) {
+        accessToken = platformTestToken;
+        tokenSource = "platform_test_token";
+      }
+    }
     const webhookBase = `${supabaseUrl.replace(/\/$/, "")}/functions/v1/mercadopago-webhook`;
     const notificationUrl = `${webhookBase}?source_news=webhooks`;
 
