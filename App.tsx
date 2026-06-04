@@ -81,12 +81,6 @@ const App: React.FC = () => {
   const guestIdParam = searchParams.get('guestId');
   const orderIdParam = searchParams.get('orderId');
   const amountParam = searchParams.get('amount');
-  const mpPaymentAmount =
-    paymentAmount > 0
-      ? paymentAmount
-      : amountParam
-        ? Number.parseFloat(amountParam)
-        : 0;
   const clearParam = searchParams.get('clear');
 
   const [currentView, setCurrentView] = useState<AppView>('INIT');
@@ -129,6 +123,12 @@ const App: React.FC = () => {
   const [splitData, setSplitData] = useState<any[] | null>(null);
   const [showReadyToast, setShowReadyToast] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState<number>(0);
+  const mpPaymentAmount =
+    paymentAmount > 0
+      ? paymentAmount
+      : amountParam
+        ? Number.parseFloat(amountParam)
+        : 0;
   const [paymentGuestName, setPaymentGuestName] = useState<string>('');
   const [pendingGuestSelection, setPendingGuestSelection] = useState(false);
   const [paymentReturnMessage, setPaymentReturnMessage] = useState<{ type: 'rejected'|'pending'; message: string; waitingGuestId?: string | null } | null>(null);
