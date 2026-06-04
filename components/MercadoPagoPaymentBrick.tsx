@@ -134,7 +134,6 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
   const initialization = useMemo(() => ({
     amount: parseFloat(amount.toFixed(2)),
     preferenceId: preferenceId || undefined,
-    marketplace: true,
   }), [amount, preferenceId]);
 
   // MP no acepta ticket: 'none' (solo pagofacil/rapipago). Para excluir cupones, omitir ticket.
