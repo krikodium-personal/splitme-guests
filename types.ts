@@ -28,6 +28,21 @@ export interface Guest {
   paid?: boolean;
   payment_id?: string | null;
   payment_method?: string | null;
+  payment_created_at?: string | null;
+  payment_total?: number | null;
+}
+
+export interface OrderGuestCharge {
+  id: string;
+  order_id: string;
+  guest_id: string;
+  amount: number;
+  status: 'pending' | 'paid' | 'cancelled';
+  payment_method?: string | null;
+  payment_id?: string | null;
+  split_round_id?: string | null;
+  created_at?: string;
+  paid_at?: string | null;
 }
 
 export interface VariantOption {

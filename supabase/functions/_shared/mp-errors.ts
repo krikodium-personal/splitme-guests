@@ -7,14 +7,25 @@ export function getMpMarketplaceId(): string | null {
   return `MP-MKT-${clientId}`;
 }
 
-/** Email del payer en POST /v1/payments — campo de formulario Brick, no cuenta de prueba MP. */
+/**
+ * Email del payer en POST /v1/payments.
+ * En sandbox (token TEST-), MP exige dominio @testuser.com (error 2198).
+ * @see https://www.mercadopago.com.ar/developers/en/reference/online-payments/checkout-api-payments/create-payment/post
+ */
 export function resolveMarketplacePayerEmail(
   guestId: string,
   brickEmail?: string,
+  options?: { sandbox?: boolean },
 ): string {
   const fromBrick = brickEmail?.trim() || "";
-  if (fromBrick) return fromBrick;
   const digits = guestId.replace(/\D/g, "").slice(0, 10) || "1";
+
+  if (options?.sandbox) {
+    if (fromBrick.toLowerCase().endsWith("@testuser.com")) return fromBrick;
+    return `guest${digits}@testuser.com`;
+  }
+
+  if (fromBrick) return fromBrick;
   return `guest${digits}@splitme.test`;
 }
 
@@ -37,8 +48,14 @@ export function userMessageForMpCode(
   if (code === "2034") {
     return (
       "Mercado Pago rechazó el pago (código 2034): usuarios o credenciales incompatibles en marketplace. " +
-      "La doc de MP indica que Checkout Bricks no usa cuentas de prueba del panel para integrar; probá credenciales TEST del Brick + tarjetas de prueba, " +
-      "o OAuth del restaurante con cuenta real (modo producción). Detalle técnico en mp_causes de esta respuesta."
+      "Verificá que Supabase use credenciales de prueba de la app (TEST-), OAuth del vendedor test en Admin, y tarjeta APRO. " +
+      "Detalle en mp_causes (Network)."
+    );
+  }
+  if (code === "2198") {
+    return (
+      "Mercado Pago rechazó el pago (código 2198): en modo prueba el email del pagador debe ser @testuser.com. " +
+      "SplitMe lo envía automáticamente; volvé a intentar el pago."
     );
   }
   return mpMessage || "Error al crear pago";

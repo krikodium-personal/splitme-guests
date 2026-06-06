@@ -6,6 +6,7 @@ type MercadoPagoPaymentViewProps = {
   restaurantId: string;
   orderId: string;
   guestId: string;
+  chargeId?: string | null;
   onBack: () => void;
   onApproved: (paymentId: string | number) => void;
   onError: (message: string) => void;
@@ -16,6 +17,7 @@ const MercadoPagoPaymentView: React.FC<MercadoPagoPaymentViewProps> = ({
   restaurantId,
   orderId,
   guestId,
+  chargeId,
   onBack,
   onApproved,
   onError,
@@ -44,6 +46,7 @@ const MercadoPagoPaymentView: React.FC<MercadoPagoPaymentViewProps> = ({
           restaurantId={restaurantId}
           orderId={orderId}
           guestId={guestId}
+          chargeId={chargeId}
           amount={amount}
           onApproved={onApproved}
           onError={onError}

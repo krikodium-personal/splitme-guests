@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Routes, Route, useNavigate, useLocation, Navigate, useSearchParams } from 'react-router-dom';
 import { supabase } from './lib/supabase';
-import { AppView, Guest, OrderItem, MenuItem, MenuSectionHeader, OrderBatch } from './types';
+import { AppView, Guest, OrderGuestCharge, OrderItem, MenuItem, MenuSectionHeader, OrderBatch } from './types';
 import ScanView from './views/ScanView';
 import GuestInfoView from './views/GuestInfoView';
 import MenuView from './views/MenuView';
@@ -24,6 +24,68 @@ import { getGroupKeyForCategoryId, type OrderGroupKey } from './lib/orderGroups'
 import { getVariantGroups } from './lib/variantDisplay';
 
 const READY_SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3';
+
+async function mapOrderGuestsWithPayments(supabaseClient: any, orderGuests: any[]): Promise<Guest[]> {
+  const paymentIds = [...new Set(orderGuests.map(og => og.payment_id).filter(Boolean))];
+  const paymentCreatedAtById: Record<string, string> = {};
+  const paymentTotalByGuestId: Record<string, number> = {};
+  const latestPaymentCreatedAtByGuestId: Record<string, string> = {};
+  const orderId = orderGuests.find(og => og.order_id)?.order_id;
+
+  if (paymentIds.length > 0) {
+    const { data, error } = await supabaseClient
+      .from('payments')
+      .select('id, created_at')
+      .in('id', paymentIds);
+
+    if (error) {
+      console.warn('[DineSplit] No se pudieron cargar fechas de pagos:', error);
+    } else {
+      (data || []).forEach((payment: any) => {
+        if (payment.id && payment.created_at) {
+          paymentCreatedAtById[payment.id] = payment.created_at;
+        }
+      });
+    }
+  }
+
+  if (orderId) {
+    const { data, error } = await supabaseClient
+      .from('payments')
+      .select('guest_id, amount, created_at')
+      .eq('order_id', orderId)
+      .eq('status', 'approved');
+
+    if (error) {
+      console.warn('[DineSplit] No se pudo cargar ledger de payments por guest:', error);
+    } else {
+      (data || []).forEach((payment: any) => {
+        if (!payment.guest_id) return;
+        paymentTotalByGuestId[payment.guest_id] =
+          (paymentTotalByGuestId[payment.guest_id] || 0) + (Number(payment.amount) || 0);
+
+        const createdAt = payment.created_at || null;
+        if (!createdAt) return;
+        const current = latestPaymentCreatedAtByGuestId[payment.guest_id];
+        if (!current || new Date(createdAt).getTime() > new Date(current).getTime()) {
+          latestPaymentCreatedAtByGuestId[payment.guest_id] = createdAt;
+        }
+      });
+    }
+  }
+
+  return orderGuests.map(og => ({
+    id: og.id,
+    name: og.name,
+    isHost: og.is_host || false,
+    individualAmount: og.individual_amount || null,
+    paid: og.paid || false,
+    payment_id: og.payment_id || null,
+    payment_method: og.payment_method || null,
+    payment_created_at: latestPaymentCreatedAtByGuestId[og.id] || (og.payment_id ? paymentCreatedAtById[og.payment_id] || null : null),
+    payment_total: paymentTotalByGuestId[og.id] ?? null,
+  }));
+}
 
 /** Mensaje amigable según status_detail de Mercado Pago cuando el pago es rechazado. */
 function getMessageFromStatusDetail(statusDetail: string | null): string {
@@ -110,6 +172,7 @@ const App: React.FC = () => {
   const [activeCategory, setActiveCategory] = useState<string>('Destacados');
   const [cart, setCart] = useState<OrderItem[]>([]);
   const [batches, setBatches] = useState<OrderBatch[]>([]);
+  const [orderGuestCharges, setOrderGuestCharges] = useState<OrderGuestCharge[]>([]);
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null); // Batch actual para nuevos items
 
   // Cart filtrado para SplitBill: solo items ya enviados (excluir CREADO y sin batch_id)
@@ -124,6 +187,7 @@ const App: React.FC = () => {
   const [splitData, setSplitData] = useState<any[] | null>(null);
   const [showReadyToast, setShowReadyToast] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState<number>(0);
+  const [paymentChargeId, setPaymentChargeId] = useState<string | null>(null);
   const mpPaymentAmount =
     paymentAmount > 0
       ? paymentAmount
@@ -141,6 +205,37 @@ const App: React.FC = () => {
   const prevPathRef = useRef<string | null>(null);
   const menuItemsRef = useRef<MenuItem[]>([]);
   useEffect(() => { menuItemsRef.current = menuItems; }, [menuItems]);
+
+  const pendingChargeSplitData = React.useMemo(() => {
+    const pendingCharges = orderGuestCharges.filter(charge => charge.status === 'pending' && (Number(charge.amount) || 0) > 0);
+    if (pendingCharges.length === 0) return null;
+
+    const sorted = [...pendingCharges].sort((a, b) => {
+      const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return bTime - aTime;
+    });
+    const latestRoundId = sorted[0]?.split_round_id || null;
+    const latestCharges = latestRoundId
+      ? pendingCharges.filter(charge => charge.split_round_id === latestRoundId)
+      : pendingCharges;
+
+    return latestCharges.map(charge => {
+      const guest = guests.find(g => g.id === charge.guest_id);
+      return {
+        ...(guest || { id: charge.guest_id, name: 'Comensal' }),
+        id: charge.guest_id,
+        charge_id: charge.id,
+        subtotal: Number(charge.amount) || 0,
+        total: Number(charge.amount) || 0,
+        amount: Number(charge.amount) || 0,
+        paid: false,
+        status: charge.status,
+      };
+    });
+  }, [orderGuestCharges, guests]);
+
+  const activeSplitData = splitData || pendingChargeSplitData;
 
   const fetchOrderItemsFromDB = useCallback(async (orderId: string) => {
     if (!supabase) return;
@@ -646,6 +741,35 @@ const App: React.FC = () => {
     }
   }, [restaurant, currentTable, currentWaiter]);
 
+  const fetchOrderGuestCharges = useCallback(async (orderId: string) => {
+    if (!supabase) return;
+    const { data, error } = await supabase
+      .from('order_guest_charges')
+      .select('*')
+      .eq('order_id', orderId)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.warn('[DineSplit] No se pudieron cargar order_guest_charges:', error);
+      setOrderGuestCharges([]);
+      return;
+    }
+
+    const charges: OrderGuestCharge[] = (data || []).map((charge: any) => ({
+      id: charge.id,
+      order_id: charge.order_id,
+      guest_id: charge.guest_id,
+      amount: Number(charge.amount) || 0,
+      status: charge.status || 'pending',
+      payment_method: charge.payment_method || null,
+      payment_id: charge.payment_id || null,
+      split_round_id: charge.split_round_id || null,
+      created_at: charge.created_at,
+      paid_at: charge.paid_at || null,
+    }));
+    setOrderGuestCharges(charges);
+  }, []);
+
   // Función para recuperar guests de una orden existente
   // preferredGuestId: si se proporciona, no establecerá activeGuestId automáticamente al primer guest
   const fetchOrderGuests = useCallback(async (orderId: string, preferredGuestId?: string) => {
@@ -739,15 +863,7 @@ const App: React.FC = () => {
     }
     
     if (orderGuests && orderGuests.length > 0) {
-      const guestsFromDB: Guest[] = orderGuests.map(og => ({
-        id: og.id, // Usar el UUID real de la base de datos
-        name: og.name,
-        isHost: og.is_host || false,
-        individualAmount: og.individual_amount || null, // Monto individual guardado
-        paid: og.paid || false, // Estado de pago
-        payment_id: og.payment_id || null, // ID del pago relacionado
-        payment_method: og.payment_method || null // Método de pago seleccionado
-      }));
+      const guestsFromDB = await mapOrderGuestsWithPayments(supabase, orderGuests);
       console.log("[DineSplit] Guests cargados desde DB:", guestsFromDB.length, "guests");
       console.log("[DineSplit] Guest IDs:", guestsFromDB.map(g => g.id));
       setGuests(guestsFromDB);
@@ -814,15 +930,7 @@ const App: React.FC = () => {
           console.log("[DineSplit] Guests encontrados por IDs (fallback):", guestsById?.length || 0);
           
           if (guestsById && guestsById.length > 0) {
-            const guestsFromDB: Guest[] = guestsById.map(og => ({
-              id: og.id,
-              name: og.name,
-              isHost: og.is_host || false,
-              individualAmount: og.individual_amount || null,
-              paid: og.paid || false,
-              payment_id: og.payment_id || null,
-              payment_method: og.payment_method || null
-            }));
+            const guestsFromDB = await mapOrderGuestsWithPayments(supabase, guestsById);
             console.log("[DineSplit] ✅ Guests cargados mediante fallback:", guestsFromDB.length, "guests");
             console.log("[DineSplit] Guest IDs:", guestsFromDB.map(g => g.id));
             setGuests(guestsFromDB);
@@ -866,15 +974,7 @@ const App: React.FC = () => {
               if (directQuery && directQuery.length > 0) {
                 console.log("[DineSplit] IDs encontrados:", directQuery.map(g => g.id));
                 // Usar estos resultados
-                const guestsFromDB: Guest[] = directQuery.map(og => ({
-                  id: og.id,
-                  name: og.name,
-                  isHost: og.is_host || false,
-                  individualAmount: null,
-                  paid: false,
-                  payment_id: null,
-                  payment_method: null
-                }));
+                const guestsFromDB = await mapOrderGuestsWithPayments(supabase, directQuery);
                 setGuests(guestsFromDB);
                 if (guestsFromDB.length > 0 && !guestIdToPreserve) {
                   const currentActiveGuestId = activeGuestIdRef.current;
@@ -951,6 +1051,28 @@ const App: React.FC = () => {
     };
   }, [activeOrderId, fetchOrderGuests, navigate]);
 
+  useEffect(() => {
+    if (!activeOrderId || !supabase) {
+      setOrderGuestCharges([]);
+      return;
+    }
+
+    fetchOrderGuestCharges(activeOrderId);
+
+    const channel = supabase
+      .channel(`order-guest-charges-${activeOrderId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'order_guest_charges', filter: `order_id=eq.${activeOrderId}` },
+        () => fetchOrderGuestCharges(activeOrderId)
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [activeOrderId, fetchOrderGuestCharges]);
+
   // Si la división ya está hecha y el comensal (no host) está en una pantalla previa, redirigir a su pantalla individual
   useEffect(() => {
     const path = location.pathname;
@@ -962,58 +1084,60 @@ const App: React.FC = () => {
     navigate(`/individual-share?orderId=${activeOrderId}&guestId=${cid}`);
   }, [location.pathname, guests, activeOrderId, activeGuestId, navigate]);
 
-  // Función para guardar montos individuales en order_guests
+  // Función para crear cargos individuales a partir de una división.
   // Esta función se llama CADA VEZ que se hace click en "Confirmar División"
   const handleSaveSplitAmounts = useCallback(async (shares: any[]) => {
     if (!supabase || !activeOrderId) {
       console.error("[DineSplit] No se puede guardar montos: supabase o activeOrderId no disponible");
-      return false;
+      return null;
     }
     
     try {
       console.log("[DineSplit] ========================================");
-      console.log("[DineSplit] Guardando montos individuales para", shares.length, "guests");
+      console.log("[DineSplit] Creando cargos individuales para", shares.length, "guests");
       console.log("[DineSplit] Montos a guardar:", shares.map(s => ({ id: s.id, name: s.name, total: s.total })));
-      
-      // CRÍTICO: Actualizar CADA guest con su monto individual (incluso si es 0)
-      // Esto asegura que todos los guests en order_guests tengan su individual_amount actualizado
-      const updatePromises = shares.map(share => {
-        const amount = Number(share.total) || 0;
-        console.log("[DineSplit] Actualizando guest", share.id, "con monto:", amount);
-        return supabase
-          .from('order_guests')
-          .update({ individual_amount: amount })
-          .eq('id', share.id)
-          .select(); // Incluir select para verificar que se actualizó
-      });
-      
-      const results = await Promise.all(updatePromises);
-      
-      // Verificar si hubo errores y mostrar detalles
-      const errors = results.filter(r => r.error);
-      if (errors.length > 0) {
-        console.error("[DineSplit] ❌ Errores al guardar montos:", errors);
-        errors.forEach((err, idx) => {
-          console.error(`[DineSplit] Error ${idx + 1}:`, err.error);
-        });
-        throw new Error(`Error al guardar algunos montos: ${errors.map(e => e.error?.message).join(', ')}`);
+
+      const splitRoundId = crypto.randomUUID();
+      const payableShares = shares
+        .map(share => ({ ...share, total: Number(share.total) || 0 }))
+        .filter(share => share.total > 0);
+
+      if (payableShares.length === 0) {
+        return shares;
       }
-      
-      // Verificar que se actualizaron correctamente
-      const updatedCounts = results.filter(r => r.data && r.data.length > 0);
-      console.log("[DineSplit] ✅ Montos individuales guardados exitosamente");
-      console.log("[DineSplit] Registros actualizados:", updatedCounts.length, "de", results.length);
+
+      const { data, error } = await supabase
+        .from('order_guest_charges')
+        .insert(payableShares.map(share => ({
+          order_id: activeOrderId,
+          guest_id: share.id,
+          amount: share.total,
+          status: 'pending',
+          split_round_id: splitRoundId,
+        })))
+        .select('*');
+
+      if (error) {
+        console.error("[DineSplit] ❌ Error al crear cargos individuales:", error);
+        throw error;
+      }
+
+      const chargeByGuestId = new Map((data || []).map((charge: any) => [charge.guest_id, charge]));
+      const sharesWithCharges = shares.map(share => {
+        const charge = chargeByGuestId.get(share.id) as any;
+        return charge ? { ...share, charge_id: charge.id, status: charge.status || 'pending' } : share;
+      });
+
+      console.log("[DineSplit] ✅ Cargos individuales creados:", data?.length || 0);
       console.log("[DineSplit] ========================================");
-      
-      // Recargar guests para actualizar el estado local con los nuevos montos
-      await fetchOrderGuests(activeOrderId);
-      
-      return true;
+
+      await fetchOrderGuestCharges(activeOrderId);
+      return sharesWithCharges;
     } catch (error: any) {
-      console.error("[DineSplit] ❌ Error al guardar montos individuales:", error);
-      return false;
+      console.error("[DineSplit] ❌ Error al crear cargos individuales:", error);
+      return null;
     }
-  }, [supabase, activeOrderId, fetchOrderGuests]);
+  }, [activeOrderId, fetchOrderGuestCharges]);
 
   // Función para actualizar el nombre de un comensal en la base de datos
   const handleUpdateGuestName = useCallback(async (guestId: string, newName: string) => {
@@ -1342,15 +1466,7 @@ const App: React.FC = () => {
           const guestIdToSet = guestIdParam || (isAnyMpReturn && mpReturn?.guestId) || undefined;
           let guestsFromDB: Guest[] = [];
           if (guestsRes.data) {
-            guestsFromDB = guestsRes.data.map(og => ({
-              id: og.id,
-              name: og.name,
-              isHost: og.is_host || false,
-              individualAmount: og.individual_amount || null,
-              paid: og.paid || false,
-              payment_id: og.payment_id || null,
-              payment_method: og.payment_method || null
-            }));
+            guestsFromDB = await mapOrderGuestsWithPayments(supabase, guestsRes.data);
             console.log("[DineSplit] Guests cargados desde link QR:", guestsFromDB.map(g => ({ id: g.id, name: g.name, individualAmount: g.individualAmount, paid: g.paid, payment_id: g.payment_id })));
             setGuests(guestsFromDB);
             if (guestIdToSet && guestsFromDB.some(g => g.id === guestIdToSet)) {
@@ -1504,15 +1620,7 @@ const App: React.FC = () => {
               setCurrentWaiter(null);
             }
             if (guestsRes.data) {
-              const guestsFromDB: Guest[] = guestsRes.data.map(og => ({
-                id: og.id,
-                name: og.name,
-                isHost: og.is_host || false,
-                individualAmount: og.individual_amount || null,
-                paid: og.paid || false,
-                payment_id: og.payment_id || null,
-                payment_method: og.payment_method || null
-              }));
+              const guestsFromDB = await mapOrderGuestsWithPayments(supabase, guestsRes.data);
               setGuests(guestsFromDB);
               const preferred = (isPaymentReturn && mpReturn?.guestId) || getActiveGuestId();
               const toSelect = (preferred && guestsFromDB.some(g => g.id === preferred)) ? preferred : null;
@@ -1598,23 +1706,25 @@ const App: React.FC = () => {
   }, [resParam, tableParam, orderIdParam, guestIdParam, clearParam, paymentStatus, location.pathname, handleStartSession, fetchOrderItemsFromDB, navigate]);
 
   // Función para procesar el pago exitoso
-  const handlePaymentSuccess = useCallback(async (guestId: string, paymentAmount: number, paymentMethod: string, mpTransactionId?: string) => {
+  const handlePaymentSuccess = useCallback(async (guestId: string, paymentAmount: number, paymentMethod: string, mpTransactionId?: string, chargeId?: string | null) => {
     if (!supabase || !activeOrderId || !guestId) {
       console.error("[DineSplit] No se puede procesar pago: faltan datos");
       return false;
     }
 
     try {
-      // Idempotencia: si el webhook ya marcó paid=true, considerar éxito y no re-escribir
-      const { data: existingGuest } = await supabase
-        .from('order_guests')
-        .select('paid')
-        .eq('id', guestId)
-        .maybeSingle();
-      if (existingGuest?.paid === true) {
-        console.log("[DineSplit] Guest ya está pagado (webhook), idempotente → éxito");
-        await fetchOrderGuests(activeOrderId);
-        return true;
+      if (mpTransactionId) {
+        const { data: existingPayment } = await supabase
+          .from('payments')
+          .select('id')
+          .eq('mp_transaction_id', mpTransactionId)
+          .maybeSingle();
+
+        if (existingPayment?.id) {
+          console.log("[DineSplit] Pago MP ya registrado, idempotente → éxito:", existingPayment.id);
+          await fetchOrderGuests(activeOrderId);
+          return true;
+        }
       }
 
       console.log("[DineSplit] ========================================");
@@ -1624,18 +1734,34 @@ const App: React.FC = () => {
       console.log("[DineSplit] Method:", paymentMethod);
       console.log("[DineSplit] MP Transaction ID:", mpTransactionId);
 
+      const paymentPayload: any = {
+        order_id: activeOrderId,
+        guest_id: guestId,
+        charge_id: chargeId || null,
+        amount: paymentAmount,
+        payment_method: paymentMethod,
+        mp_transaction_id: mpTransactionId || null,
+        status: 'approved' // Mercado Pago devuelve 'approved' cuando es exitoso
+      };
+
       // Paso 1: Crear registro en la tabla payments
-      const { data: newPayment, error: paymentError } = await supabase
+      let { data: newPayment, error: paymentError } = await supabase
         .from('payments')
-        .insert({
-          order_id: activeOrderId,
-          amount: paymentAmount,
-          payment_method: paymentMethod,
-          mp_transaction_id: mpTransactionId || null,
-          status: 'approved' // Mercado Pago devuelve 'approved' cuando es exitoso
-        })
+        .insert(paymentPayload)
         .select()
         .single();
+
+      if (paymentError && paymentError.code === 'PGRST204' && (paymentError.message?.includes('guest_id') || paymentError.message?.includes('charge_id'))) {
+        console.warn("[DineSplit] La columna payments.guest_id/charge_id no existe, registrando pago con payload legacy");
+        const { guest_id, charge_id, ...fallbackPayload } = paymentPayload;
+        const retry = await supabase
+          .from('payments')
+          .insert(fallbackPayload)
+          .select()
+          .single();
+        newPayment = retry.data;
+        paymentError = retry.error;
+      }
 
       if (paymentError) {
         console.error("[DineSplit] Error al crear registro de pago:", paymentError);
@@ -1667,45 +1793,65 @@ const App: React.FC = () => {
       if (newPayment && newPayment.id) {
         guestUpdatePayload.payment_id = newPayment.id;
       }
-      
-      const { error: guestUpdateError } = await supabase
-        .from('order_guests')
-        .update(guestUpdatePayload)
-        .eq('id', guestId);
 
-      // Si el error es porque payment_id no existe, intentar sin payment_id
-      if (guestUpdateError && guestUpdateError.code === 'PGRST204' && guestUpdateError.message?.includes('payment_id')) {
-        console.warn("[DineSplit] La columna payment_id no existe, actualizando sin payment_id");
-        const { error: retryError } = await supabase
-          .from('order_guests')
+      if (chargeId && newPayment?.id) {
+        const { error: chargeError } = await supabase
+          .from('order_guest_charges')
           .update({
-            paid: true,
-            payment_method: normalizedPaymentMethod
+            status: 'paid',
+            payment_method: normalizedPaymentMethod,
+            payment_id: newPayment.id,
+            paid_at: new Date().toISOString(),
           })
-          .eq('id', guestId);
-        
-        if (retryError) {
-          console.error("[DineSplit] Error al actualizar guest (sin payment_id):", retryError);
-          throw retryError;
+          .eq('id', chargeId);
+
+        if (chargeError) {
+          console.error("[DineSplit] Error al marcar cargo como pagado:", chargeError);
+          throw chargeError;
         }
-        console.log("[DineSplit] ✅ Guest actualizado con paid=true y payment_method:", normalizedPaymentMethod, "(sin payment_id)");
-      } else if (guestUpdateError) {
-        console.error("[DineSplit] Error al actualizar guest:", guestUpdateError);
-        throw guestUpdateError;
-      } else {
-        console.log("[DineSplit] ✅ Guest actualizado con paid=true, payment_id:", newPayment.id, "y payment_method:", normalizedPaymentMethod);
+      }
+      
+      if (!chargeId) {
+        const { error: guestUpdateError } = await supabase
+          .from('order_guests')
+          .update(guestUpdatePayload)
+          .eq('id', guestId);
+
+        // Si el error es porque payment_id no existe, intentar sin payment_id
+        if (guestUpdateError && guestUpdateError.code === 'PGRST204' && guestUpdateError.message?.includes('payment_id')) {
+          console.warn("[DineSplit] La columna payment_id no existe, actualizando sin payment_id");
+          const { error: retryError } = await supabase
+            .from('order_guests')
+            .update({
+              paid: true,
+              payment_method: normalizedPaymentMethod
+            })
+            .eq('id', guestId);
+          
+          if (retryError) {
+            console.error("[DineSplit] Error al actualizar guest (sin payment_id):", retryError);
+            throw retryError;
+          }
+          console.log("[DineSplit] ✅ Guest actualizado con paid=true y payment_method:", normalizedPaymentMethod, "(sin payment_id)");
+        } else if (guestUpdateError) {
+          console.error("[DineSplit] Error al actualizar guest:", guestUpdateError);
+          throw guestUpdateError;
+        } else {
+          console.log("[DineSplit] ✅ Guest actualizado con paid=true, payment_id:", newPayment.id, "y payment_method:", normalizedPaymentMethod);
+        }
       }
       console.log("[DineSplit] ========================================");
 
       // Recargar guests para actualizar el estado local
       await fetchOrderGuests(activeOrderId);
+      await fetchOrderGuestCharges(activeOrderId);
 
       return true;
     } catch (error: any) {
       console.error("[DineSplit] ❌ Error al procesar pago exitoso:", error);
       return false;
     }
-  }, [supabase, activeOrderId, fetchOrderGuests]);
+  }, [supabase, activeOrderId, fetchOrderGuests, fetchOrderGuestCharges]);
 
   // ——— approved/success → pago exitoso, mensaje y avanzar a propina
   // ——— rejected/failure → pago no exitoso, mensaje por status_detail, permanece en pantalla de pago
@@ -1735,11 +1881,14 @@ const App: React.FC = () => {
       setPaymentReturnMessage(null);
       if (!activeOrderId) return;
       const paymentId = urlParams.get('payment_id');
-      const payingGuest = guests.find(g => g.id === guestIdFromUrl);
-      const paymentAmount = payingGuest?.individualAmount || 0;
-      if (guestIdFromUrl && paymentAmount > 0) {
-        handlePaymentSuccess(guestIdFromUrl, paymentAmount, 'mercadopago', paymentId || undefined).then(success => {
+      let chargeIdFromSession: string | null = null;
+      try { chargeIdFromSession = sessionStorage.getItem('splitme_payment_charge_id'); } catch (e) {}
+      const payingShare = activeSplitData?.find(s => s.id === guestIdFromUrl || s.charge_id === chargeIdFromSession);
+      const amountToRegister = payingShare?.total || payingShare?.amount || paymentAmount;
+      if (guestIdFromUrl && amountToRegister > 0) {
+        handlePaymentSuccess(guestIdFromUrl, amountToRegister, 'mercadopago', paymentId || undefined, chargeIdFromSession || payingShare?.charge_id || null).then(success => {
           clearMpReturn();
+          try { sessionStorage.removeItem('splitme_payment_charge_id'); } catch (e) {}
           if (success) {
             clearSession();
             navigate('/tip');
@@ -1771,7 +1920,7 @@ const App: React.FC = () => {
       });
       clearMpReturn();
     }
-  }, [paymentStatus, activeOrderId, guests, handlePaymentSuccess, location.pathname]);
+  }, [paymentStatus, activeOrderId, activeSplitData, handlePaymentSuccess, location.pathname]);
 
   // Función para actualizar el método de pago en order_guests
   const updatePaymentMethod = useCallback(async (guestId: string, method: 'mercadopago' | 'transfer' | 'cash') => {
@@ -1787,6 +1936,22 @@ const App: React.FC = () => {
         normalizedMethod = 'transferencia' as any;
       } else if (method === 'cash') {
         normalizedMethod = 'efectivo' as any;
+      }
+
+      const chargeId = activeSplitData?.find(s => s.id === guestId)?.charge_id || paymentChargeId;
+      if (chargeId) {
+        const { error } = await supabase
+          .from('order_guest_charges')
+          .update({ payment_method: normalizedMethod })
+          .eq('id', chargeId);
+
+        if (error) {
+          console.error("[DineSplit] Error al actualizar método de pago en cargo:", error);
+          return false;
+        }
+
+        await fetchOrderGuestCharges(activeOrderId);
+        return true;
       }
 
       const { error } = await supabase
@@ -1805,7 +1970,7 @@ const App: React.FC = () => {
       console.error("[DineSplit] Error al actualizar método de pago:", error);
       return false;
     }
-  }, [supabase, activeOrderId]);
+  }, [supabase, activeOrderId, activeSplitData, paymentChargeId, fetchOrderGuestCharges]);
 
   // Recargar guests cuando se ENTRÁ al MENU (no al cambiar categoría/subcategoría), SPLIT_BILL o INDIVIDUAL_SHARE
   useEffect(() => {
@@ -1828,36 +1993,7 @@ const App: React.FC = () => {
     }
   }, [location.pathname, activeOrderId, fetchOrderGuests, guestIdParam, pendingGuestSelection]);
 
-  // Reconstruir splitData desde guests cuando se navega a individual-share y splitData está vacío
-  useEffect(() => {
-    if (location.pathname === '/individual-share' && (!splitData || splitData.length === 0) && guests.length > 0) {
-      // Reconstruir splitData desde los guests con individualAmount
-      const reconstructedSplitData = guests.map(guest => ({
-        id: guest.id,
-        name: guest.name,
-        subtotal: guest.individualAmount || 0,
-        total: guest.individualAmount || 0,
-        items: cart
-          .filter(item => item.guestId === guest.id)
-          .map(item => {
-            const menuItem = menuItems.find(m => m.id === item.itemId);
-            const unitPrice = item.unitPrice ?? (menuItem?.price ?? 0);
-            return {
-              name: menuItem?.name || 'Producto',
-              quantity: item.quantity,
-              price: unitPrice
-            };
-          })
-      }));
-      
-      if (reconstructedSplitData.length > 0 && reconstructedSplitData.some(s => s.total > 0)) {
-        console.log('[App] Reconstruyendo splitData desde guests:', reconstructedSplitData);
-        setSplitData(reconstructedSplitData);
-      }
-    }
-  }, [location.pathname, splitData, guests, cart, menuItems]);
-
-  const handlePayIndividual = async (paymentData: { amount: number, method: string }) => {
+  const handlePayIndividual = async (paymentData: { amount: number, method: string, chargeId?: string | null }) => {
     if (!activeOrderId || !restaurant) {
       console.warn('[DineSplit] handlePayIndividual abortado: falta orden o restaurante', {
         activeOrderId,
@@ -1897,7 +2033,12 @@ const App: React.FC = () => {
         }
 
         setPaymentAmount(amount);
-        console.log('[DineSplit] Navegando a checkout MP (Brick):', { orderId: activeOrderId, guestId, amount });
+        setPaymentChargeId(paymentData.chargeId || null);
+        try {
+          if (paymentData.chargeId) sessionStorage.setItem('splitme_payment_charge_id', paymentData.chargeId);
+          else sessionStorage.removeItem('splitme_payment_charge_id');
+        } catch (e) {}
+        console.log('[DineSplit] Navegando a checkout MP (Brick):', { orderId: activeOrderId, guestId, amount, chargeId: paymentData.chargeId || null });
         navigate(`/mp-payment?orderId=${activeOrderId}&guestId=${guestId}&amount=${amount}`);
       } catch (err: any) {
         console.error('[DineSplit] Error al iniciar pago MP:', err);
@@ -1906,7 +2047,7 @@ const App: React.FC = () => {
     } else {
       // Para métodos de pago no-Mercado Pago (transferencia, efectivo), procesar directamente
       if (guestId) {
-        await handlePaymentSuccess(guestId, paymentData.amount, paymentData.method);
+        await handlePaymentSuccess(guestId, paymentData.amount, paymentData.method, undefined, paymentData.chargeId || null);
       }
       clearSession();
       navigateToView('CONFIRMATION'); 
@@ -2418,12 +2559,14 @@ const App: React.FC = () => {
           <SplitBillView 
             guests={guests} 
             cart={cartForSplit} 
+            batches={batches}
             onBack={() => navigateToView('ORDER_SUMMARY')} 
+            onGoToMenu={() => navigateToView('MENU')}
             onConfirm={async (shares) => { 
               console.log("[DineSplit] Confirmar División clickeado. Shares recibidos:", shares);
-              setSplitData(shares);
-              const saved = await handleSaveSplitAmounts(shares);
-              if (saved) {
+              const savedShares = await handleSaveSplitAmounts(shares);
+              if (savedShares) {
+                setSplitData(savedShares);
                 navigateToView('CHECKOUT');
               } else {
                 alert("Hubo un error al guardar la división de la cuenta. Intenta nuevamente.");
@@ -2437,7 +2580,7 @@ const App: React.FC = () => {
             guests={guests} 
             cart={cartForSplit} 
             menuItems={menuItems} 
-            splitData={splitData} 
+            splitData={activeSplitData} 
             activeOrderId={activeOrderId}
             onSelectGuest={(guestId) => { 
               navigate(`/individual-share?orderId=${activeOrderId || ''}&guestId=${guestId}`);
@@ -2473,7 +2616,7 @@ const App: React.FC = () => {
             guests={guests} 
             menuItems={menuItems} 
             tableNumber={currentTable?.table_number} 
-            splitData={splitData} 
+            splitData={activeSplitData} 
             activeOrderId={activeOrderId}
             currentGuestId={guestIdParam || activeGuestId}
           />
@@ -2490,8 +2633,9 @@ const App: React.FC = () => {
               }
             }} 
             onPay={handlePayIndividual}
-            onShowTransfer={(amount) => {
+            onShowTransfer={(amount, chargeId) => {
               setPaymentAmount(amount);
+              setPaymentChargeId(chargeId || null);
               // Navegar a /transfer-payment con los parámetros de la URL actual
               const urlParams = new URLSearchParams(location.search);
               const guestIdFromUrl = urlParams.get('guestId');
@@ -2504,8 +2648,9 @@ const App: React.FC = () => {
                 navigate('/transfer-payment');
               }
             }}
-            onShowCash={(amount, guestName) => {
+            onShowCash={(amount, guestName, chargeId) => {
               setPaymentAmount(amount);
+              setPaymentChargeId(chargeId || null);
               setPaymentGuestName(guestName);
               navigateToView('CASH_PAYMENT');
             }}
@@ -2514,7 +2659,7 @@ const App: React.FC = () => {
             onDismissPaymentMessage={() => setPaymentReturnMessage(null)}
             cart={cartForSplit} 
             menuItems={menuItems} 
-            splitData={splitData} 
+            splitData={activeSplitData} 
             restaurant={restaurant} 
             guests={guests} 
           />
@@ -2525,11 +2670,14 @@ const App: React.FC = () => {
             restaurantId={restaurant?.id || ''}
             orderId={activeOrderId || ''}
             guestId={guestIdParam || activeGuestId || ''}
+            chargeId={paymentChargeId}
             onBack={() => navigateToView('INDIVIDUAL_SHARE')}
             onApproved={async (paymentId) => {
               const gid = guestIdParam || activeGuestId;
               if (gid && paymentAmount) {
-                await handlePaymentSuccess(gid, paymentAmount, 'mercadopago', String(paymentId));
+                await handlePaymentSuccess(gid, paymentAmount, 'mercadopago', String(paymentId), paymentChargeId);
+                setPaymentChargeId(null);
+                try { sessionStorage.removeItem('splitme_payment_charge_id'); } catch (e) {}
               }
               navigate('/tip');
             }}
@@ -2543,6 +2691,7 @@ const App: React.FC = () => {
             restaurant={restaurant}
             guestId={guestIdParam || activeGuestId}
             orderId={activeOrderId || ''}
+            chargeId={paymentChargeId || activeSplitData?.find(s => s.id === (guestIdParam || activeGuestId))?.charge_id || null}
           />
         } />
         <Route path="/cash-payment" element={
@@ -2554,8 +2703,8 @@ const App: React.FC = () => {
               const targetGuestId = guestIdParam || activeGuestId;
               if (targetGuestId) {
                 // Buscar en splitData primero
-                if (splitData) {
-                  const guestShare = splitData.find(s => s.id === targetGuestId);
+                if (activeSplitData) {
+                  const guestShare = activeSplitData.find(s => s.id === targetGuestId);
                   if (guestShare?.total) {
                     return guestShare.total;
                   }
@@ -2598,7 +2747,7 @@ const App: React.FC = () => {
               const targetGuestId = guestIdParam || getActiveGuestId() || activeGuestId;
               const targetGuest = guests.find(g => g.id === targetGuestId);
               if (targetGuest?.individualAmount != null) return targetGuest.individualAmount;
-              const guestShare = splitData?.find(s => s.id === targetGuestId);
+              const guestShare = activeSplitData?.find(s => s.id === targetGuestId);
               if (guestShare?.total != null) return guestShare.total;
               return null;
             })()}

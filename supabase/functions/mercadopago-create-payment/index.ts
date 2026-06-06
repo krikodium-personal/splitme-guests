@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import {
+  accessTokenPrefix,
   resolveMarketplacePayerEmail,
   userMessageForMpCode,
 } from "../_shared/mp-errors.ts";
@@ -37,6 +38,7 @@ Deno.serve(async (req) => {
     const restaurantId = typeof body.restaurant_id === "string" ? body.restaurant_id.trim() : "";
     const orderId = typeof body.order_id === "string" ? body.order_id.trim() : "";
     const guestId = typeof body.guest_id === "string" ? body.guest_id.trim() : "";
+    const chargeId = typeof body.charge_id === "string" ? body.charge_id.trim() : "";
     const amount = Number(body.amount);
     const idempotencyKey = typeof body.idempotency_key === "string" ? body.idempotency_key.trim() : "";
     const preferenceId = typeof body.preference_id === "string" ? body.preference_id.trim() : "";
@@ -97,7 +99,14 @@ Deno.serve(async (req) => {
       ? parseFloat(brickAmount.toFixed(2))
       : parseFloat(amount.toFixed(2));
 
-    const payerEmail = resolveMarketplacePayerEmail(guestId, formData.payer?.email);
+    const sellerTokenKind = accessTokenPrefix(accessToken);
+    const sandboxPayment =
+      config.oauth_test_mode === true ||
+      checkoutEnv === "sandbox" ||
+      sellerTokenKind === "TEST";
+    const payerEmail = resolveMarketplacePayerEmail(guestId, formData.payer?.email, {
+      sandbox: sandboxPayment,
+    });
     const payer = buildPayerPayload(formData, payerEmail);
 
     const paymentBody: Record<string, unknown> = {
@@ -109,16 +118,21 @@ Deno.serve(async (req) => {
       // Brick + marketplace: comisión en marketplace_fee de la preferencia (no application_fee).
       // @see https://www.mercadopago.com.ar/developers/en/docs/checkout-bricks/payment-brick/payment-submission/wallet-credits
       // @see https://www.mercadopago.com.ar/developers/en/reference/online-payments/checkout-api-payments/create-payment/post (4039 si fee <= 0)
-      external_reference: `${orderId}|${guestId}`.substring(0, 256),
+      external_reference: `${orderId}|${guestId}${chargeId ? `|${chargeId}` : ""}`.substring(0, 256),
       notification_url: notificationUrl,
       metadata: {
         restaurant_id: restaurantId,
         order_id: orderId,
         guest_id: guestId,
+        ...(chargeId ? { charge_id: chargeId } : {}),
         ...(preferenceId ? { preference_id: preferenceId } : {}),
       },
       payer,
     };
+
+    if (sandboxPayment) {
+      paymentBody.binary_mode = true;
+    }
 
     if (formData.issuer_id != null && formData.issuer_id !== "") {
       paymentBody.issuer_id = String(formData.issuer_id);
@@ -127,11 +141,14 @@ Deno.serve(async (req) => {
     console.info("[mercadopago-create-payment] Creating payment:", {
       checkoutEnv,
       tokenSource,
+      sellerTokenKind,
+      sandboxPayment,
       transactionAmount,
       payment_method_id: formData.payment_method_id,
       payerEmail,
       preferenceId: preferenceId || null,
       sellerUserId: config.user_account ?? null,
+      oauth_test_mode: config.oauth_test_mode === true,
     });
 
     const idempotency = idempotencyKey || crypto.randomUUID();

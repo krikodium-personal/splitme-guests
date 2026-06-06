@@ -8,9 +8,9 @@ import BuildBadge from '../BuildBadge';
 
 interface IndividualShareViewProps {
   onBack: () => void;
-  onPay: (paymentData: { amount: number, method: string }) => Promise<void>;
-  onShowTransfer?: (amount: number) => void;
-  onShowCash?: (amount: number, guestName: string) => void;
+  onPay: (paymentData: { amount: number, method: string, chargeId?: string | null }) => Promise<void>;
+  onShowTransfer?: (amount: number, chargeId?: string | null) => void;
+  onShowCash?: (amount: number, guestName: string, chargeId?: string | null) => void;
   onUpdatePaymentMethod?: (guestId: string, method: 'mercadopago' | 'transfer' | 'cash') => Promise<boolean>;
   /** Mensaje al volver de Mercado Pago: rechazado (dismissible) o pendiente (esperando confirmación). */
   paymentReturnMessage?: { type: 'rejected'|'pending'; message: string; waitingGuestId?: string | null } | null;
@@ -57,7 +57,7 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
 
   const guestName = targetGuest?.name || 'Comensal';
 
-  // Calcular subtotal: prioridad individualAmount desde BD, luego splitData, luego calcular desde items
+  // Calcular subtotal: prioridad cargo/división activa, luego legacy individualAmount, luego items.
   const subtotal = useMemo(() => {
     console.log('[IndividualShareView] Calculando subtotal para guestId:', targetGuestId);
     console.log('[IndividualShareView] targetGuest:', targetGuest);
@@ -67,16 +67,16 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
     console.log('[IndividualShareView] myCartItems:', myCartItems);
     console.log('[IndividualShareView] cart total:', cart.length);
     
-    // Primero verificar si el guest tiene individualAmount guardado en BD
-    if (targetGuest?.individualAmount !== null && targetGuest?.individualAmount !== undefined) {
-      console.log('[IndividualShareView] Usando individualAmount desde BD:', targetGuest.individualAmount);
-      return targetGuest.individualAmount;
-    }
-    
-    // Si hay splitData, usar los totales ya calculados
+    // Si hay splitData/cargo activo, usar los totales ya calculados.
     if (myDataFromSplit?.total) {
       console.log('[IndividualShareView] Usando total desde splitData:', myDataFromSplit.total);
       return myDataFromSplit.total;
+    }
+
+    // Fallback legacy para divisiones antiguas guardadas en order_guests.
+    if (targetGuest?.individualAmount !== null && targetGuest?.individualAmount !== undefined) {
+      console.log('[IndividualShareView] Usando individualAmount desde BD:', targetGuest.individualAmount);
+      return targetGuest.individualAmount;
     }
     
     // Si no hay splitData ni individualAmount, calcular desde los items del comensal
@@ -98,7 +98,7 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
     
     // Si es transferencia, mostrar vista de transferencia con el monto final (NO actualizar payment_method todavía)
     if (paymentMethod === 'transfer' && onShowTransfer) {
-      onShowTransfer(Number(finalTotal.toFixed(2)));
+      onShowTransfer(Number(finalTotal.toFixed(2)), myDataFromSplit?.charge_id || null);
       return;
     }
     
@@ -109,7 +109,7 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
     
     // Si es efectivo, mostrar vista de efectivo con el monto final y nombre del comensal
     if (paymentMethod === 'cash' && onShowCash) {
-      onShowCash(Number(finalTotal.toFixed(2)), guestName);
+      onShowCash(Number(finalTotal.toFixed(2)), guestName, myDataFromSplit?.charge_id || null);
       return;
     }
     
@@ -119,7 +119,8 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
     try {
       await onPay({
         amount: Number(finalTotal.toFixed(2)),
-          method: paymentMethod
+          method: paymentMethod,
+          chargeId: myDataFromSplit?.charge_id || null
       });
     } catch (error) {
       console.error("Error al iniciar pago:", error);

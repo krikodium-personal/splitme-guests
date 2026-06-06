@@ -18,6 +18,12 @@ export function isMpError2034(body: MpPaymentErrorBody | null | undefined): bool
 
 export function formatMpPaymentError(body: MpPaymentErrorBody | null | undefined): string {
   if (!body?.error) return 'No se pudo procesar el pago';
+  if (body.mp_code === '2198' || body.status_detail === '2198') {
+    return (
+      'Mercado Pago rechazó el pago (código 2198): en modo prueba hace falta email @testuser.com. ' +
+      'Volvé a intentar; el servidor ya lo corrige automáticamente.'
+    );
+  }
   if (isMpError2034(body)) return MP_ERROR_2034_USER_MESSAGE;
   const detail = body.status_detail && body.status_detail !== body.error
     ? ` (${body.status_detail})`

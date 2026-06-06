@@ -51,11 +51,11 @@ async function verifyMercadoPagoSignature(req: Request, secret: string): Promise
   return computed === hash;
 }
 
-function parseExternalReference(ref: string | null | undefined): { orderId: string; guestId: string } | null {
+function parseExternalReference(ref: string | null | undefined): { orderId: string; guestId: string; chargeId?: string } | null {
   if (!ref) return null;
-  const [orderId, guestId] = ref.split("|");
+  const [orderId, guestId, chargeId] = ref.split("|");
   if (!orderId || !guestId) return null;
-  return { orderId, guestId };
+  return { orderId, guestId, chargeId };
 }
 
 async function resolveConfigByRestaurant(
@@ -203,6 +203,8 @@ Deno.serve(async (req: Request) => {
     const { orderId, guestId } = externalRef;
     const amount = Number(payment.transaction_amount ?? 0);
     const metadata = payment.metadata as Record<string, unknown> | undefined;
+    const chargeIdFromMetadata = typeof metadata?.charge_id === "string" ? metadata.charge_id : "";
+    const chargeId = chargeIdFromMetadata || externalRef.chargeId || "";
     const restaurantIdFromMetadata = typeof metadata?.restaurant_id === "string" ? metadata.restaurant_id : null;
 
     const { data: orderRow } = await supabase
@@ -214,19 +216,6 @@ Deno.serve(async (req: Request) => {
     const restaurantId = orderRow?.restaurant_id ?? restaurantIdFromMetadata ?? restaurantIdFromConfig;
 
     if (status === "approved") {
-      const { data: existingGuest } = await supabase
-        .from("order_guests")
-        .select("paid, payment_id")
-        .eq("id", guestId)
-        .maybeSingle();
-
-      if (existingGuest?.paid === true) {
-        return new Response(JSON.stringify({ ok: true, idempotent: true }), {
-          status: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
       const { data: existingPayment } = await supabase
         .from("payments")
         .select("id")
@@ -236,17 +225,32 @@ Deno.serve(async (req: Request) => {
       let paymentRecordId = existingPayment?.id;
 
       if (!paymentRecordId) {
-        const { data: newPayment, error: payErr } = await supabase
+        const paymentPayload = {
+          order_id: orderId,
+          guest_id: guestId,
+          charge_id: chargeId || null,
+          amount,
+          payment_method: "mercadopago",
+          mp_transaction_id: String(paymentId),
+          status: "approved",
+        };
+
+        let { data: newPayment, error: payErr } = await supabase
           .from("payments")
-          .insert({
-            order_id: orderId,
-            amount,
-            payment_method: "mercadopago",
-            mp_transaction_id: String(paymentId),
-            status: "approved",
-          })
+          .insert(paymentPayload)
           .select("id")
           .single();
+
+        if (payErr && payErr.code === "PGRST204" && (payErr.message?.includes("guest_id") || payErr.message?.includes("charge_id"))) {
+          const { guest_id, charge_id, ...fallbackPayload } = paymentPayload;
+          const retry = await supabase
+            .from("payments")
+            .insert(fallbackPayload)
+            .select("id")
+            .single();
+          newPayment = retry.data;
+          payErr = retry.error;
+        }
 
         if (payErr) {
           console.error("[mercadopago-webhook] Error insert payments:", payErr);
@@ -256,6 +260,34 @@ Deno.serve(async (req: Request) => {
           });
         }
         paymentRecordId = newPayment.id;
+      }
+
+      if (chargeId && paymentRecordId) {
+        const { error: chargeErr } = await supabase
+          .from("order_guest_charges")
+          .update({
+            status: "paid",
+            payment_method: "mercadopago",
+            payment_id: paymentRecordId,
+            paid_at: new Date().toISOString(),
+          })
+          .eq("id", chargeId);
+
+        if (chargeErr) {
+          console.error("[mercadopago-webhook] Error update order_guest_charges:", chargeErr);
+          return new Response(JSON.stringify({ error: chargeErr.message }), {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
+
+      if (chargeId) {
+        console.log("[mercadopago-webhook] Pago aprobado para cargo:", { orderId, guestId, chargeId, paymentId, amount });
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
 
       const guestPayload: Record<string, unknown> = {

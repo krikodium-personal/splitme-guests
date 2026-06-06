@@ -29,19 +29,10 @@ const GuestSelectionView: React.FC<GuestSelectionViewProps> = ({
   }, [guests, activeOrderId, navigate]);
   // Calcular totales de cada comensal
   const guestTotals = useMemo(() => {
-    // Prioridad 1: Usar individualAmount desde order_guests (guardado en BD)
-    // Prioridad 2: Usar splitData si está disponible
+    // Prioridad 1: Usar splitData/cargos activos si están disponibles
+    // Prioridad 2: Usar individualAmount legacy desde order_guests
     // Prioridad 3: Calcular desde los items del cart
     return guests.map(guest => {
-      // Primero verificar si tiene individualAmount guardado en BD
-      if (guest.individualAmount !== null && guest.individualAmount !== undefined) {
-        return {
-          ...guest,
-          total: guest.individualAmount
-        };
-      }
-      
-      // Si hay splitData, usar los totales ya calculados
       if (splitData) {
         const share = splitData.find(s => s.id === guest.id);
         if (share?.total) {
@@ -50,6 +41,13 @@ const GuestSelectionView: React.FC<GuestSelectionViewProps> = ({
             total: share.total
           };
         }
+      }
+
+      if (guest.individualAmount !== null && guest.individualAmount !== undefined) {
+        return {
+          ...guest,
+          total: guest.individualAmount
+        };
       }
       
       // Si no hay splitData ni individualAmount, calcular desde los items del cart
@@ -122,4 +120,3 @@ const GuestSelectionView: React.FC<GuestSelectionViewProps> = ({
 };
 
 export default GuestSelectionView;
-

@@ -11,6 +11,7 @@ type MercadoPagoPaymentBrickProps = {
   restaurantId: string;
   orderId: string;
   guestId: string;
+  chargeId?: string | null;
   amount: number;
   description?: string;
   onApproved: (paymentId: string | number) => void;
@@ -35,6 +36,7 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
   restaurantId,
   orderId,
   guestId,
+  chargeId,
   amount,
   description = 'Pago SplitMe',
   onApproved,
@@ -47,7 +49,7 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
   );
   const [preferenceId, setPreferenceId] = useState<string | null>(null);
   const [envWarning, setEnvWarning] = useState<string | null>(null);
-  const [isSandbox, setIsSandbox] = useState(false);
+  const [sandboxMode, setSandboxMode] = useState(false);
   const idempotencyRef = useRef(crypto.randomUUID());
   const onErrorRef = useRef(onError);
   const fallbackPublicKeyRef = useRef(
@@ -58,7 +60,7 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
   onErrorRef.current = onError;
 
   useEffect(() => {
-    const sessionKey = `${restaurantId}|${orderId}|${guestId}|${amount}`;
+    const sessionKey = `${restaurantId}|${orderId}|${guestId}|${chargeId || ''}|${amount}`;
 
     if (!restaurantId) return;
 
@@ -102,25 +104,26 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
         configSessionRef.current = sessionKey;
         setPublicKey(pk);
         setPreferenceId(data.preference_id);
-        setIsSandbox(data.oauth_test_mode === true || data.checkout_env === 'sandbox');
-
         const sellerPrefix = data.seller_token_prefix as string | undefined;
         const mismatchFromServer = data.env_mismatch as string | null | undefined;
         setEnvWarning(
           sellerPrefix ? detectBrickEnvMismatch(pk, sellerPrefix) : null,
         );
 
-        if (import.meta.env.DEV) {
-          console.info('[MercadoPago] Checkout env:', {
-            checkout_env: data.checkout_env,
-            token_source: data.token_source,
-            seller_token_prefix: sellerPrefix,
-            platform_public_key_prefix: data.platform_public_key_prefix,
-            oauth_test_mode: data.oauth_test_mode,
-            seller_user_id: data.seller_user_id,
-            env_mismatch: mismatchFromServer,
-          });
-        }
+        const pkTest = String(pk).trim().startsWith('TEST-');
+        const sellerTest = sellerPrefix === 'TEST';
+        setSandboxMode(Boolean(data.oauth_test_mode) || pkTest || sellerTest);
+
+        console.info('[MercadoPago] Brick config:', {
+          checkout_env: data.checkout_env,
+          token_source: data.token_source,
+          seller_token_prefix: sellerPrefix,
+          platform_public_key_prefix: data.platform_public_key_prefix,
+          oauth_test_mode: data.oauth_test_mode,
+          seller_user_id: data.seller_user_id,
+          env_mismatch: mismatchFromServer,
+          sandbox_ui: pkTest || sellerTest,
+        });
       } catch (err: any) {
         if (!cancelled) onErrorRef.current(err?.message || 'Error al iniciar Mercado Pago');
       } finally {
@@ -131,7 +134,7 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [restaurantId, orderId, guestId, amount, description]);
+  }, [restaurantId, orderId, guestId, chargeId, amount, description]);
 
   const initialization = useMemo(() => ({
     amount: parseFloat(amount.toFixed(2)),
@@ -153,6 +156,7 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
         restaurant_id: restaurantId,
         order_id: orderId,
         guest_id: guestId,
+        charge_id: chargeId,
         amount,
         preference_id: preferenceId,
         idempotency_key: idempotencyRef.current,
@@ -208,6 +212,19 @@ async function resolveMpInvokeError(
 
   return (
     <div className="w-full max-w-lg mx-auto space-y-4" key={preferenceId}>
+      {sandboxMode && (
+        <div
+          role="status"
+          className="rounded-xl border border-sky-500/40 bg-sky-500/10 px-4 py-3 text-sm text-sky-100 leading-snug space-y-1"
+        >
+          <p className="font-semibold">Modo prueba (Mercado Pago)</p>
+          <p>
+            El Brick no cambia de diseño en sandbox: usa credenciales TEST. Tarjeta Visa/Master de prueba,
+            titular <strong>APRO</strong>, CVV 123. El email del formulario puede ser cualquiera; el backend
+            envía <strong>@testuser.com</strong> a MP.
+          </p>
+        </div>
+      )}
       {envWarning && (
         <div
           role="alert"
@@ -223,7 +240,7 @@ async function resolveMpInvokeError(
         onReady={() => {}}
         onError={(err) => onErrorRef.current(err?.message || 'Error en el formulario de pago')}
       />
-      {isSandbox && <TestCardPanel />}
+      {sandboxMode && <TestCardPanel />}
     </div>
   );
 };

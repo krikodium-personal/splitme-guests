@@ -9,9 +9,10 @@ interface TransferPaymentViewProps {
   restaurant?: any;
   guestId?: string;
   orderId?: string;
+  chargeId?: string | null;
 }
 
-const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amount, restaurant, guestId, orderId }) => {
+const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amount, restaurant, guestId, orderId, chargeId }) => {
   const navigate = useNavigate();
   const [bankData, setBankData] = useState({
     alias: '',
@@ -49,12 +50,34 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
     loadBankData();
   }, [restaurant]);
 
-  // Suscripción Realtime para escuchar cambios en order_guests.paid
+  // Suscripción Realtime para escuchar cambios en el cargo actual.
   useEffect(() => {
     if (!supabase || !guestId || !orderId) return;
 
     // Verificar estado inicial
     const checkInitialPaidStatus = async () => {
+      if (chargeId) {
+        const { data } = await supabase
+          .from('order_guest_charges')
+          .select('status, payment_method')
+          .eq('id', chargeId)
+          .maybeSingle();
+
+        if (data) {
+          if (data.status === 'paid') {
+            setIsPaid(true);
+            setIsWaitingConfirmation(false);
+            setIsTransferConfirmed(true);
+            return;
+          }
+          if (data.payment_method === 'transferencia' || data.payment_method === 'transfer') {
+            setIsTransferConfirmed(true);
+            setIsWaitingConfirmation(true);
+          }
+        }
+        return;
+      }
+
       const { data } = await supabase
         .from('order_guests')
         .select('paid, payment_method')
@@ -66,13 +89,6 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
           setIsPaid(true);
           setIsWaitingConfirmation(false);
         }
-        // Si ya tiene payment_method como 'transferencia', significa que ya se confirmó
-        if (data.payment_method === 'transferencia' || data.payment_method === 'transfer') {
-          setIsTransferConfirmed(true);
-          if (!data.paid) {
-            setIsWaitingConfirmation(true);
-          }
-        }
       }
     };
 
@@ -80,22 +96,26 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
 
     // Suscripción Realtime
     const channel = supabase
-      .channel(`transfer-payment-${guestId}`)
+      .channel(`transfer-payment-${chargeId || guestId}`)
       .on(
         'postgres_changes',
         {
           event: 'UPDATE',
           schema: 'public',
-          table: 'order_guests',
-          filter: `id=eq.${guestId}`
+          table: chargeId ? 'order_guest_charges' : 'order_guests',
+          filter: `id=eq.${chargeId || guestId}`
         },
         (payload) => {
-          console.log('[TransferPaymentView] Cambio detectado en order_guests:', payload);
-          if (payload.new.paid === true) {
+          console.log('[TransferPaymentView] Cambio detectado en pago:', payload);
+          const paymentMethod = payload.new.payment_method;
+          const isConfirmedPaid = chargeId
+            ? payload.new.status === 'paid'
+            : payload.new.paid === true;
+
+          if (isConfirmedPaid) {
             setIsPaid(true);
             setIsWaitingConfirmation(false);
             // Reproducir sonido cuando el admin acepta el pago en transferencia
-            const paymentMethod = payload.new.payment_method;
             if (paymentMethod === 'transferencia' || paymentMethod === 'transfer') {
               const audio = new Audio('https://hqaiuywzklrwywdhmqxw.supabase.co/storage/v1/object/public/sounds/pagado.wav');
               audio.play().catch(e => console.log("[TransferPaymentView] Audio bloqueado", e));
@@ -113,7 +133,7 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
         supabase.removeChannel(channelRef.current);
       }
     };
-  }, [guestId, orderId]);
+  }, [guestId, orderId, chargeId]);
 
   const copyToClipboard = (text: string) => {
     if (navigator.clipboard && window.isSecureContext) {
@@ -141,11 +161,15 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
     try {
       setIsWaitingConfirmation(true);
       
-      // Actualizar payment_method a 'transferencia' en order_guests
-      const { error } = await supabase
-        .from('order_guests')
-        .update({ payment_method: 'transferencia' })
-        .eq('id', guestId);
+      const { error } = chargeId
+        ? await supabase
+            .from('order_guest_charges')
+            .update({ payment_method: 'transferencia' })
+            .eq('id', chargeId)
+        : await supabase
+            .from('order_guests')
+            .update({ payment_method: 'transferencia' })
+            .eq('id', guestId);
 
       if (error) {
         console.error('[TransferPaymentView] Error al confirmar transferencia:', error);
@@ -338,4 +362,3 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
 };
 
 export default TransferPaymentView;
-

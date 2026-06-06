@@ -1,13 +1,15 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Guest, OrderItem, MenuItem } from '../types';
+import { Guest, OrderBatch, OrderItem, MenuItem } from '../types';
 import { getInitials, getGuestColor } from './GuestInfoView';
 import { formatPrice } from './MenuView';
 
 interface SplitBillViewProps {
   guests: Guest[];
   cart: OrderItem[];
+  batches: OrderBatch[];
   onBack: () => void;
+  onGoToMenu: () => void;
   onConfirm: (shares: any[]) => void;
   menuItems: MenuItem[];
 }
@@ -22,7 +24,49 @@ interface BillItemAssignment {
   assignedGuestIds: string[];
 }
 
-const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onConfirm, menuItems }) => {
+const getPaymentMethodLabel = (method?: string | null) => {
+  switch ((method || '').toLowerCase()) {
+    case 'mercadopago':
+      return 'Mercado Pago';
+    case 'transfer':
+    case 'transferencia':
+      return 'Transferencia';
+    case 'cash':
+    case 'efectivo':
+      return 'Efectivo';
+    default:
+      return 'Método no informado';
+  }
+};
+
+const formatPaymentReference = (paymentId?: string | null) => {
+  if (!paymentId) return null;
+  const trimmed = String(paymentId).trim();
+  if (trimmed.length <= 10) return trimmed;
+  return `...${trimmed.slice(-8)}`;
+};
+
+const buildAssignments = (items: OrderItem[], menuItems: MenuItem[]): BillItemAssignment[] => {
+  const units: BillItemAssignment[] = [];
+  items.forEach(item => {
+    const menuItem = menuItems.find(m => m.id === item.itemId);
+    const unitPrice = item.unitPrice ?? (menuItem?.price || 0);
+    for (let i = 0; i < item.quantity; i++) {
+      units.push({
+        id: `${item.id}-${i}`,
+        cartItemId: item.id,
+        itemId: item.itemId,
+        name: menuItem?.name || 'Producto',
+        image_url: menuItem?.image_url || '',
+        unitPrice,
+        assignedGuestIds: i === 0 ? [item.guestId] : []
+      });
+    }
+  });
+  return units;
+};
+
+const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, onBack, onGoToMenu, onConfirm, menuItems }) => {
   const [method, setMethod] = useState<'equal' | 'item' | 'guest' | 'custom'>('item');
   const [selectedForEqual, setSelectedForEqual] = useState<string[]>([]);
   
@@ -62,34 +106,81 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
     }
   }, [guests]);
 
-  const [assignments, setAssignments] = useState<BillItemAssignment[]>(() => {
-    const units: BillItemAssignment[] = [];
-    cart.forEach(item => {
+  // Los precios ya incluyen impuestos según el requerimiento.
+  const grandTotal = useMemo(() => {
+    return cart.reduce((sum, item) => {
       const menuItem = menuItems.find(m => m.id === item.itemId);
       const unitPrice = item.unitPrice ?? (menuItem?.price || 0);
-      for (let i = 0; i < item.quantity; i++) {
-        units.push({
-          id: `${item.id}-${i}`,
-          cartItemId: item.id,
-          itemId: item.itemId,
-          name: menuItem?.name || 'Producto',
-          image_url: menuItem?.image_url || '',
-          unitPrice: unitPrice,
-          assignedGuestIds: i === 0 ? [item.guestId] : [] 
-        });
-      }
-    });
-    return units;
-  });
-
-  // Los precios ya incluyen impuestos según el requerimiento.
-  const subtotal = useMemo(() => assignments.reduce((sum: number, a) => sum + a.unitPrice, 0), [assignments]);
-  const grandTotal = subtotal;
+      return sum + (unitPrice * item.quantity);
+    }, 0);
+  }, [cart, menuItems]);
 
   // Verificar si hay algún comensal que ya pagó
   const hasPaidGuests = useMemo(() => {
     return guests.some(g => g.paid === true);
   }, [guests]);
+
+  const paidGuestDetails = useMemo(() => {
+    return guests
+      .filter(g => g.paid === true)
+      .map(guest => {
+        const ledgerAmount = Number(guest.payment_total ?? 0);
+        const fallbackAmount = Number(guest.individualAmount ?? 0);
+        const amount = ledgerAmount > 0 ? ledgerAmount : fallbackAmount;
+        return {
+          ...guest,
+          amount,
+          methodLabel: getPaymentMethodLabel(guest.payment_method),
+          paymentReference: formatPaymentReference(guest.payment_id),
+        };
+      });
+  }, [guests]);
+
+  const paidRegisteredTotal = useMemo(() => {
+    return paidGuestDetails.reduce((sum, guest) => sum + (Number(guest.amount) || 0), 0);
+  }, [paidGuestDetails]);
+
+  const latestPaymentTime = useMemo(() => {
+    const times = paidGuestDetails
+      .map(guest => guest.payment_created_at ? new Date(guest.payment_created_at).getTime() : NaN)
+      .filter(time => Number.isFinite(time));
+    return times.length > 0 ? Math.max(...times) : null;
+  }, [paidGuestDetails]);
+
+  const postPaymentCart = useMemo(() => {
+    if (!latestPaymentTime) return [];
+    const postPaymentBatchIds = new Set(
+      batches
+        .filter(batch => {
+          const status = (batch.status || '').toUpperCase();
+          const createdAt = batch.created_at ? new Date(batch.created_at).getTime() : NaN;
+          return status !== 'CREADO' && Number.isFinite(createdAt) && createdAt > latestPaymentTime;
+        })
+        .map(batch => batch.id)
+    );
+
+    return cart.filter(item => item.batch_id && postPaymentBatchIds.has(item.batch_id));
+  }, [batches, cart, latestPaymentTime]);
+
+  const postPaymentTotal = useMemo(() => {
+    return postPaymentCart.reduce((sum, item) => {
+      const menuItem = menuItems.find(m => m.id === item.itemId);
+      const unitPrice = item.unitPrice ?? (menuItem?.price || 0);
+      return sum + (unitPrice * item.quantity);
+    }, 0);
+  }, [postPaymentCart, menuItems]);
+
+  const hasPostPaymentBalance = postPaymentTotal > 0.01;
+  const splitCart = hasPostPaymentBalance ? postPaymentCart : cart;
+  const splitTotal = hasPostPaymentBalance ? postPaymentTotal : grandTotal;
+
+  const [assignments, setAssignments] = useState<BillItemAssignment[]>(() => buildAssignments(splitCart, menuItems));
+
+  useEffect(() => {
+    setAssignments(buildAssignments(splitCart, menuItems));
+  }, [splitCart, menuItems]);
+
+  const canEditSplit = !hasPaidGuests || hasPostPaymentBalance;
 
   const guestShares = useMemo(() => {
     const shares: Record<string, number> = {};
@@ -100,7 +191,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
     if (method === 'equal') {
       const participantCount = selectedForEqual.length;
       if (participantCount > 0) {
-        const perGuest = subtotal / participantCount;
+        const perGuest = splitTotal / participantCount;
         selectedForEqual.forEach(gid => {
           shares[gid] = perGuest;
         });
@@ -116,7 +207,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
         }
       });
     } else if (method === 'guest') {
-      cart.forEach(item => {
+      splitCart.forEach(item => {
         const menuItem = menuItems.find(m => m.id === item.itemId);
         const unitPrice = item.unitPrice ?? (menuItem?.price ?? 0);
         if (unitPrice > 0 || menuItem) {
@@ -136,7 +227,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
       const guestSubtotal = Number(shares[g.id] || 0);
       const guestTotal = guestSubtotal; // Sin tasas adicionales
       
-      const items = cart
+      const items = splitCart
         .filter(item => item.guestId === g.id)
         .map(item => {
           const menuItem = menuItems.find(m => m.id === item.itemId);
@@ -148,31 +239,44 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
           };
         });
 
-      return { ...g, subtotal: guestSubtotal, total: guestTotal, items };
+      return {
+        ...g,
+        paid: hasPostPaymentBalance ? false : g.paid,
+        subtotal: guestSubtotal,
+        total: guestTotal,
+        items,
+        isAdditionalChargeSplit: hasPostPaymentBalance,
+      };
     });
-  }, [method, selectedForEqual, assignments, customAmounts, cart, guests, menuItems, subtotal]);
+  }, [method, selectedForEqual, assignments, customAmounts, splitCart, guests, menuItems, splitTotal, hasPostPaymentBalance]);
 
   // Debug: Log guestShares cuando cambian
   useEffect(() => {
     console.log("[SplitBillView] GuestShares calculados:", guestShares.length, guestShares);
   }, [guestShares]);
 
+  const isTableFullyPaid = grandTotal > 0 && paidRegisteredTotal >= grandTotal - 0.01;
+  const hasGuestsPendingPayment = guests.some(g => g.paid !== true);
+  const shouldShowSplitLockedAlert = hasPaidGuests && !isTableFullyPaid && hasGuestsPendingPayment && !hasPostPaymentBalance;
+
   const assignedSubtotal = useMemo(() => {
     if (method === 'item') return assignments.filter(a => a.assignedGuestIds.length > 0).reduce((sum: number, a) => sum + a.unitPrice, 0);
     if (method === 'custom') return Object.values(customAmounts).reduce((sum: number, val) => sum + (parseFloat(val as string) || 0), 0);
-    if (method === 'equal') return selectedForEqual.length > 0 ? subtotal : 0;
-    return subtotal; 
-  }, [method, assignments, customAmounts, selectedForEqual, subtotal]);
+    if (method === 'equal') return selectedForEqual.length > 0 ? splitTotal : 0;
+    return splitTotal; 
+  }, [method, assignments, customAmounts, selectedForEqual, splitTotal]);
 
-  const isFullyAssigned = Math.abs(assignedSubtotal - subtotal) < 0.01;
+  const isFullyAssigned = Math.abs(assignedSubtotal - splitTotal) < 0.01;
+  const isEqualSplitValid = method !== 'equal' || selectedForEqual.length > 0;
+  const canConfirmSplit = isEqualSplitValid && (isFullyAssigned || method === 'equal' || method === 'guest');
 
   const toggleEqualGuest = (id: string) => {
-    if (hasPaidGuests) return; // No permitir cambios si hay comensales pagados
+    if (!canEditSplit) return; // No permitir cambios si hay pagos previos sin saldo nuevo
     setSelectedForEqual(prev => prev.includes(id) ? prev.filter(gid => gid !== id) : [...prev, id]);
   };
 
   const toggleItemAssignment = (assignmentId: string, guestId: string) => {
-    if (hasPaidGuests) return; // No permitir cambios si hay comensales pagados
+    if (!canEditSplit) return; // No permitir cambios si hay pagos previos sin saldo nuevo
     // Establecer el comensal con foco cuando se hace clic en un botón de comensal
     setFocusedGuestId(guestId);
     setAssignments(prev => prev.map(a => {
@@ -190,15 +294,15 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
   };
 
   const handleCustomAmountChange = (id: string, value: string) => {
-    if (hasPaidGuests) return; // No permitir cambios si hay comensales pagados
+    if (!canEditSplit) return; // No permitir cambios si hay pagos previos sin saldo nuevo
     setCustomAmounts(prev => ({ ...prev, [id]: value }));
   };
 
   // Función para agregar el faltante total al comensal con foco
   const handleAddRemainingAmount = () => {
-    if (hasPaidGuests || !focusedGuestId) return; // No permitir cambios si hay comensales pagados o no hay comensal con foco
+    if (!canEditSplit || !focusedGuestId) return; // No permitir cambios si hay pagos previos sin saldo nuevo o no hay comensal con foco
     
-    const remaining = subtotal - assignedSubtotal;
+    const remaining = splitTotal - assignedSubtotal;
     if (remaining <= 0) return;
 
     if (method === 'custom') {
@@ -238,7 +342,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
   };
 
   const handleConfirm = () => {
-    if (isFullyAssigned || method === 'equal' || method === 'guest') {
+    if (canConfirmSplit) {
       onConfirm(guestShares);
     }
   };
@@ -255,19 +359,59 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
 
       <main className="flex-1 overflow-y-auto no-scrollbar pb-40">
         <div className="flex flex-col items-center justify-center py-10 px-6 text-center animate-fade-in">
-          <span className="text-[10px] font-black text-primary uppercase tracking-[0.3em] mb-2">Total de la Mesa</span>
-          <h2 className="text-5xl font-black tracking-tighter leading-none text-white">${formatPrice(grandTotal)}</h2>
+          <span className="text-[10px] font-black text-primary uppercase tracking-[0.3em] mb-2">Saldo a pagar</span>
+          <h2 className="text-5xl font-black tracking-tighter leading-none text-white">${formatPrice(splitTotal)}</h2>
+          <div className="mt-4 flex flex-col items-center gap-1">
+            <p className="text-text-secondary text-[10px] font-black uppercase tracking-widest opacity-60">Total histórico de la mesa</p>
+            <p className="text-white/70 text-sm font-black tabular-nums">${formatPrice(grandTotal)}</p>
+          </div>
           <p className="text-text-secondary text-[10px] font-black uppercase tracking-widest mt-4 opacity-40">Precios finales con impuestos incluidos</p>
         </div>
 
         <div className="px-4 mb-6">
-          {hasPaidGuests && (
+          {paidGuestDetails.length > 0 && (
             <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 mb-4">
-              <div className="flex items-start gap-3">
-                <span className="material-symbols-outlined text-amber-500 text-xl shrink-0">info</span>
-                <div className="flex-1">
-                  <p className="text-amber-500 font-bold text-sm mb-1">No se puede cambiar el método de división</p>
-                  <p className="text-amber-500/80 text-xs">Uno o más comensales ya realizaron su pago. Los montos individuales no pueden modificarse.</p>
+              {shouldShowSplitLockedAlert && (
+                <div className="flex items-start gap-3">
+                  <span className="material-symbols-outlined text-amber-500 text-xl shrink-0">info</span>
+                  <div className="flex-1">
+                    <p className="text-amber-500 font-bold text-sm mb-1">No se puede cambiar el método de división</p>
+                    <p className="text-amber-500/80 text-xs">Uno o más comensales ya realizaron su pago. Los montos individuales no pueden modificarse.</p>
+                  </div>
+                </div>
+              )}
+              <div className={shouldShowSplitLockedAlert ? 'mt-4 pt-4 border-t border-amber-500/20' : ''}>
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-amber-400">Pagos registrados</p>
+                  <span className="text-[10px] font-black text-amber-400/80 tabular-nums">
+                    {paidGuestDetails.length} {paidGuestDetails.length === 1 ? 'pago' : 'pagos'}
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {paidGuestDetails.map(guest => (
+                    <div key={guest.id} className="rounded-xl bg-black/20 border border-amber-500/10 p-3">
+                      <div className="flex items-center gap-3">
+                        <div className={`size-9 rounded-full flex items-center justify-center font-black text-[10px] shrink-0 ${getGuestColor(guest.id)}`}>
+                          {getInitials(guest.name)}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-3">
+                            <p className="text-xs font-black text-white truncate">{guest.name}</p>
+                            <p className="text-xs font-black text-primary tabular-nums shrink-0">${formatPrice(guest.amount)}</p>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1 text-[10px] font-bold text-amber-500/80">
+                            <span>{guest.methodLabel}</span>
+                            {guest.paymentReference && (
+                              <>
+                                <span className="text-amber-500/30">|</span>
+                                <span className="font-mono uppercase tracking-tight">ID {guest.paymentReference}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
@@ -281,10 +425,10 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
             ].map((m) => (
               <button 
                 key={m.id} 
-                onClick={() => !hasPaidGuests && setMethod(m.id as any)}
-                disabled={hasPaidGuests}
+                onClick={() => canEditSplit && setMethod(m.id as any)}
+                disabled={!canEditSplit}
                 className={`flex flex-col items-center justify-center py-3 rounded-xl transition-all gap-1 ${
-                  hasPaidGuests 
+                  !canEditSplit 
                     ? 'opacity-40 cursor-not-allowed grayscale' 
                     : method === m.id 
                       ? 'bg-primary text-background-dark shadow-lg' 
@@ -308,14 +452,22 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
           {method === 'equal' && guests.length > 0 && (
             <div className="space-y-4 animate-fade-in-up">
               <p className="text-center text-sm text-text-secondary px-6">Selecciona quiénes participan en la división equitativa.</p>
+              {selectedForEqual.length === 0 && (
+                <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 flex items-center gap-3">
+                  <span className="material-symbols-outlined text-amber-500 text-xl">warning</span>
+                  <p className="text-xs font-bold text-amber-500 leading-snug">
+                    Tenés que seleccionar al menos un comensal para dividir el saldo.
+                  </p>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 {guests.map(guest => (
                   <button 
                     key={guest.id} 
                     onClick={() => toggleEqualGuest(guest.id)}
-                    disabled={hasPaidGuests}
+                    disabled={!canEditSplit}
                     className={`flex items-center gap-3 p-3 rounded-2xl border transition-all ${
-                      hasPaidGuests 
+                      !canEditSplit 
                         ? 'opacity-40 cursor-not-allowed' 
                         : selectedForEqual.includes(guest.id) 
                           ? 'bg-primary/10 border-primary shadow-[0_0_15px_rgba(19,236,106,0.1)]' 
@@ -338,32 +490,35 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
                  <div className="flex justify-between items-center mb-2">
                    <span className="text-[10px] font-black text-text-secondary uppercase tracking-widest">Progreso de Asignación</span>
                    <span className={`text-[10px] font-black ${isFullyAssigned ? 'text-primary' : 'text-amber-500'}`}>
-                     ${formatPrice(assignedSubtotal)} / ${formatPrice(subtotal)}
+                     ${formatPrice(assignedSubtotal)} / ${formatPrice(splitTotal)}
                    </span>
                  </div>
                  <div className="h-2 w-full bg-white/5 rounded-full overflow-hidden">
-                   <div className={`h-full transition-all duration-500 rounded-full ${isFullyAssigned ? 'bg-primary' : 'bg-amber-500'}`} style={{ width: `${(assignedSubtotal/subtotal)*100}%` }}></div>
+                   <div
+                     className={`h-full transition-all duration-500 rounded-full ${isFullyAssigned ? 'bg-primary' : 'bg-amber-500'}`}
+                     style={{ width: `${Math.min((assignedSubtotal / Math.max(splitTotal, 1)) * 100, 100)}%` }}
+                   ></div>
                  </div>
               </div>
 
               {assignments.map(unit => (
                 <div key={unit.id} className={`bg-surface-dark border rounded-2xl overflow-hidden transition-all ${unit.assignedGuestIds.length > 0 ? 'border-primary/20' : 'border-white/5'}`}>
                   <div className="p-3 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
                       <div className="size-12 rounded-xl bg-center bg-cover border border-white/5 shrink-0" style={{ backgroundImage: `url('${unit.image_url}')` }}></div>
-                      <div className="flex flex-col truncate">
+                      <div className="flex flex-col min-w-0">
                         <span className="text-xs font-bold text-white truncate">{unit.name}</span>
                         <span className="text-[10px] text-primary font-black tracking-widest">${formatPrice(unit.unitPrice)}</span>
                       </div>
                     </div>
-                    <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-1">
+                    <div className="flex gap-1.5 py-1 shrink-0">
                       {guests.map(guest => (
                         <button 
                           key={guest.id} 
                           onClick={() => toggleItemAssignment(unit.id, guest.id)} 
-                          disabled={hasPaidGuests}
+                          disabled={!canEditSplit}
                           className={`relative size-9 rounded-full border-2 transition-all flex items-center justify-center shrink-0 ${
-                            hasPaidGuests 
+                            !canEditSplit 
                               ? 'opacity-30 cursor-not-allowed' 
                               : unit.assignedGuestIds.includes(guest.id) 
                                 ? 'border-primary scale-110' 
@@ -431,7 +586,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
           {method === 'custom' && guests.length > 0 && (
             <div className="space-y-4 animate-fade-in-up">
                {guests.map(guest => (
-                 <div key={guest.id} className={`flex items-center gap-4 bg-surface-dark border border-white/5 p-4 rounded-2xl ${hasPaidGuests ? 'opacity-60' : ''}`}>
+                 <div key={guest.id} className={`flex items-center gap-4 bg-surface-dark border border-white/5 p-4 rounded-2xl ${!canEditSplit ? 'opacity-60' : ''}`}>
                     <div className={`size-12 rounded-full flex items-center justify-center font-black text-sm shrink-0 ${getGuestColor(guest.id)}`}>
                       {getInitials(guest.name)}
                     </div>
@@ -444,7 +599,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
                           type="number" 
                           value={customAmounts[guest.id] || ''}
                           onFocus={(e) => {
-                            if (!hasPaidGuests) {
+                            if (canEditSplit) {
                               // Cancelar cualquier timeout pendiente de blur
                               if (blurTimeoutRef.current) {
                                 clearTimeout(blurTimeoutRef.current);
@@ -481,10 +636,10 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
                               blurTimeoutRef.current = null;
                             }, 200);
                           }}
-                          onChange={(e) => !hasPaidGuests && handleCustomAmountChange(guest.id, e.target.value)}
-                          disabled={hasPaidGuests}
+                          onChange={(e) => canEditSplit && handleCustomAmountChange(guest.id, e.target.value)}
+                          disabled={!canEditSplit}
                           className={`w-full bg-white/5 border border-white/10 rounded-xl pl-7 pr-4 py-2 text-white font-bold outline-none focus:ring-2 focus:ring-primary ${
-                            hasPaidGuests ? 'opacity-40 cursor-not-allowed' : ''
+                            !canEditSplit ? 'opacity-40 cursor-not-allowed' : ''
                           }`}
                           placeholder="0.00"
                         />
@@ -503,12 +658,12 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
 
       <footer className="fixed bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-background-dark via-background-dark to-transparent pt-12 pb-6 z-40">
         <div className="max-w-md mx-auto space-y-4">
-          {!isFullyAssigned && (method === 'item' || method === 'custom') && (
+          {!isTableFullyPaid && !isFullyAssigned && (method === 'item' || method === 'custom') && (
             <>
               <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 flex items-center gap-3 animate-pulse">
                 <span className="material-symbols-outlined text-amber-500 text-xl">warning</span>
                 <p className="text-sm font-bold text-amber-500 uppercase tracking-widest leading-tight">
-                  Faltan ${formatPrice(subtotal - assignedSubtotal)} por asignar
+                  Faltan ${formatPrice(splitTotal - assignedSubtotal)} por asignar
                 </p>
               </div>
               {focusedGuestId && (
@@ -518,26 +673,36 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, onBack, onC
                     e.preventDefault();
                   }}
                   onClick={handleAddRemainingAmount}
-                  disabled={hasPaidGuests}
+                  disabled={!canEditSplit}
                   className="w-full bg-amber-500/20 hover:bg-amber-500/30 active:scale-[0.98] border border-amber-500/30 text-amber-500 font-bold text-sm h-12 rounded-xl flex items-center justify-center gap-2 transition-all"
                 >
                   <span className="material-symbols-outlined text-lg">add_circle</span>
-                  <span>Agregar total faltante ${formatPrice(subtotal - assignedSubtotal)}</span>
+                  <span>Agregar total faltante ${formatPrice(splitTotal - assignedSubtotal)}</span>
                 </button>
               )}
             </>
           )}
 
-          <button 
-            onClick={handleConfirm} 
-            disabled={!isFullyAssigned && (method === 'item' || method === 'custom')}
-            className={`w-full h-16 rounded-2xl font-black text-lg flex items-center justify-center gap-3 transition-all ${
-              (isFullyAssigned || method === 'equal' || method === 'guest') ? 'bg-primary text-background-dark shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-[0.98]' : 'bg-white/5 text-white/20 cursor-not-allowed grayscale'
-            }`}
-          >
-            <span>Confirmar División</span>
-            <span className="material-symbols-outlined font-black">arrow_forward</span>
-          </button>
+          {isTableFullyPaid ? (
+            <button
+              onClick={onGoToMenu}
+              className="w-full h-16 rounded-2xl font-black text-lg flex items-center justify-center gap-3 transition-all bg-primary text-background-dark shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-[0.98]"
+            >
+              <span className="material-symbols-outlined font-black">restaurant_menu</span>
+              <span>Volver al menú</span>
+            </button>
+          ) : (
+            <button 
+              onClick={handleConfirm} 
+              disabled={!canConfirmSplit}
+              className={`w-full h-16 rounded-2xl font-black text-lg flex items-center justify-center gap-3 transition-all ${
+                canConfirmSplit ? 'bg-primary text-background-dark shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-[0.98]' : 'bg-white/5 text-white/20 cursor-not-allowed grayscale'
+              }`}
+            >
+              <span>Confirmar División</span>
+              <span className="material-symbols-outlined font-black">arrow_forward</span>
+            </button>
+          )}
         </div>
       </footer>
     </div>

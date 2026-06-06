@@ -185,6 +185,7 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
         return {
         ...share,
           ...guest,
+          paid: share.paid ?? guest?.paid,
           status: share.id === currentUserId ? 'PENDIENTE' : 'IMPAGADO',
         amount: share.total 
         };
@@ -215,9 +216,11 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
   // Verificar si el usuario actual ya pagó
   const currentUserPaid = useMemo(() => {
     const guestIdToCheck = currentGuestId || currentUserId;
+    const dinerToCheck = dinerShares.find(d => d.id === guestIdToCheck);
+    if (dinerToCheck) return dinerToCheck.paid === true;
     const guestToCheck = localGuests.find(g => g.id === guestIdToCheck);
     return guestToCheck?.paid === true || currentUserGuest?.paid === true;
-  }, [currentUserGuest, localGuests, currentGuestId, currentUserId]);
+  }, [currentUserGuest, dinerShares, localGuests, currentGuestId, currentUserId]);
 
   // Verificar si todos los comensales ya pagaron
   const allGuestsPaid = useMemo(() => {
