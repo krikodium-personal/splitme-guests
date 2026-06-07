@@ -141,33 +141,40 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
   }), []);
 
   const onSubmit = useCallback(async ({ formData }: { formData: Record<string, unknown> }) => {
-    const { data, error } = await supabase.functions.invoke('mercadopago-create-payment', {
-      body: {
-        restaurant_id: restaurantId,
-        order_id: orderId,
-        guest_id: guestId,
-        charge_id: chargeId,
-        amount,
-        preference_id: preferenceId,
-        idempotency_key: idempotencyRef.current,
-        form_data: formData,
-      },
-    });
+    try {
+      const { data, error } = await supabase.functions.invoke('mercadopago-create-payment', {
+        body: {
+          restaurant_id: restaurantId,
+          order_id: orderId,
+          guest_id: guestId,
+          charge_id: chargeId,
+          amount,
+          preference_id: preferenceId,
+          idempotency_key: idempotencyRef.current,
+          form_data: formData,
+        },
+      });
 
-    if (error || data?.error) {
-      throw new Error(await resolveMpInvokeError(error, data));
-    }
+      if (error || data?.error) {
+        console.error('[MercadoPago] Error al crear pago:', { error, data });
+        throw new Error(await resolveMpInvokeError(error, data));
+      }
 
-    if (data.status === 'approved') {
-      onApproved(data.id);
-      return;
-    }
-    if (data.status === 'in_process' || data.status === 'pending') {
-      onPending?.();
-      return;
-    }
+      if (data.status === 'approved') {
+        onApproved(data.id);
+        return;
+      }
+      if (data.status === 'in_process' || data.status === 'pending') {
+        onPending?.();
+        return;
+      }
 
-    throw new Error(data.status_detail || `Pago ${data.status || 'rechazado'}`);
+      throw new Error(data.status_detail || `Pago ${data.status || 'rechazado'}`);
+    } catch (err: any) {
+      const message = err?.message || 'No se pudo procesar el pago';
+      onErrorRef.current(message);
+      throw err;
+    }
   }, [restaurantId, orderId, guestId, chargeId, amount, preferenceId, onApproved, onPending]);
 
 async function resolveMpInvokeError(

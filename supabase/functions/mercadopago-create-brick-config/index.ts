@@ -85,6 +85,11 @@ Deno.serve(async (req) => {
 
     const marketplaceId = getMpMarketplaceId();
     const unitPrice = parseFloat(amount.toFixed(2));
+    const useMarketplace = Boolean(marketplaceId && checkoutEnv === "production");
+    const sandboxPayment =
+      config.oauth_test_mode === true ||
+      checkoutEnv === "sandbox" ||
+      accessTokenPrefix(accessToken) === "TEST";
     const preferenceBody: Record<string, unknown> = {
       items: [{
         title: description.substring(0, 127),
@@ -92,7 +97,6 @@ Deno.serve(async (req) => {
         unit_price: unitPrice,
         currency_id: "ARS",
       }],
-      marketplace_fee: 0,
       external_reference: `${orderId}|${guestId}${chargeId ? `|${chargeId}` : ""}`.substring(0, 256),
       notification_url: notificationUrl,
       metadata: {
@@ -104,11 +108,12 @@ Deno.serve(async (req) => {
     };
 
     // Marketplace solo en producción — en sandbox el clientId es de producción y MP rechaza la combinación.
-    if (marketplaceId && checkoutEnv === "production") {
+    if (useMarketplace) {
       preferenceBody.marketplace = marketplaceId;
+      preferenceBody.marketplace_fee = 0;
     }
 
-    if (config.oauth_test_mode === true) {
+    if (sandboxPayment) {
       preferenceBody.binary_mode = true;
     }
 
@@ -142,7 +147,7 @@ Deno.serve(async (req) => {
       oauth_test_mode: config.oauth_test_mode === true,
       seller_user_id: config.user_account ?? null,
       marketplace_id: marketplaceId,
-      marketplace: true,
+      marketplace: useMarketplace,
     }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

@@ -1,6 +1,6 @@
 # Mercado Pago — Marketplace + Payment Brick (SplitMe)
 
-Integración **Marketplace (Split Payments)** con **Checkout Bricks**. El 100% del pago va al restaurante (`application_fee = 0` / `marketplace_fee = 0`).
+Integración **Marketplace (Split Payments)** con **Checkout Bricks**. En producción el pago va al restaurante vía OAuth y la comisión va en la preferencia (`marketplace_fee = 0`). No enviar `application_fee` en `/v1/payments`.
 
 ## Arquitectura
 
@@ -43,7 +43,7 @@ Integración **Marketplace (Split Payments)** con **Checkout Bricks**. El 100% d
 | `mercadopago-oauth-start` | PKCE + redirect autorización (JWT admin) |
 | `mercadopago-oauth-callback` | Intercambia code, persiste tokens cifrados |
 | `mercadopago-create-brick-config` | Preferencia + public key para Brick |
-| `mercadopago-create-payment` | `POST /v1/payments` con token vendedor + `application_fee: 0` |
+| `mercadopago-create-payment` | `POST /v1/payments` con token vendedor en producción; token TEST plataforma en sandbox; sin `application_fee` |
 | `mercadopago-webhook` | Notificaciones MP (firma + idempotencia) |
 | `mercadopago-refresh-tokens` | Job refresh proactivo (cron) |
 
@@ -56,8 +56,8 @@ Integración **Marketplace (Split Payments)** con **Checkout Bricks**. El 100% d
 ## Pago comensal
 
 1. Guests → Individual Share → Mercado Pago
-2. Payment Brick in-app (`marketplace: true`)
-3. Backend crea pago con token del restaurante
+2. Payment Brick in-app
+3. Backend crea pago con token del restaurante en producción o token TEST plataforma en sandbox
 4. Webhook concilia por `external_reference` (`orderId|guestId`)
 
 ## Cron refresh tokens
@@ -75,7 +75,7 @@ Authorization: Bearer <MERCADOPAGO_CRON_SECRET>
 2. **Panel MP → [Cuentas de prueba](https://www.mercadopago.com.ar/developers/panel/test-accounts):** usuario **Vendedor (Seller)** de tu app (User ID + contraseña; no tiene email).
 3. **Admin → Medios de pago:** activar **Modo prueba (sandbox)** → **Conectar Mercado Pago (modo prueba)** → en MP iniciar sesión con ese vendedor test y autorizar SplitMe.
 4. **Guests:** cobrar con [tarjetas de prueba Brick](https://www.mercadopago.com.ar/developers/es/docs/checkout-bricks/integration-test/test-payment-flow) (titular **APRO**).
-5. Verificar en Network `mercadopago-create-brick-config`: `platform_public_key_prefix` y `seller_token_prefix` = **TEST**, `oauth_test_mode: true`.
+5. Verificar en Network `mercadopago-create-brick-config`: `platform_public_key_prefix` y `seller_token_prefix` = **TEST**, `token_source: "platform_test_token"`, `oauth_test_mode: true`, `marketplace: false`.
 
 Si aparece **2034** con vendedor test + Brick, es una restricción documentada de MP; abrir ticket con `mp_causes` o pasar a OAuth producción + tarjetas de prueba.
 

@@ -182,6 +182,10 @@ Deno.serve(async (req) => {
         mp_code: mpCode,
         mp_causes: mpCauses,
         mp_raw_message: payment?.message ?? null,
+        checkout_env: checkoutEnv,
+        token_source: tokenSource,
+        seller_token_prefix: sellerTokenKind,
+        sandbox_payment: sandboxPayment,
       }), {
         status: payRes.status >= 400 && payRes.status < 600 ? payRes.status : 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
