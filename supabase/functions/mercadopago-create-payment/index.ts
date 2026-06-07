@@ -175,6 +175,30 @@ Deno.serve(async (req) => {
       });
       const mpCode = cause?.code != null ? String(cause.code) : undefined;
       const mpCauses = Array.isArray(payment?.cause) ? payment.cause : [];
+
+      if (sandboxPayment && mpCode === "2034") {
+        const mockPaymentId = `sandbox_2034_${crypto.randomUUID()}`;
+        console.warn("[mercadopago-create-payment] Sandbox 2034 fallback aprobado:", {
+          mockPaymentId,
+          checkoutEnv,
+          tokenSource,
+          sellerTokenKind,
+          externalReference: paymentBody.external_reference,
+        });
+        return new Response(JSON.stringify({
+          id: mockPaymentId,
+          status: "approved",
+          status_detail: "sandbox_2034_mock_approved",
+          external_reference: paymentBody.external_reference,
+          sandbox_mock: true,
+          mp_code: mpCode,
+          mp_causes: mpCauses,
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
       return new Response(JSON.stringify({
         error: userMessageForMpCode(mpCode, mpMessage),
         status: payment?.status,

@@ -77,7 +77,7 @@ Authorization: Bearer <MERCADOPAGO_CRON_SECRET>
 4. **Guests:** cobrar con [tarjetas de prueba Brick](https://www.mercadopago.com.ar/developers/es/docs/checkout-bricks/integration-test/test-payment-flow) (titular **APRO**).
 5. Verificar en Network `mercadopago-create-brick-config`: `platform_public_key_prefix` y `seller_token_prefix` = **TEST**, `token_source: "platform_test_token"`, `oauth_test_mode: true`, `marketplace: false`.
 
-Si aparece **2034** con vendedor test + Brick, es una restricción documentada de MP; abrir ticket con `mp_causes` o pasar a OAuth producción + tarjetas de prueba.
+Si aparece **2034** con vendedor test + Brick, es una restricción documentada de MP. En sandbox la función puede devolver un pago aprobado simulado (`sandbox_mock: true`) para probar el flujo de SplitMe; en producción no se aplica este fallback.
 
 Handoff técnico completo: [MERCADOPAGO-HANDOFF.md](./MERCADOPAGO-HANDOFF.md)
 
