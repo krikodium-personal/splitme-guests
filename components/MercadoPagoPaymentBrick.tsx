@@ -178,7 +178,7 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
     }
 
     throw new Error(data.status_detail || `Pago ${data.status || 'rechazado'}`);
-  }, [restaurantId, orderId, guestId, amount, preferenceId, onApproved, onPending]);
+  }, [restaurantId, orderId, guestId, chargeId, amount, preferenceId, onApproved, onPending]);
 
 async function resolveMpInvokeError(
   error: unknown,

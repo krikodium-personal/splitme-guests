@@ -145,6 +145,7 @@ const App: React.FC = () => {
   const guestIdParam = searchParams.get('guestId');
   const orderIdParam = searchParams.get('orderId');
   const amountParam = searchParams.get('amount');
+  const chargeIdParam = searchParams.get('chargeId');
   const clearParam = searchParams.get('clear');
 
   const [currentView, setCurrentView] = useState<AppView>('INIT');
@@ -271,6 +272,19 @@ const App: React.FC = () => {
 
   const activeSplitData = splitData || pendingChargeSplitData;
   const existingSplitStatusData = splitData || latestChargeSplitData;
+  const mpPaymentChargeId = React.useMemo(() => {
+    if (paymentChargeId) return paymentChargeId;
+    if (chargeIdParam) return chargeIdParam;
+
+    let sessionChargeId: string | null = null;
+    try {
+      sessionChargeId = sessionStorage.getItem('splitme_payment_charge_id');
+    } catch (e) {}
+    if (sessionChargeId) return sessionChargeId;
+
+    const guestId = guestIdParam || activeGuestId;
+    return activeSplitData?.find(s => s.id === guestId)?.charge_id || null;
+  }, [activeSplitData, activeGuestId, chargeIdParam, guestIdParam, paymentChargeId]);
 
   const fetchOrderItemsFromDB = useCallback(async (orderId: string) => {
     if (!supabase) return;
@@ -2074,7 +2088,8 @@ const App: React.FC = () => {
           else sessionStorage.removeItem('splitme_payment_charge_id');
         } catch (e) {}
         console.log('[DineSplit] Navegando a checkout MP (Brick):', { orderId: activeOrderId, guestId, amount, chargeId: paymentData.chargeId || null });
-        navigate(`/mp-payment?orderId=${activeOrderId}&guestId=${guestId}&amount=${amount}`);
+        const chargeQuery = paymentData.chargeId ? `&chargeId=${encodeURIComponent(paymentData.chargeId)}` : '';
+        navigate(`/mp-payment?orderId=${activeOrderId}&guestId=${guestId}&amount=${amount}${chargeQuery}`);
       } catch (err: any) {
         console.error('[DineSplit] Error al iniciar pago MP:', err);
         alert(err.message || 'Error al conectar con Mercado Pago.');
@@ -2745,12 +2760,13 @@ const App: React.FC = () => {
             restaurantId={restaurant?.id || ''}
             orderId={activeOrderId || ''}
             guestId={guestIdParam || activeGuestId || ''}
-            chargeId={paymentChargeId}
+            chargeId={mpPaymentChargeId}
             onBack={() => navigateToView('INDIVIDUAL_SHARE')}
             onApproved={async (paymentId) => {
               const gid = guestIdParam || activeGuestId;
-              if (gid && paymentAmount) {
-                await handlePaymentSuccess(gid, paymentAmount, 'mercadopago', String(paymentId), paymentChargeId);
+              const amountToRegister = mpPaymentAmount > 0 ? mpPaymentAmount : paymentAmount;
+              if (gid && amountToRegister) {
+                await handlePaymentSuccess(gid, amountToRegister, 'mercadopago', String(paymentId), mpPaymentChargeId);
                 setPaymentChargeId(null);
                 try { sessionStorage.removeItem('splitme_payment_charge_id'); } catch (e) {}
               }
