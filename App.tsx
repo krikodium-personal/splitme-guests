@@ -2624,13 +2624,7 @@ const App: React.FC = () => {
         <Route path="/individual-share" element={
           <IndividualShareView 
             onBack={() => {
-              const urlParams = new URLSearchParams(window.location.search);
-              const hasOrderId = urlParams.get('orderId');
-              if (hasOrderId && !urlParams.get('res')) {
-                navigate('/guest-selection');
-              } else {
-                navigateToView('CHECKOUT');
-              }
+              navigate('/checkout', { replace: true });
             }} 
             onPay={handlePayIndividual}
             onShowTransfer={(amount, chargeId) => {
