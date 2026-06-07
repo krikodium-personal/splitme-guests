@@ -230,6 +230,8 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
       ? dinerShares.find(g => g.id === currentGuestId)
       : dinerShares.find(g => g.isHost);
   }, [dinerShares, currentGuestId]);
+  const currentUserAmount = Number((currentUserShare as any)?.amount ?? currentUserShare?.individualAmount ?? 0) || 0;
+  const shouldShowPayCta = Boolean(currentUserShare && !currentUserPaid && currentUserAmount > 0);
 
   // Generar URL para compartir
   const shareUrl = useMemo(() => {
@@ -395,7 +397,7 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
       />
 
       <div className="fixed bottom-0 left-0 w-full bg-white dark:bg-background-dark border-t border-slate-200 dark:border-border-dark p-4 shadow-2xl z-50">
-        {currentUserPaid ? (
+        {!shouldShowPayCta ? (
           <button 
             onClick={onBackToStart || (() => {
               clearSession();
@@ -409,7 +411,7 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
         ) : (
           <button onClick={onRestart} className="w-full bg-primary hover:bg-green-400 text-background-dark font-bold text-lg h-14 rounded-xl flex items-center justify-between px-6 shadow-lg shadow-primary/20 group">
             <span>Pagar mi parte</span>
-            <div className="flex items-center gap-2"><span>{'$' + formatPrice(Number((currentUserShare as any)?.amount ?? currentUserShare?.individualAmount ?? 0) || 0)}</span><span className="material-symbols-outlined group-hover:translate-x-1 transition-transform">arrow_forward</span></div>
+            <div className="flex items-center gap-2"><span>{'$' + formatPrice(currentUserAmount)}</span><span className="material-symbols-outlined group-hover:translate-x-1 transition-transform">arrow_forward</span></div>
           </button>
         )}
       </div>

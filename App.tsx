@@ -272,6 +272,7 @@ const App: React.FC = () => {
 
   const activeSplitData = splitData || pendingChargeSplitData;
   const existingSplitStatusData = splitData || latestChargeSplitData;
+  const confirmationSplitData = latestChargeSplitData || activeSplitData;
   const mpPaymentChargeId = React.useMemo(() => {
     if (paymentChargeId) return paymentChargeId;
     if (chargeIdParam) return chargeIdParam;
@@ -2874,7 +2875,7 @@ const App: React.FC = () => {
               navigate('/scan');
             }}
             guests={guests} 
-            splitData={activeSplitData}
+            splitData={confirmationSplitData}
             tableNumber={currentTable?.table_number}
             activeOrderId={activeOrderId}
             currentGuestId={guestIdParam || activeGuestId}
