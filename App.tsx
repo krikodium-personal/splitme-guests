@@ -2874,6 +2874,7 @@ const App: React.FC = () => {
               navigate('/scan');
             }}
             guests={guests} 
+            splitData={activeSplitData}
             tableNumber={currentTable?.table_number}
             activeOrderId={activeOrderId}
             currentGuestId={guestIdParam || activeGuestId}

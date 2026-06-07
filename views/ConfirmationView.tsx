@@ -10,13 +10,14 @@ interface ConfirmationViewProps {
   onRestart: () => void;
   onBackToStart?: () => void;
   guests?: Guest[];
+  splitData?: any[] | null;
   tableNumber?: number;
   activeOrderId?: string | null;
   currentGuestId?: string | null;
   waiter?: any;
 }
 
-const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackToStart, guests = [], tableNumber, activeOrderId, currentGuestId, waiter }) => {
+const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackToStart, guests = [], splitData, tableNumber, activeOrderId, currentGuestId, waiter }) => {
   const [loadedGuests, setLoadedGuests] = useState<Guest[]>(guests);
   const [isLoading, setIsLoading] = useState(false);
   const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
@@ -164,10 +165,50 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
     { id: '3', name: 'Sarah' }
   ];
 
+  const getPaymentMethodLabel = (method: string | null | undefined): string => {
+    if (!method) return '';
+    switch (method.toLowerCase()) {
+      case 'mercadopago':
+        return 'Mercado Pago';
+      case 'transferencia':
+      case 'transfer':
+        return 'Transferencia';
+      case 'efectivo':
+      case 'cash':
+        return 'Efectivo';
+      default:
+        return method;
+    }
+  };
+
   // Filtrar solo comensales con monto > 0 (excluir los que no pagan)
   const dinerShares = useMemo(() => {
-    return allDiners.filter(guest => (guest.individualAmount || 0) > 0);
-  }, [allDiners]);
+    if (splitData && splitData.length > 0) {
+      return splitData
+        .map((share) => {
+          const guest = allDiners.find(g => g.id === share.id || g.id === share.guest_id);
+          const amount = Number(share.total ?? share.amount ?? share.subtotal ?? 0) || 0;
+          return {
+            ...(guest || {}),
+            ...share,
+            id: share.id || share.guest_id,
+            name: guest?.name || share.name || 'Comensal',
+            amount,
+            individualAmount: amount,
+            paid: share.paid === true || share.status === 'paid',
+            payment_method: share.payment_method || guest?.payment_method || null,
+          } as Guest & { amount: number };
+        })
+        .filter(guest => guest.amount > 0);
+    }
+
+    return allDiners
+      .map(guest => ({
+        ...guest,
+        amount: Number(guest.individualAmount || 0),
+      }))
+      .filter(guest => guest.amount > 0);
+  }, [allDiners, splitData]);
 
   // Verificar si todos los guests que deben pagar (monto > 0) han pagado
   const allGuestsPaid = useMemo(() => {
@@ -182,6 +223,12 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
       ? dinerShares.find(g => g.id === currentGuestId)
       : dinerShares.find(g => g.isHost);
     return currentUser?.paid === true;
+  }, [dinerShares, currentGuestId]);
+
+  const currentUserShare = useMemo(() => {
+    return currentGuestId 
+      ? dinerShares.find(g => g.id === currentGuestId)
+      : dinerShares.find(g => g.isHost);
   }, [dinerShares, currentGuestId]);
 
   // Generar URL para compartir
@@ -296,7 +343,8 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
             // Si no hay currentGuestId, el host es "Tú" (comportamiento por defecto)
             const isMe = currentGuestId ? guest.id === currentGuestId : guest.isHost;
             const isPaid = guest.paid === true;
-            const amount = guest.individualAmount || 0;
+            const amount = Number((guest as any).amount ?? guest.individualAmount ?? 0) || 0;
+            const paymentMethod = getPaymentMethodLabel(guest.payment_method);
             return (
               <div key={guest.id} className={`flex items-center p-3 rounded-2xl bg-white dark:bg-surface-dark border border-slate-200 dark:border-border-dark shadow-sm transition-opacity ${isPaid ? 'opacity-60' : ''}`}>
                 <div className="relative">
@@ -305,7 +353,7 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
                   </div>
                   {isPaid && <div className="absolute -bottom-1 -right-1 bg-green-500 text-white rounded-full p-0.5 border-2 border-surface-dark flex items-center justify-center"><span className="material-symbols-outlined text-[10px] font-bold">check</span></div>}
                 </div>
-                <div className="ml-3 flex-1"><p className="text-slate-900 dark:text-white font-bold">{isMe ? 'Tú' : guest.name.split(' ')[0]}</p><p className={`${isPaid ? 'text-green-600 dark:text-green-400' : isMe ? 'text-primary' : 'text-slate-500 dark:text-slate-400'} text-sm font-medium`}>{isPaid ? `Pagado $${formatPrice(amount)}` : `Debe $${formatPrice(amount)}`}</p></div>
+                <div className="ml-3 flex-1"><p className="text-slate-900 dark:text-white font-bold">{isMe ? 'Tú' : guest.name.split(' ')[0]}</p><p className={`${isPaid ? 'text-green-600 dark:text-green-400' : isMe ? 'text-primary' : 'text-slate-500 dark:text-slate-400'} text-sm font-medium`}>{isPaid ? `Pagado $${formatPrice(amount)}${paymentMethod ? ` · ${paymentMethod}` : ''}` : `Debe $${formatPrice(amount)}`}</p></div>
                 {!isPaid && (
                   <>
                     <span className="bg-slate-100 dark:bg-white/5 text-slate-500 dark:text-slate-400 text-xs px-2 py-1 rounded-full font-medium">{isMe ? 'Pendiente' : 'En proceso'}</span>
@@ -361,7 +409,7 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
         ) : (
           <button onClick={onRestart} className="w-full bg-primary hover:bg-green-400 text-background-dark font-bold text-lg h-14 rounded-xl flex items-center justify-between px-6 shadow-lg shadow-primary/20 group">
             <span>Pagar mi parte</span>
-            <div className="flex items-center gap-2"><span>{'$' + formatPrice((currentGuestId ? dinerShares.find(g => g.id === currentGuestId) : dinerShares.find(g => g.isHost))?.individualAmount || 0)}</span><span className="material-symbols-outlined group-hover:translate-x-1 transition-transform">arrow_forward</span></div>
+            <div className="flex items-center gap-2"><span>{'$' + formatPrice(Number((currentUserShare as any)?.amount ?? currentUserShare?.individualAmount ?? 0) || 0)}</span><span className="material-symbols-outlined group-hover:translate-x-1 transition-transform">arrow_forward</span></div>
           </button>
         )}
       </div>
