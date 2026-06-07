@@ -23,6 +23,7 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
   const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
   const [waiterData, setWaiterData] = useState<any>(waiter);
   const [totalAmount, setTotalAmount] = useState<number>(0);
+  const [localSplitData, setLocalSplitData] = useState<any[] | null>(splitData || null);
 
   // Debug: Log waiter data
   useEffect(() => {
@@ -128,6 +129,10 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
     }
   }, [waiter]);
 
+  useEffect(() => {
+    setLocalSplitData(splitData || null);
+  }, [splitData]);
+
   // Suscripción real-time para actualizar el estado de pago
   useEffect(() => {
     if (!activeOrderId || !supabase || loadedGuests.length === 0) return;
@@ -159,6 +164,70 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
     };
   }, [activeOrderId, loadedGuests.length]);
 
+  useEffect(() => {
+    if (!activeOrderId || !supabase) return;
+
+    const refreshCharges = async () => {
+      const { data, error } = await supabase
+        .from('order_guest_charges')
+        .select('*')
+        .eq('order_id', activeOrderId)
+        .neq('status', 'cancelled')
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        console.error('[ConfirmationView] Error al cargar order_guest_charges:', error);
+        return;
+      }
+
+      const charges = (data || []).filter((charge: any) => (Number(charge.amount) || 0) > 0);
+      if (charges.length === 0) {
+        setLocalSplitData(null);
+        return;
+      }
+
+      const sorted = [...charges].sort((a: any, b: any) => {
+        const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return bTime - aTime;
+      });
+      const latestRoundId = sorted[0]?.split_round_id || null;
+      const latestCharges = latestRoundId
+        ? charges.filter((charge: any) => charge.split_round_id === latestRoundId)
+        : charges;
+
+      setLocalSplitData(latestCharges.map((charge: any) => ({
+        id: charge.guest_id,
+        guest_id: charge.guest_id,
+        charge_id: charge.id,
+        subtotal: Number(charge.amount) || 0,
+        total: Number(charge.amount) || 0,
+        amount: Number(charge.amount) || 0,
+        paid: charge.status === 'paid',
+        status: charge.status || 'pending',
+        payment_method: charge.payment_method || null,
+        payment_id: charge.payment_id || null,
+        paid_at: charge.paid_at || null,
+        split_round_id: charge.split_round_id || null,
+      })));
+    };
+
+    refreshCharges();
+
+    const channel = supabase
+      .channel(`confirmation-guest-charges-${activeOrderId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'order_guest_charges', filter: `order_id=eq.${activeOrderId}` },
+        () => refreshCharges()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [activeOrderId]);
+
   const allDiners = loadedGuests.length > 0 ? loadedGuests : guests.length > 0 ? guests : [
     { id: '1', name: 'Tú' },
     { id: '2', name: 'Mark' },
@@ -183,8 +252,9 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
 
   // Filtrar solo comensales con monto > 0 (excluir los que no pagan)
   const dinerShares = useMemo(() => {
-    if (splitData && splitData.length > 0) {
-      return splitData
+    const effectiveSplitData = localSplitData || splitData;
+    if (effectiveSplitData && effectiveSplitData.length > 0) {
+      return effectiveSplitData
         .map((share) => {
           const guest = allDiners.find(g => g.id === share.id || g.id === share.guest_id);
           const amount = Number(share.total ?? share.amount ?? share.subtotal ?? 0) || 0;
@@ -208,7 +278,7 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
         amount: Number(guest.individualAmount || 0),
       }))
       .filter(guest => guest.amount > 0);
-  }, [allDiners, splitData]);
+  }, [allDiners, localSplitData, splitData]);
 
   // Verificar si todos los guests que deben pagar (monto > 0) han pagado
   const allGuestsPaid = useMemo(() => {
