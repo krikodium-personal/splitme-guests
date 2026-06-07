@@ -28,10 +28,6 @@ function ensureMpInit(publicKey: string) {
   mpInitRef.publicKey = publicKey;
 }
 
-function detectMpSdkBlocked(): boolean {
-  return typeof window !== 'undefined' && !(window as any).MercadoPago;
-}
-
 const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
   restaurantId,
   orderId,
@@ -74,13 +70,6 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
 
     (async () => {
       try {
-        if (detectMpSdkBlocked()) {
-          onErrorRef.current(
-            'No se pudo cargar Mercado Pago. Desactivá bloqueadores de anuncios o probá en otra ventana.',
-          );
-          return;
-        }
-
         const { data, error } = await supabase.functions.invoke('mercadopago-create-brick-config', {
           body: {
             restaurant_id: restaurantId,
