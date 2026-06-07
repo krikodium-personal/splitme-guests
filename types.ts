@@ -7,6 +7,7 @@ export type AppView =
   | 'ORDER_SUMMARY' 
   | 'PROGRESS' 
   | 'SPLIT_BILL' 
+  | 'SPLIT_STATUS'
   | 'GUEST_SELECTION'
   | 'INDIVIDUAL_SHARE' 
   | 'MP_PAYMENT'

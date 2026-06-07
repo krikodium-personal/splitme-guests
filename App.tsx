@@ -8,6 +8,7 @@ import MenuView from './views/MenuView';
 import OrderSummaryView from './views/OrderSummaryView';
 import OrderProgressView from './views/OrderProgressView';
 import SplitBillView from './views/SplitBillView';
+import SplitStatusView from './views/SplitStatusView';
 import GuestSelectionView from './views/GuestSelectionView';
 import IndividualShareView from './views/IndividualShareView';
 import TransferPaymentView from './views/TransferPaymentView';
@@ -235,7 +236,41 @@ const App: React.FC = () => {
     });
   }, [orderGuestCharges, guests]);
 
+  const latestChargeSplitData = React.useMemo(() => {
+    const billableCharges = orderGuestCharges.filter(charge => charge.status !== 'cancelled' && (Number(charge.amount) || 0) > 0);
+    if (billableCharges.length === 0) return null;
+
+    const sorted = [...billableCharges].sort((a, b) => {
+      const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return bTime - aTime;
+    });
+    const latestRoundId = sorted[0]?.split_round_id || null;
+    const latestCharges = latestRoundId
+      ? billableCharges.filter(charge => charge.split_round_id === latestRoundId)
+      : billableCharges;
+
+    return latestCharges.map(charge => {
+      const guest = guests.find(g => g.id === charge.guest_id);
+      return {
+        ...(guest || { id: charge.guest_id, name: 'Comensal' }),
+        id: charge.guest_id,
+        charge_id: charge.id,
+        subtotal: Number(charge.amount) || 0,
+        total: Number(charge.amount) || 0,
+        amount: Number(charge.amount) || 0,
+        paid: charge.status === 'paid',
+        status: charge.status,
+        payment_method: charge.payment_method || null,
+        payment_id: charge.payment_id || null,
+        paid_at: charge.paid_at || null,
+        split_round_id: charge.split_round_id || null,
+      };
+    });
+  }, [orderGuestCharges, guests]);
+
   const activeSplitData = splitData || pendingChargeSplitData;
+  const existingSplitStatusData = splitData || latestChargeSplitData;
 
   const fetchOrderItemsFromDB = useCallback(async (orderId: string) => {
     if (!supabase) return;
@@ -1319,7 +1354,7 @@ const App: React.FC = () => {
   }, [supabase, activeOrderId, currentTable, guests.length]);
 
   useEffect(() => {
-  const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/checkout', '/individual-share', '/mp-payment', '/transfer-payment', '/cash-payment', '/tip', '/feedback', '/confirmation', '/guest-selection', '/join-table'];
+  const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/split-status', '/checkout', '/individual-share', '/mp-payment', '/transfer-payment', '/cash-payment', '/tip', '/feedback', '/confirmation', '/guest-selection', '/join-table'];
     let cancelled = false;
     
     const initApp = async () => {
@@ -1478,7 +1513,7 @@ const App: React.FC = () => {
           await fetchOrderItemsFromDB(orderIdForLoad);
           
           const currentPath = location.pathname;
-          const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/checkout', '/individual-share', '/mp-payment', '/transfer-payment', '/cash-payment', '/tip', '/feedback', '/confirmation', '/guest-selection'];
+          const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/split-status', '/checkout', '/individual-share', '/mp-payment', '/transfer-payment', '/cash-payment', '/tip', '/feedback', '/confirmation', '/guest-selection'];
           
           if (!routesRequiringSession.includes(currentPath) && !isGuestEntryPath(currentPath)) {
             const preserveQuery = location.search || '';
@@ -2134,6 +2169,7 @@ const App: React.FC = () => {
       '/order-summary': 'ORDER_SUMMARY',
       '/progress': 'PROGRESS',
       '/split-bill': 'SPLIT_BILL',
+      '/split-status': 'SPLIT_STATUS',
       '/guest-selection': 'GUEST_SELECTION',
       '/checkout': 'CHECKOUT',
       '/individual-share': 'INDIVIDUAL_SHARE',
@@ -2160,6 +2196,7 @@ const App: React.FC = () => {
       'ORDER_SUMMARY': '/order-summary',
       'PROGRESS': '/progress',
       'SPLIT_BILL': '/split-bill',
+      'SPLIT_STATUS': '/split-status',
       'GUEST_SELECTION': '/guest-selection',
       'CHECKOUT': '/checkout',
       'INDIVIDUAL_SHARE': '/individual-share',
@@ -2177,6 +2214,34 @@ const App: React.FC = () => {
       (view === 'INDIVIDUAL_SHARE' || view === 'MP_PAYMENT' || view === 'TRANSFER_PAYMENT' || view === 'CASH_PAYMENT');
     navigate(preserveQuery ? `${route}${location.search}` : route);
   }, [navigate, location.search]);
+
+  const handleResetPendingSplit = useCallback(async () => {
+    if (!supabase || !activeOrderId) {
+      navigateToView('SPLIT_BILL');
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('order_guest_charges')
+        .delete()
+        .eq('order_id', activeOrderId)
+        .eq('status', 'pending');
+
+      if (error) {
+        console.error("[DineSplit] ❌ Error al resetear división pendiente:", error);
+        alert("No se pudo resetear la división. Intenta nuevamente.");
+        return;
+      }
+
+      setSplitData(null);
+      await fetchOrderGuestCharges(activeOrderId);
+      navigateToView('SPLIT_BILL');
+    } catch (error) {
+      console.error("[DineSplit] ❌ Error inesperado al resetear división pendiente:", error);
+      alert("No se pudo resetear la división. Intenta nuevamente.");
+    }
+  }, [activeOrderId, fetchOrderGuestCharges, navigateToView]);
 
   // Cuando hay pending y el guest pasa a paid (p. ej. por webhook), ir a propina
   useEffect(() => {
@@ -2528,7 +2593,13 @@ const App: React.FC = () => {
               navigateToView('MENU'); 
             }} 
             onSendGroup={handleSendGroup} 
-            onPay={() => navigateToView('SPLIT_BILL')} 
+            onPay={() => {
+              if (existingSplitStatusData && existingSplitStatusData.length > 0) {
+                navigateToView('SPLIT_STATUS');
+                return;
+              }
+              navigateToView('SPLIT_BILL');
+            }} 
             sendingGroup={sendingGroup} 
             onUpdateQuantity={(id, d) => handleUpdateCartItem(id, { quantity: Math.max(0, (cart.find(it => it.id === id)?.quantity || 1) + d) })} 
             onRemoveItemFromBatch={handleRemoveItemFromBatch}
@@ -2553,6 +2624,16 @@ const App: React.FC = () => {
             tableNumber={currentTable?.table_number} 
             menuItems={menuItems}
             categories={categories}
+          />
+        } />
+        <Route path="/split-status" element={
+          <SplitStatusView
+            guests={guests}
+            splitData={existingSplitStatusData}
+            onBack={() => navigateToView('ORDER_SUMMARY')}
+            onContinuePayment={() => navigateToView('CHECKOUT')}
+            onNewSplit={() => navigateToView('SPLIT_BILL')}
+            onChangeSplit={handleResetPendingSplit}
           />
         } />
         <Route path="/split-bill" element={
