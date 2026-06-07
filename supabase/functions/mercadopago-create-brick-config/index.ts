@@ -30,6 +30,7 @@ Deno.serve(async (req) => {
     const restaurantId = typeof body.restaurant_id === "string" ? body.restaurant_id.trim() : "";
     const orderId = typeof body.order_id === "string" ? body.order_id.trim() : "";
     const guestId = typeof body.guest_id === "string" ? body.guest_id.trim() : "";
+    const chargeId = typeof body.charge_id === "string" ? body.charge_id.trim() : "";
     const amount = Number(body.amount);
     const description = typeof body.description === "string" ? body.description.trim() : "Pago SplitMe";
 
@@ -61,10 +62,22 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { accessToken, checkoutEnv, tokenSource } = await resolveSellerAccessToken(
+    const resolved = await resolveSellerAccessToken(
       config,
       supabaseAdmin,
     );
+    let { accessToken, checkoutEnv, tokenSource } = resolved;
+
+    // En sandbox el pago se procesa con el token TEST de la plataforma. La preferencia
+    // debe crearse con el mismo collector/token para que Payment Brick no rechace el pago.
+    if (checkoutEnv === "sandbox") {
+      const platformTestToken = Deno.env.get("MERCADOPAGO_PLATFORM_TEST_ACCESS_TOKEN")?.trim();
+      if (platformTestToken) {
+        accessToken = platformTestToken;
+        tokenSource = "platform_test_token";
+      }
+    }
+
     const publicKey = getPlatformPublicKey();
     const envMismatch = detectEnvMismatch(publicKey, accessToken);
     const webhookBase = `${supabaseUrl.replace(/\/$/, "")}/functions/v1/mercadopago-webhook`;
@@ -80,12 +93,13 @@ Deno.serve(async (req) => {
         currency_id: "ARS",
       }],
       marketplace_fee: 0,
-      external_reference: `${orderId}|${guestId}`.substring(0, 256),
+      external_reference: `${orderId}|${guestId}${chargeId ? `|${chargeId}` : ""}`.substring(0, 256),
       notification_url: notificationUrl,
       metadata: {
         restaurant_id: restaurantId,
         order_id: orderId,
         guest_id: guestId,
+        ...(chargeId ? { charge_id: chargeId } : {}),
       },
     };
 

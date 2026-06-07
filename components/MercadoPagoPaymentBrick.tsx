@@ -75,6 +75,7 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
             restaurant_id: restaurantId,
             order_id: orderId,
             guest_id: guestId,
+            charge_id: chargeId,
             amount,
             description,
           },
