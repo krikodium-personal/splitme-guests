@@ -176,23 +176,38 @@ Deno.serve(async (req) => {
       const mpCode = cause?.code != null ? String(cause.code) : undefined;
       const mpCauses = Array.isArray(payment?.cause) ? payment.cause : [];
 
-      if (sandboxPayment && mpCode === "2034") {
-        const mockPaymentId = `sandbox_2034_${crypto.randomUUID()}`;
-        console.warn("[mercadopago-create-payment] Sandbox 2034 fallback aprobado:", {
+      const shouldMockSandboxPayment =
+        sandboxPayment &&
+        sellerTokenKind === "TEST" &&
+        tokenSource === "platform_test_token" &&
+        payRes.status >= 400 &&
+        payRes.status < 500;
+
+      if (shouldMockSandboxPayment) {
+        const mockReason = String(mpCode || payment?.status_detail || payRes.status || "mp_error")
+          .replace(/[^a-zA-Z0-9_-]/g, "_")
+          .substring(0, 48);
+        const mockPaymentId = `sandbox_${mockReason}_${crypto.randomUUID()}`;
+        console.warn("[mercadopago-create-payment] Sandbox fallback aprobado:", {
           mockPaymentId,
           checkoutEnv,
           tokenSource,
           sellerTokenKind,
           externalReference: paymentBody.external_reference,
+          status: payRes.status,
+          mpCode,
+          mpMessage,
         });
         return new Response(JSON.stringify({
           id: mockPaymentId,
           status: "approved",
-          status_detail: "sandbox_2034_mock_approved",
+          status_detail: `sandbox_${mockReason}_mock_approved`,
           external_reference: paymentBody.external_reference,
           sandbox_mock: true,
           mp_code: mpCode,
           mp_causes: mpCauses,
+          mp_raw_message: payment?.message ?? null,
+          mp_status: payRes.status,
         }), {
           status: 200,
           headers: { ...corsHeaders, "Content-Type": "application/json" },

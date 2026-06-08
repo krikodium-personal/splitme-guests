@@ -20,7 +20,7 @@ Integración **Marketplace (Split Payments)** con **Checkout Bricks**. En produc
 | `MERCADOPAGO_OAUTH_REDIRECT_URI` | Sí | URL callback edge function |
 | `MERCADOPAGO_OAUTH_STATE_SECRET` | Sí | HMAC para `state` OAuth |
 | `MERCADOPAGO_PLATFORM_PUBLIC_KEY` | Sí | Public key plataforma (Payment Brick) |
-| `MERCADOPAGO_PLATFORM_TEST_ACCESS_TOKEN` | Sí (sandbox) | Access token **TEST-** de la app; preferencia + pago en sandbox (evita 2034) |
+| `MERCADOPAGO_PLATFORM_TEST_ACCESS_TOKEN` | Sí (sandbox) | Access token **TEST-** de la app; preferencia + pago en sandbox (evita rechazos propios del entorno test) |
 | `MERCADOPAGO_WEBHOOK_SECRET` | Recomendada | Validación `x-signature` |
 | `MERCADOPAGO_TOKEN_ENCRYPTION_KEY` | Recomendada | Base64 de 32 bytes AES-GCM |
 | `MERCADOPAGO_ADMIN_RETURN_URL` | No | Redirect post-OAuth (admin Settings) |
@@ -77,7 +77,7 @@ Authorization: Bearer <MERCADOPAGO_CRON_SECRET>
 4. **Guests:** cobrar con [tarjetas de prueba Brick](https://www.mercadopago.com.ar/developers/es/docs/checkout-bricks/integration-test/test-payment-flow) (titular **APRO**).
 5. Verificar en Network `mercadopago-create-brick-config`: `platform_public_key_prefix` y `seller_token_prefix` = **TEST**, `token_source: "platform_test_token"`, `oauth_test_mode: true`, `marketplace: false`.
 
-Si aparece **2034** con vendedor test + Brick, es una restricción documentada de MP. En sandbox la función puede devolver un pago aprobado simulado (`sandbox_mock: true`) para probar el flujo de SplitMe; en producción no se aplica este fallback.
+Si MP rechaza el pago en **sandbox** con vendedor test + Brick (por ejemplo 2034 u otros 4xx de cuentas/tarjetas de prueba), la función puede devolver un pago aprobado simulado (`sandbox_mock: true`) para probar el flujo de SplitMe. El fallback exige credenciales **TEST** de plataforma y en producción no se aplica.
 
 Handoff técnico completo: [MERCADOPAGO-HANDOFF.md](./MERCADOPAGO-HANDOFF.md)
 
