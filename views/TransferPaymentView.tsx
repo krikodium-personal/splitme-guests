@@ -23,6 +23,7 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
   const [isPaid, setIsPaid] = useState(false);
   const [isTransferConfirmed, setIsTransferConfirmed] = useState(false);
   const [isWaitingConfirmation, setIsWaitingConfirmation] = useState(false);
+  const [resolvedChargeId, setResolvedChargeId] = useState<string | null>(chargeId || null);
   const channelRef = useRef<any>(null);
 
   useEffect(() => {
@@ -50,17 +51,51 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
     loadBankData();
   }, [restaurant]);
 
-  // Suscripción Realtime para escuchar cambios en el cargo actual.
+  useEffect(() => {
+    setResolvedChargeId(chargeId || null);
+  }, [chargeId]);
+
+  useEffect(() => {
+    const findPendingCharge = async () => {
+      if (!supabase || chargeId || !guestId || !orderId) return;
+
+      const { data, error } = await supabase
+        .from('order_guest_charges')
+        .select('id, status, payment_method')
+        .eq('order_id', orderId)
+        .eq('guest_id', guestId)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) {
+        console.warn('[TransferPaymentView] No se pudo resolver cargo pendiente:', error);
+        return;
+      }
+
+      if (data?.id) {
+        setResolvedChargeId(data.id);
+        if (data.payment_method === 'transferencia' || data.payment_method === 'transfer') {
+          setIsTransferConfirmed(true);
+          setIsWaitingConfirmation(true);
+        }
+      }
+    };
+
+    findPendingCharge();
+  }, [chargeId, guestId, orderId]);
+
+  // Suscripción Realtime para escuchar cambios tanto en el cargo nuevo como en el registro legado.
   useEffect(() => {
     if (!supabase || !guestId || !orderId) return;
 
-    // Verificar estado inicial
     const checkInitialPaidStatus = async () => {
-      if (chargeId) {
+      if (resolvedChargeId) {
         const { data } = await supabase
           .from('order_guest_charges')
           .select('status, payment_method')
-          .eq('id', chargeId)
+          .eq('id', resolvedChargeId)
           .maybeSingle();
 
         if (data) {
@@ -75,7 +110,6 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
             setIsWaitingConfirmation(true);
           }
         }
-        return;
       }
 
       const { data } = await supabase
@@ -88,39 +122,67 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
         if (data.paid) {
           setIsPaid(true);
           setIsWaitingConfirmation(false);
+          setIsTransferConfirmed(true);
+          return;
+        }
+
+        if (data.payment_method === 'transferencia' || data.payment_method === 'transfer') {
+          setIsTransferConfirmed(true);
+          setIsWaitingConfirmation(true);
         }
       }
     };
 
     checkInitialPaidStatus();
 
-    // Suscripción Realtime
+    const handleConfirmedPayment = (paymentMethod?: string | null) => {
+      setIsPaid(true);
+      setIsWaitingConfirmation(false);
+      setIsTransferConfirmed(true);
+
+      if (paymentMethod === 'transferencia' || paymentMethod === 'transfer') {
+        const audio = new Audio('https://hqaiuywzklrwywdhmqxw.supabase.co/storage/v1/object/public/sounds/pagado.wav');
+        audio.play().catch(e => console.log("[TransferPaymentView] Audio bloqueado", e));
+        if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+      }
+    };
+
     const channel = supabase
-      .channel(`transfer-payment-${chargeId || guestId}`)
+      .channel(`transfer-payment-${resolvedChargeId || guestId}`);
+
+    if (resolvedChargeId) {
+      channel.on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'order_guest_charges',
+          filter: `id=eq.${resolvedChargeId}`
+        },
+        (payload) => {
+          console.log('[TransferPaymentView] Cambio detectado en cargo:', payload);
+          const paymentMethod = payload.new.payment_method;
+          if (payload.new.status === 'paid') {
+            handleConfirmedPayment(paymentMethod);
+          }
+        }
+      );
+    }
+
+    channel
       .on(
         'postgres_changes',
         {
           event: 'UPDATE',
           schema: 'public',
-          table: chargeId ? 'order_guest_charges' : 'order_guests',
-          filter: `id=eq.${chargeId || guestId}`
+          table: 'order_guests',
+          filter: `id=eq.${guestId}`
         },
         (payload) => {
-          console.log('[TransferPaymentView] Cambio detectado en pago:', payload);
+          console.log('[TransferPaymentView] Cambio detectado en comensal:', payload);
           const paymentMethod = payload.new.payment_method;
-          const isConfirmedPaid = chargeId
-            ? payload.new.status === 'paid'
-            : payload.new.paid === true;
-
-          if (isConfirmedPaid) {
-            setIsPaid(true);
-            setIsWaitingConfirmation(false);
-            // Reproducir sonido cuando el admin acepta el pago en transferencia
-            if (paymentMethod === 'transferencia' || paymentMethod === 'transfer') {
-              const audio = new Audio('https://hqaiuywzklrwywdhmqxw.supabase.co/storage/v1/object/public/sounds/pagado.wav');
-              audio.play().catch(e => console.log("[TransferPaymentView] Audio bloqueado", e));
-              if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
-            }
+          if (payload.new.paid === true) {
+            handleConfirmedPayment(paymentMethod);
           }
         }
       )
@@ -133,7 +195,7 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
         supabase.removeChannel(channelRef.current);
       }
     };
-  }, [guestId, orderId, chargeId]);
+  }, [guestId, orderId, resolvedChargeId]);
 
   const copyToClipboard = (text: string) => {
     if (navigator.clipboard && window.isSecureContext) {
@@ -161,11 +223,11 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
     try {
       setIsWaitingConfirmation(true);
       
-      const { error } = chargeId
+      const { error } = resolvedChargeId
         ? await supabase
             .from('order_guest_charges')
             .update({ payment_method: 'transferencia' })
-            .eq('id', chargeId)
+            .eq('id', resolvedChargeId)
         : await supabase
             .from('order_guests')
             .update({ payment_method: 'transferencia' })
