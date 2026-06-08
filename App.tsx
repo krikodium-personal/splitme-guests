@@ -2649,6 +2649,7 @@ const App: React.FC = () => {
             onBack={() => navigateToView('ORDER_SUMMARY')}
             onContinuePayment={() => navigateToView('CHECKOUT')}
             onNewSplit={() => navigateToView('SPLIT_BILL')}
+            onGoToMenu={() => navigateToView('MENU')}
             onChangeSplit={handleResetPendingSplit}
           />
         } />

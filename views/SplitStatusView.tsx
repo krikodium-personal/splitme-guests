@@ -7,6 +7,7 @@ interface SplitStatusViewProps {
   onBack: () => void;
   onContinuePayment: () => void;
   onNewSplit: () => void;
+  onGoToMenu: () => void;
   onChangeSplit: () => void;
   guests: Guest[];
   splitData: any[] | null;
@@ -28,7 +29,7 @@ const getPaymentMethodLabel = (method?: string | null) => {
   }
 };
 
-const SplitStatusView: React.FC<SplitStatusViewProps> = ({ onBack, onContinuePayment, onNewSplit, onChangeSplit, guests, splitData }) => {
+const SplitStatusView: React.FC<SplitStatusViewProps> = ({ onBack, onContinuePayment, onNewSplit, onGoToMenu, onChangeSplit, guests, splitData }) => {
   const diners = useMemo(() => {
     return (splitData || [])
       .map((share) => {
@@ -53,6 +54,7 @@ const SplitStatusView: React.FC<SplitStatusViewProps> = ({ onBack, onContinuePay
   const pendingTotal = Math.max(0, totalAssigned - totalPaid);
   const paidCount = diners.filter(diner => diner.paid).length;
   const hasPendingPayments = pendingTotal > 0.01;
+  const allDinersPaid = diners.length > 0 && paidCount === diners.length && !hasPendingPayments;
 
   return (
     <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden pb-36 bg-background-dark text-white font-display antialiased">
@@ -123,6 +125,11 @@ const SplitStatusView: React.FC<SplitStatusViewProps> = ({ onBack, onContinuePay
           <button onClick={onContinuePayment} className="w-full h-14 rounded-2xl font-black flex items-center justify-center gap-2 bg-primary text-background-dark shadow-xl shadow-primary/20 active:scale-[0.98] transition-all">
             <span className="material-symbols-outlined font-black">payments</span>
             <span>Continuar con pagos</span>
+          </button>
+        ) : allDinersPaid ? (
+          <button onClick={onGoToMenu} className="w-full h-14 rounded-2xl font-black flex items-center justify-center gap-2 bg-primary text-background-dark shadow-xl shadow-primary/20 active:scale-[0.98] transition-all">
+            <span className="material-symbols-outlined font-black">restaurant_menu</span>
+            <span>Volver al menú</span>
           </button>
         ) : (
           <button onClick={onNewSplit} className="w-full h-14 rounded-2xl font-black flex items-center justify-center gap-2 bg-primary text-background-dark shadow-xl shadow-primary/20 active:scale-[0.98] transition-all">
