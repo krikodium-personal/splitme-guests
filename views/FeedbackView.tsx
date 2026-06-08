@@ -34,45 +34,183 @@ const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuI
   // Función para actualizar el promedio del mesero en tiempo real para el Panel Admin
   const syncWaiterStats = async (waiterId: string) => {
     try {
-      const { data: reviewsData } = await supabase
-        .from('reviews')
-        .select('waiter_rating')
-        .eq('waiter_id', waiterId)
-        .not('waiter_rating', 'is', null);
+      const { error: rpcError } = await supabase.rpc('sync_waiter_rating_summary', {
+        p_waiter_id: waiterId
+      });
 
-      if (reviewsData && reviewsData.length > 0) {
-        const ratings = reviewsData.map(r => r.waiter_rating);
+      if (!rpcError) return;
+
+      console.warn('sync_waiter_rating_summary no disponible, usando fallback cliente:', rpcError);
+
+      const [activeReviewsResult, archivedReviewsResult] = await Promise.all([
+        supabase
+          .from('reviews')
+          .select('waiter_rating')
+          .eq('waiter_id', waiterId)
+          .not('waiter_rating', 'is', null),
+        supabase
+          .from('reviews_archive')
+          .select('waiter_rating')
+          .eq('waiter_id', waiterId)
+          .not('waiter_rating', 'is', null)
+      ]);
+
+      if (activeReviewsResult.error) {
+        console.error('Error leyendo calificaciones activas del mesero:', activeReviewsResult.error);
+      }
+
+      if (archivedReviewsResult.error) {
+        console.error('Error leyendo calificaciones archivadas del mesero:', archivedReviewsResult.error);
+      }
+
+      const ratings = [
+        ...(activeReviewsResult.data || []),
+        ...(archivedReviewsResult.data || [])
+      ]
+        .map(row => Number(row.waiter_rating) || 0)
+        .filter(rating => rating > 0);
+
+      if (ratings.length > 0) {
         const avg = ratings.reduce((a, b) => a + b, 0) / ratings.length;
-        await supabase
+        const roundedAvg = parseFloat(avg.toFixed(1));
+
+        const { error: waiterCountError } = await supabase
           .from('waiters')
-          .update({ average_rating: parseFloat(avg.toFixed(1)) })
+          .update({ average_rating: roundedAvg, waiter_rating_count: ratings.length })
           .eq('id', waiterId);
+
+        if (waiterCountError) {
+          await supabase
+            .from('waiters')
+            .update({ average_rating: roundedAvg })
+            .eq('id', waiterId);
+        }
       }
     } catch (e) {
       console.error("Error sincronizando estadísticas del mesero:", e);
     }
   };
 
-  // Función para actualizar el promedio del plato para el Panel Admin (Favoritos)
+  // Función para actualizar el promedio del plato para el Panel Admin.
+  // Toma ratings activos + archivados y mantiene platos_rating_summary al día.
   const syncMenuItemStats = async (menuItemId: string) => {
     try {
-      const { data: itemRatingsData } = await supabase
-        .from('order_items')
-        .select('item_rating')
-        .eq('menu_item_id', menuItemId)
-        .not('item_rating', 'is', null);
+      const menuItem = menuItems.find(item => item.id === menuItemId);
+      const restaurantId = restaurant?.id;
 
-      if (itemRatingsData && itemRatingsData.length > 0) {
-        const ratings = itemRatingsData.map(r => r.item_rating);
+      if (!menuItem || !restaurantId) return;
+
+      const { error: rpcError } = await supabase.rpc('sync_plato_rating_summary', {
+        p_restaurant_id: restaurantId,
+        p_menu_item_id: menuItemId
+      });
+
+      if (!rpcError) return;
+
+      console.warn('sync_plato_rating_summary no disponible, usando fallback cliente:', rpcError);
+
+      const [activeRatingsResult, archivedRatingsResult] = await Promise.all([
+        supabase
+          .from('order_items')
+          .select('item_rating')
+          .eq('menu_item_id', menuItemId)
+          .not('item_rating', 'is', null),
+        supabase
+          .from('order_items_archive')
+          .select('item_rating')
+          .eq('menu_item_id', menuItemId)
+          .not('item_rating', 'is', null)
+      ]);
+
+      if (activeRatingsResult.error) {
+        console.error('Error leyendo ratings activos del plato:', activeRatingsResult.error);
+      }
+
+      if (archivedRatingsResult.error) {
+        console.error('Error leyendo ratings archivados del plato:', archivedRatingsResult.error);
+      }
+
+      const ratings = [
+        ...(activeRatingsResult.data || []),
+        ...(archivedRatingsResult.data || [])
+      ]
+        .map(row => Number(row.item_rating) || 0)
+        .filter(rating => rating > 0);
+
+      if (ratings.length > 0) {
         const avg = ratings.reduce((a, b) => a + b, 0) / ratings.length;
+        const roundedAvg = parseFloat(avg.toFixed(1));
+
         await supabase
           .from('menu_items')
-          .update({ average_rating: parseFloat(avg.toFixed(1)) })
+          .update({ average_rating: roundedAvg })
           .eq('id', menuItemId);
+
+        const summaryPayload = {
+          restaurant_id: restaurantId,
+          plato_nombre: menuItem.name,
+          promedio: roundedAvg,
+          total_votos: ratings.length
+        };
+
+        const { data: updatedSummary, error: updateSummaryError } = await supabase
+          .from('platos_rating_summary')
+          .update(summaryPayload)
+          .eq('restaurant_id', restaurantId)
+          .eq('plato_nombre', menuItem.name)
+          .select('restaurant_id')
+          .limit(1);
+
+        if (updateSummaryError) {
+          console.error('Error actualizando platos_rating_summary:', updateSummaryError);
+        } else if (!updatedSummary || updatedSummary.length === 0) {
+          const { error: insertSummaryError } = await supabase
+            .from('platos_rating_summary')
+            .insert(summaryPayload);
+
+          if (insertSummaryError) {
+            console.error('Error insertando platos_rating_summary:', insertSummaryError);
+          }
+        }
       }
     } catch (e) {
       console.error("Error sincronizando estadísticas del plato:", e);
     }
+  };
+
+  const updateOrderItemRating = async (cartItem: OrderItem, rating: number) => {
+    const { data: ratedMenuItemId, error: rpcError } = await supabase.rpc('set_order_item_rating', {
+      p_order_item_id: cartItem.id,
+      p_rating: rating
+    });
+
+    if (!rpcError && ratedMenuItemId) return true;
+
+    if (rpcError) {
+      console.warn('set_order_item_rating no disponible, usando fallback cliente:', rpcError);
+    }
+
+    const { data: activeItem, error: activeError } = await supabase
+      .from('order_items')
+      .update({ item_rating: rating })
+      .eq('id', cartItem.id)
+      .select('id')
+      .maybeSingle();
+
+    if (!activeError && activeItem) return true;
+
+    const { data: archivedItem, error: archivedError } = await supabase
+      .from('order_items_archive')
+      .update({ item_rating: rating })
+      .eq('id', cartItem.id)
+      .select('id')
+      .maybeSingle();
+
+    if (archivedError) {
+      console.error('Error actualizando rating del plato archivado:', archivedError);
+    }
+
+    return Boolean(archivedItem);
   };
 
   const handleSendFeedback = async () => {
@@ -103,21 +241,20 @@ const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuI
 
       // 3. ACTUALIZACIÓN MASIVA DE PLATOS ('order_items')
       // Usamos el ID real de la base de datos que ya viene en el carrito tras handleSendOrder
+      const ratedMenuItemIds = new Set<string>();
       const itemUpdatePromises = cart.map(async (cartItem) => {
         const rating = itemRatings[cartItem.itemId] || 0;
         if (rating > 0) {
-          const { error: itemErr } = await supabase
-            .from('order_items')
-            .update({ item_rating: rating })
-            .eq('id', cartItem.id); // Este ID ahora es el UUID real de Supabase
-          
-          if (!itemErr) {
-            await syncMenuItemStats(cartItem.itemId);
+          const updated = await updateOrderItemRating(cartItem, rating);
+
+          if (updated) {
+            ratedMenuItemIds.add(cartItem.itemId);
           }
         }
       });
 
       await Promise.all(itemUpdatePromises);
+      await Promise.all(Array.from(ratedMenuItemIds).map(syncMenuItemStats));
 
       // 4. ACTUALIZAR ESTADÍSTICAS DEL MESERO
       if (waiterId && waiterRating > 0) {
