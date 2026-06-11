@@ -509,10 +509,14 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
       {waiter ? (
         <button
           onClick={() => setIsWaiterModalOpen(true)}
-          className="fixed bottom-28 right-4 z-[70] size-14 bg-primary hover:bg-primary-dark text-black rounded-full shadow-lg shadow-primary/30 flex items-center justify-center transition-all active:scale-95"
+          className="fixed bottom-28 right-4 z-[70] size-14 rounded-full shadow-xl shadow-black/40 flex items-center justify-center overflow-hidden border-2 border-primary/60 transition-all active:scale-95"
           title="Solicitar al mesero"
         >
-          <span className="material-symbols-outlined text-2xl">notifications</span>
+          <img
+            src={waiter?.profile_photo_url || 'https://lh3.googleusercontent.com/aida-public/AB6AXuDyiwOtsINFh8RspVDg_Wx4QKXthNxCS7ZJlDSZvL6ADwFD3WRUpKHGhrscxV9dcR7w7guM4E-iFCNXx-tDgHs1BrbfGjolJoASehM-SEc4Pe6bKEx7zjcF4WAcON7mbdWJCepEdMPkBZ36lB_4tPTsJeNzTNqRNGKgusVb3U_X0WGEAgij6Y48HIunhj_BC8lxMdsB5ublmAltnyYerUKa_NkT8aybLFkaaRkQGQ_irdtS2ZQwrNGNj6b1ZrWY1HRClBeExJL615bG'}
+            alt={waiter?.nickname || waiter?.full_name || 'Mesero'}
+            className="w-full h-full object-cover"
+          />
         </button>
       ) : null}
 
