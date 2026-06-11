@@ -1174,6 +1174,7 @@ const MenuView: React.FC<MenuViewProps> = ({
               const slug = cat === 'Destacados' ? 'destacados' : categoryToSlug(cat);
               onCategoryChange(cat);
               window.history.replaceState(null, '', `/menu/${slug}`);
+              mainScrollRef.current?.scrollTo({ top: 0, behavior: 'instant' });
             }}
               className={`flex items-center justify-center gap-1.5 h-9 px-4 rounded-full whitespace-nowrap text-sm font-semibold transition-colors shrink-0 ${
                 isSelected
@@ -1199,6 +1200,7 @@ const MenuView: React.FC<MenuViewProps> = ({
               const categorySlug = initialCategory === 'Destacados' ? 'destacados' : categoryToSlug(initialCategory);
               setSelectedSubcategory(null);
               window.history.replaceState(null, '', `/menu/${categorySlug}`);
+              mainScrollRef.current?.scrollTo({ top: 0, behavior: 'instant' });
             }}
             className={`flex items-center px-3 py-1.5 rounded-full whitespace-nowrap text-xs font-semibold transition-colors shrink-0 ${
               selectedSubcategory === null
@@ -1223,6 +1225,7 @@ const MenuView: React.FC<MenuViewProps> = ({
                   const subcategorySlug = categoryToSlug(subcat.name);
                   setSelectedSubcategory(subcat.id);
                   window.history.replaceState(null, '', `/menu/${categorySlug}/${subcategorySlug}`);
+                  mainScrollRef.current?.scrollTo({ top: 0, behavior: 'instant' });
                 }}
                 className={`flex items-center px-3 py-1.5 rounded-full whitespace-nowrap text-xs font-semibold transition-colors shrink-0 ${
                   isSelected
