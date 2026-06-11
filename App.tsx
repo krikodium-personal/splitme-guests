@@ -2527,7 +2527,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="max-w-md mx-auto min-h-screen bg-background-dark shadow-2xl relative flex flex-col overflow-hidden">
+    <>
       {showReadyToast && (
         <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[200] w-[90%] max-w-sm animate-fade-in-up">
           <div className="bg-primary text-background-dark p-4 rounded-2xl shadow-2xl flex items-center gap-4 border border-white/20">
@@ -2542,6 +2542,7 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
+    <div className="max-w-md mx-auto min-h-screen bg-background-dark shadow-2xl relative flex flex-col overflow-hidden">
 
       <Routes>
         <Route path="/" element={<Navigate to={`/scan${location.search || ''}`} replace />} />
@@ -2905,6 +2906,7 @@ const App: React.FC = () => {
       </Routes>
       <BuildBadge />
     </div>
+    </>
   );
 };
 
