@@ -237,7 +237,7 @@ const MenuView: React.FC<MenuViewProps> = ({
   const [newGuestName, setNewGuestName] = useState('');
   const [selectedSubcategory, setSelectedSubcategory] = useState<string | null>(null);
   const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
-  const [banners, setBanners] = useState<{ id: string; image_url: string }[]>([]);
+  const [banners, setBanners] = useState<{ id: string; image_url: string; title: string | null; description: string | null }[]>([]);
   const [activeBannerIndex, setActiveBannerIndex] = useState(0);
   const [selectedReplaceOptionId, setSelectedReplaceOptionId] = useState<string | null>(null);
   const [selectedReplaceOptionIds, setSelectedReplaceOptionIds] = useState<Record<string, string[]>>({}); // Para grupos con selection=multiple
@@ -280,7 +280,7 @@ const MenuView: React.FC<MenuViewProps> = ({
 
   useEffect(() => {
     if (!restaurant?.id) return;
-    supabase.from('banners').select('id, image_url').eq('restaurant_id', restaurant.id).eq('active', true).order('sort_order').then(({ data }) => {
+    supabase.from('banners').select('id, image_url, title, description').eq('restaurant_id', restaurant.id).eq('active', true).order('sort_order').then(({ data }) => {
       if (data?.length) setBanners(data);
     });
   }, [restaurant?.id]);
@@ -1251,8 +1251,17 @@ const MenuView: React.FC<MenuViewProps> = ({
                 style={{ transform: `translateX(-${activeBannerIndex * 100}%)` }}
               >
                 {banners.map(banner => (
-                  <div key={banner.id} className="w-full h-full shrink-0 rounded-3xl overflow-hidden">
+                  <div key={banner.id} className="w-full h-full shrink-0 rounded-3xl overflow-hidden relative">
                     <img src={banner.image_url} alt="" className="w-full h-full object-cover" />
+                    {(banner.title || banner.description) && (
+                      <>
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent pointer-events-none" />
+                        <div className="absolute bottom-0 left-0 right-0 p-4">
+                          {banner.title && <p className="text-white font-bold text-[17px] leading-snug drop-shadow">{banner.title}</p>}
+                          {banner.description && <p className="text-white/80 text-[13px] mt-0.5 leading-snug drop-shadow">{banner.description}</p>}
+                        </div>
+                      </>
+                    )}
                   </div>
                 ))}
               </div>
