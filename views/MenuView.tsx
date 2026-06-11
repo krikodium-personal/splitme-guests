@@ -5,6 +5,7 @@ import { Guest, MenuItem, MenuSectionHeader, OrderItem, VariantGroup, VariantOpt
 import { getInitials, getGuestColor } from './GuestInfoView';
 import WaiterRequestModal from './WaiterRequestModal';
 import { getVariantGroups } from '../lib/variantDisplay';
+import { supabase } from '../lib/supabase';
 
 interface MenuViewProps {
   guests: Guest[];
@@ -236,6 +237,8 @@ const MenuView: React.FC<MenuViewProps> = ({
   const [newGuestName, setNewGuestName] = useState('');
   const [selectedSubcategory, setSelectedSubcategory] = useState<string | null>(null);
   const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
+  const [banners, setBanners] = useState<{ id: string; image_url: string }[]>([]);
+  const [activeBannerIndex, setActiveBannerIndex] = useState(0);
   const [selectedReplaceOptionId, setSelectedReplaceOptionId] = useState<string | null>(null);
   const [selectedReplaceOptionIds, setSelectedReplaceOptionIds] = useState<Record<string, string[]>>({}); // Para grupos con selection=multiple
   const [selectedAddOptionIds, setSelectedAddOptionIds] = useState<string[]>([]);
@@ -274,6 +277,19 @@ const MenuView: React.FC<MenuViewProps> = ({
   useEffect(() => {
     onRefreshMenuItems?.();
   }, [initialCategory, selectedSubcategory, onRefreshMenuItems]);
+
+  useEffect(() => {
+    if (!restaurant?.id) return;
+    supabase.from('banners').select('id, image_url').eq('restaurant_id', restaurant.id).eq('active', true).order('sort_order').then(({ data }) => {
+      if (data?.length) setBanners(data);
+    });
+  }, [restaurant?.id]);
+
+  useEffect(() => {
+    if (banners.length <= 1) return;
+    const timer = setInterval(() => setActiveBannerIndex(i => (i + 1) % banners.length), 4000);
+    return () => clearInterval(timer);
+  }, [banners.length]);
 
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const mainScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1228,6 +1244,31 @@ const MenuView: React.FC<MenuViewProps> = ({
       <div style={{ paddingTop: scrollTop <= 10 ? headerHeight : 0 }} className="transition-[padding] duration-200">
       {initialCategory === 'Inicio' ? (
         <main className="pb-36 flex-1 pt-5 space-y-8">
+          {banners.length > 0 && (
+            <div className="relative w-full h-56 overflow-hidden px-4">
+              <div
+                className="flex h-full transition-transform duration-500 ease-in-out"
+                style={{ transform: `translateX(-${activeBannerIndex * 100}%)` }}
+              >
+                {banners.map(banner => (
+                  <div key={banner.id} className="w-full h-full shrink-0 rounded-3xl overflow-hidden">
+                    <img src={banner.image_url} alt="" className="w-full h-full object-cover" />
+                  </div>
+                ))}
+              </div>
+              {banners.length > 1 && (
+                <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
+                  {banners.map((_, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setActiveBannerIndex(i)}
+                      className={`rounded-full transition-all duration-300 ${i === activeBannerIndex ? 'bg-white w-4 h-1.5' : 'bg-white/40 w-1.5 h-1.5'}`}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           {([
             { title: 'Elegidos por el Chef', items: featuredItems, icon: 'restaurant_menu' },
             { title: 'Los más pedidos', items: mostPedidosItems, icon: 'trending_up' },
