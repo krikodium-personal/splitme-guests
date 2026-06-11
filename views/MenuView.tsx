@@ -237,7 +237,7 @@ const MenuView: React.FC<MenuViewProps> = ({
   const [newGuestName, setNewGuestName] = useState('');
   const [selectedSubcategory, setSelectedSubcategory] = useState<string | null>(null);
   const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
-  const [crossGuestConfirmed, setCrossGuestConfirmed] = useState(false);
+  const crossGuestConfirmedRef = useRef(false);
   const [crossGuestPendingAction, setCrossGuestPendingAction] = useState<(() => void) | null>(null);
   const [banners, setBanners] = useState<{ id: string; image_url: string; title: string | null; description: string | null }[]>([]);
   const [activeBannerIndex, setActiveBannerIndex] = useState(0);
@@ -402,7 +402,7 @@ const MenuView: React.FC<MenuViewProps> = ({
 
   // Resetear confirmación cross-guest cuando cambia el comensal seleccionado
   useEffect(() => {
-    setCrossGuestConfirmed(false);
+    crossGuestConfirmedRef.current = false;
   }, [selectedGuestId]);
 
   // Scroll al inicio del contenido al cambiar categoría o subcategoría
@@ -599,7 +599,7 @@ const MenuView: React.FC<MenuViewProps> = ({
     
     if (addingItems.has(item.id)) return;
     
-    if (identifiedGuestId && selectedGuestId !== identifiedGuestId && !crossGuestConfirmed) {
+    if (identifiedGuestId && selectedGuestId !== identifiedGuestId && !crossGuestConfirmedRef.current) {
       const name = guests.find(g => g.id === selectedGuestId)?.name || 'otra persona';
       setCrossGuestPendingAction(() => () => handleIncrement(e, item));
       return;
@@ -682,7 +682,7 @@ const MenuView: React.FC<MenuViewProps> = ({
     
     if (addingItems.has(showDetail.id)) return;
     
-    if (identifiedGuestId && selectedGuestId !== identifiedGuestId && !crossGuestConfirmed) {
+    if (identifiedGuestId && selectedGuestId !== identifiedGuestId && !crossGuestConfirmedRef.current) {
       const name = guests.find(g => g.id === selectedGuestId)?.name || 'otra persona';
       setCrossGuestPendingAction(() => () => handleAddNew());
       return;
@@ -2136,7 +2136,7 @@ const MenuView: React.FC<MenuViewProps> = ({
               </button>
               <button
                 onClick={() => {
-                  setCrossGuestConfirmed(true);
+                  crossGuestConfirmedRef.current = true;
                   const action = crossGuestPendingAction;
                   setCrossGuestPendingAction(null);
                   action?.();
