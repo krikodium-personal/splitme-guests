@@ -1252,10 +1252,10 @@ const MenuView: React.FC<MenuViewProps> = ({
       {initialCategory === 'Inicio' ? (
         <main className="pb-36 flex-1 pt-5 space-y-8">
           {banners.length > 0 && (
-            <div className="relative w-full h-56 px-4">
+            <div className="relative h-56 mx-4 rounded-3xl overflow-hidden">
               <div
                 ref={bannerScrollRef}
-                className="flex h-full gap-3 overflow-x-auto no-scrollbar snap-x snap-mandatory scroll-smooth"
+                className="flex h-full w-full overflow-x-auto no-scrollbar snap-x snap-mandatory"
                 onScroll={e => {
                   const el = e.currentTarget;
                   const idx = Math.round(el.scrollLeft / el.offsetWidth);
@@ -1263,7 +1263,7 @@ const MenuView: React.FC<MenuViewProps> = ({
                 }}
               >
                 {banners.map(banner => (
-                  <div key={banner.id} className="w-full h-full shrink-0 snap-center rounded-3xl overflow-hidden relative">
+                  <div key={banner.id} className="min-w-full h-full shrink-0 snap-start relative">
                     <img src={banner.image_url} alt="" className="w-full h-full object-cover" />
                     {(banner.title || banner.description) && (
                       <>
@@ -1278,7 +1278,7 @@ const MenuView: React.FC<MenuViewProps> = ({
                 ))}
               </div>
               {banners.length > 1 && (
-                <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
+                <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5 z-10">
                   {banners.map((_, i) => (
                     <button
                       key={i}
