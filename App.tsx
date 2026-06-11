@@ -171,7 +171,13 @@ const App: React.FC = () => {
   useEffect(() => {
     activeGuestIdRef.current = activeGuestId;
   }, [activeGuestId]);
-  const [activeCategory, setActiveCategory] = useState<string>('Destacados');
+  const [activeCategory, setActiveCategory] = useState<string>(() => {
+    const match = window.location.pathname.match(/^\/menu\/([^/]+)/);
+    const slug = match?.[1]?.toLowerCase();
+    if (!slug || slug === 'inicio') return 'Inicio';
+    if (slug === 'destacados') return 'Destacados';
+    return 'Inicio';
+  });
   const [cart, setCart] = useState<OrderItem[]>([]);
   const [batches, setBatches] = useState<OrderBatch[]>([]);
   const [orderGuestCharges, setOrderGuestCharges] = useState<OrderGuestCharge[]>([]);
