@@ -237,6 +237,8 @@ const MenuView: React.FC<MenuViewProps> = ({
   const [newGuestName, setNewGuestName] = useState('');
   const [selectedSubcategory, setSelectedSubcategory] = useState<string | null>(null);
   const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
+  const [crossGuestConfirmed, setCrossGuestConfirmed] = useState(false);
+  const [crossGuestPendingAction, setCrossGuestPendingAction] = useState<(() => void) | null>(null);
   const [banners, setBanners] = useState<{ id: string; image_url: string; title: string | null; description: string | null }[]>([]);
   const [activeBannerIndex, setActiveBannerIndex] = useState(0);
   const bannerScrollRef = useRef<HTMLDivElement>(null);
@@ -397,6 +399,11 @@ const MenuView: React.FC<MenuViewProps> = ({
   useEffect(() => {
     setSelectedSubcategory(null);
   }, [initialCategory]);
+
+  // Resetear confirmación cross-guest cuando cambia el comensal seleccionado
+  useEffect(() => {
+    setCrossGuestConfirmed(false);
+  }, [selectedGuestId]);
 
   // Scroll al inicio del contenido al cambiar categoría o subcategoría
   useEffect(() => {
@@ -592,11 +599,12 @@ const MenuView: React.FC<MenuViewProps> = ({
     
     if (addingItems.has(item.id)) return;
     
-    if (identifiedGuestId && selectedGuestId !== identifiedGuestId) {
+    if (identifiedGuestId && selectedGuestId !== identifiedGuestId && !crossGuestConfirmed) {
       const name = guests.find(g => g.id === selectedGuestId)?.name || 'otra persona';
-      if (!window.confirm(`Estás sumando platos a ${name}, que no es tu sesión. ¿Continuar?`)) return;
+      setCrossGuestPendingAction(() => () => handleIncrement(e, item));
+      return;
     }
-    
+
     // Si tiene variantes, abrir PDP para que elija
     if (hasAnyVariants(item)) {
       handleOpenPdp(item);
@@ -674,11 +682,12 @@ const MenuView: React.FC<MenuViewProps> = ({
     
     if (addingItems.has(showDetail.id)) return;
     
-    if (identifiedGuestId && selectedGuestId !== identifiedGuestId) {
+    if (identifiedGuestId && selectedGuestId !== identifiedGuestId && !crossGuestConfirmed) {
       const name = guests.find(g => g.id === selectedGuestId)?.name || 'otra persona';
-      if (!window.confirm(`Estás sumando platos a ${name}, que no es tu sesión. ¿Continuar?`)) return;
+      setCrossGuestPendingAction(() => () => handleAddNew());
+      return;
     }
-    
+
     // Si hay grupo replace required sin selección, o grupo add required sin al menos una opción
     const hasRequiredReplaceMissing = variantReplaceGroups.some(g => {
       if (!isRequiredGroup(g)) return false;
@@ -2100,6 +2109,46 @@ const MenuView: React.FC<MenuViewProps> = ({
         tableNumber={table?.table_number}
         orderId={activeOrderId}
       />
+
+      {/* Modal confirmación agregar platos a otro comensal */}
+      {crossGuestPendingAction && (
+        <div className="fixed inset-0 z-[200] flex items-end justify-center animate-fade-in">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setCrossGuestPendingAction(null)} />
+          <div className="relative z-10 w-full max-w-md mx-auto bg-surface-dark rounded-t-3xl p-6 pb-10 border-t border-white/10 shadow-2xl animate-fade-in-up">
+            <div className="w-10 h-1 bg-white/20 rounded-full mx-auto mb-6" />
+            <div className="flex items-center gap-3 mb-3">
+              <div className="size-10 rounded-2xl bg-primary/15 flex items-center justify-center shrink-0">
+                <span className="material-symbols-outlined text-primary text-[20px]">person_add</span>
+              </div>
+              <h3 className="text-white font-black text-lg leading-tight">
+                Estás pidiendo para {guests.find(g => g.id === selectedGuestId)?.name || 'otra persona'}
+              </h3>
+            </div>
+            <p className="text-text-secondary text-sm mb-6 pl-[52px]">
+              Este plato se sumará a su pedido, no al tuyo. ¿Querés continuar?
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setCrossGuestPendingAction(null)}
+                className="flex-1 h-13 rounded-2xl bg-white/5 text-white font-bold text-sm border border-white/10"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  setCrossGuestConfirmed(true);
+                  const action = crossGuestPendingAction;
+                  setCrossGuestPendingAction(null);
+                  action?.();
+                }}
+                className="flex-1 h-13 rounded-2xl bg-primary text-black font-black text-sm"
+              >
+                Sí, agregar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
