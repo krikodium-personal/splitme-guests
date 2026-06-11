@@ -87,7 +87,8 @@ export interface MenuItem {
   subcategory_id?: string;
   /** Sección/subtítulo al que pertenece (menu_section_headers). NULL = sin sección. */
   section_id?: string | null;
-  average_rating?: number; 
+  average_rating?: number;
+  rating_count?: number;
   is_featured?: boolean;
   is_new?: boolean;
   dietary_tags?: string[]; 
