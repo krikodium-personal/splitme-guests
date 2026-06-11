@@ -239,6 +239,7 @@ const MenuView: React.FC<MenuViewProps> = ({
   const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
   const [banners, setBanners] = useState<{ id: string; image_url: string; title: string | null; description: string | null }[]>([]);
   const [activeBannerIndex, setActiveBannerIndex] = useState(0);
+  const bannerScrollRef = useRef<HTMLDivElement>(null);
   const [selectedReplaceOptionId, setSelectedReplaceOptionId] = useState<string | null>(null);
   const [selectedReplaceOptionIds, setSelectedReplaceOptionIds] = useState<Record<string, string[]>>({}); // Para grupos con selection=multiple
   const [selectedAddOptionIds, setSelectedAddOptionIds] = useState<string[]>([]);
@@ -287,7 +288,13 @@ const MenuView: React.FC<MenuViewProps> = ({
 
   useEffect(() => {
     if (banners.length <= 1) return;
-    const timer = setInterval(() => setActiveBannerIndex(i => (i + 1) % banners.length), 4000);
+    const timer = setInterval(() => {
+      setActiveBannerIndex(i => {
+        const next = (i + 1) % banners.length;
+        bannerScrollRef.current?.scrollTo({ left: bannerScrollRef.current.offsetWidth * next, behavior: 'smooth' });
+        return next;
+      });
+    }, 4000);
     return () => clearInterval(timer);
   }, [banners.length]);
 
@@ -1245,13 +1252,18 @@ const MenuView: React.FC<MenuViewProps> = ({
       {initialCategory === 'Inicio' ? (
         <main className="pb-36 flex-1 pt-5 space-y-8">
           {banners.length > 0 && (
-            <div className="relative w-full h-56 overflow-hidden px-4">
+            <div className="relative w-full h-56 px-4">
               <div
-                className="flex h-full transition-transform duration-500 ease-in-out"
-                style={{ transform: `translateX(-${activeBannerIndex * 100}%)` }}
+                ref={bannerScrollRef}
+                className="flex h-full gap-3 overflow-x-auto no-scrollbar snap-x snap-mandatory scroll-smooth"
+                onScroll={e => {
+                  const el = e.currentTarget;
+                  const idx = Math.round(el.scrollLeft / el.offsetWidth);
+                  setActiveBannerIndex(idx);
+                }}
               >
                 {banners.map(banner => (
-                  <div key={banner.id} className="w-full h-full shrink-0 rounded-3xl overflow-hidden relative">
+                  <div key={banner.id} className="w-full h-full shrink-0 snap-center rounded-3xl overflow-hidden relative">
                     <img src={banner.image_url} alt="" className="w-full h-full object-cover" />
                     {(banner.title || banner.description) && (
                       <>
@@ -1270,7 +1282,10 @@ const MenuView: React.FC<MenuViewProps> = ({
                   {banners.map((_, i) => (
                     <button
                       key={i}
-                      onClick={() => setActiveBannerIndex(i)}
+                      onClick={() => {
+                        bannerScrollRef.current?.scrollTo({ left: bannerScrollRef.current.offsetWidth * i, behavior: 'smooth' });
+                        setActiveBannerIndex(i);
+                      }}
                       className={`rounded-full transition-all duration-300 ${i === activeBannerIndex ? 'bg-white w-4 h-1.5' : 'bg-white/40 w-1.5 h-1.5'}`}
                     />
                   ))}
