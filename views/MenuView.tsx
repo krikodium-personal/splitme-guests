@@ -926,8 +926,10 @@ const MenuView: React.FC<MenuViewProps> = ({
   }, [menuItems]);
 
   const mejorCalificadosItems = useMemo(() => {
-    // Placeholder: ordenados por nombre como proxy — reemplazar con ratings reales
-    return [...menuItems].sort((a, b) => a.name.localeCompare(b.name)).slice(0, 12);
+    return [...menuItems]
+      .filter(item => (item.rating_count ?? 0) > 0)
+      .sort((a, b) => (b.average_rating ?? 0) - (a.average_rating ?? 0))
+      .slice(0, 12);
   }, [menuItems]);
 
   // Agrupar items por menu_section_headers (subtítulos definidos en admin).
