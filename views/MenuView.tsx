@@ -1170,13 +1170,14 @@ const MenuView: React.FC<MenuViewProps> = ({
           return (
           <button
             key={cat}
-            onClick={() => {
+            onClick={(e) => {
               const slug = cat === 'Destacados' ? 'destacados' : categoryToSlug(cat);
               onCategoryChange(cat);
               window.history.replaceState(null, '', `/menu/${slug}`);
               mainScrollRef.current?.scrollTo({ top: 0, behavior: 'instant' });
               lastScrollYRef.current = 0;
               lastGestureTimeRef.current = 0;
+              (e.currentTarget as HTMLElement).blur();
             }}
               className={`flex items-center justify-center gap-1.5 h-9 px-4 rounded-full whitespace-nowrap text-sm font-semibold transition-colors shrink-0 ${
                 isSelected
@@ -1198,13 +1199,14 @@ const MenuView: React.FC<MenuViewProps> = ({
       {hasSubcategories && (
         <nav className="flex gap-3 overflow-x-auto no-scrollbar px-4 py-3 bg-background-dark border-b border-white/5 shrink-0">
           <button
-            onClick={() => {
+            onClick={(e) => {
               const categorySlug = initialCategory === 'Destacados' ? 'destacados' : categoryToSlug(initialCategory);
               setSelectedSubcategory(null);
               window.history.replaceState(null, '', `/menu/${categorySlug}`);
               mainScrollRef.current?.scrollTo({ top: 0, behavior: 'instant' });
               lastScrollYRef.current = 0;
               lastGestureTimeRef.current = 0;
+              (e.currentTarget as HTMLElement).blur();
             }}
             className={`flex items-center px-3 py-1.5 rounded-full whitespace-nowrap text-xs font-semibold transition-colors shrink-0 ${
               selectedSubcategory === null
@@ -1224,14 +1226,15 @@ const MenuView: React.FC<MenuViewProps> = ({
             return (
               <button
                 key={subcat.id}
-                onClick={() => {
+                onClick={(e) => {
                   const categorySlug = initialCategory === 'Destacados' ? 'destacados' : categoryToSlug(initialCategory);
                   const subcategorySlug = categoryToSlug(subcat.name);
                   setSelectedSubcategory(subcat.id);
                   window.history.replaceState(null, '', `/menu/${categorySlug}/${subcategorySlug}`);
                   mainScrollRef.current?.scrollTo({ top: 0, behavior: 'instant' });
-              lastScrollYRef.current = 0;
-              lastGestureTimeRef.current = 0;
+                  lastScrollYRef.current = 0;
+                  lastGestureTimeRef.current = 0;
+                  (e.currentTarget as HTMLElement).blur();
                 }}
                 className={`flex items-center px-3 py-1.5 rounded-full whitespace-nowrap text-xs font-semibold transition-colors shrink-0 ${
                   isSelected
