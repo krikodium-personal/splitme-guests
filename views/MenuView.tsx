@@ -922,14 +922,14 @@ const MenuView: React.FC<MenuViewProps> = ({
   const featuredItems = useMemo(() => menuItems.filter(item => item.is_featured), [menuItems]);
 
   const mostPedidosItems = useMemo(() => {
-    return [...menuItems].sort((a, b) => (b.times_ordered ?? 0) - (a.times_ordered ?? 0)).slice(0, 12);
+    return [...menuItems].sort((a, b) => (b.times_ordered ?? 0) - (a.times_ordered ?? 0)).slice(0, 10);
   }, [menuItems]);
 
   const mejorCalificadosItems = useMemo(() => {
     return [...menuItems]
       .filter(item => (item.rating_count ?? 0) > 0)
       .sort((a, b) => (b.average_rating ?? 0) - (a.average_rating ?? 0))
-      .slice(0, 12);
+      .slice(0, 10);
   }, [menuItems]);
 
   // Agrupar items por menu_section_headers (subtítulos definidos en admin).
