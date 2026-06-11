@@ -922,8 +922,7 @@ const MenuView: React.FC<MenuViewProps> = ({
   const featuredItems = useMemo(() => menuItems.filter(item => item.is_featured), [menuItems]);
 
   const mostPedidosItems = useMemo(() => {
-    // Placeholder: ordenados por id desc como proxy — reemplazar con datos reales de historial
-    return [...menuItems].sort((a, b) => b.id.localeCompare(a.id)).slice(0, 12);
+    return [...menuItems].sort((a, b) => (b.times_ordered ?? 0) - (a.times_ordered ?? 0)).slice(0, 12);
   }, [menuItems]);
 
   const mejorCalificadosItems = useMemo(() => {

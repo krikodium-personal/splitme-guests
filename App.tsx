@@ -2163,6 +2163,18 @@ const App: React.FC = () => {
         if (retryErr) throw new Error(`Error al actualizar items: ${retryErr.message}`);
       }
 
+      // Increment times_ordered for each confirmed menu item
+      const menuItemCounts: Record<string, number> = {};
+      for (const item of pendingItems) {
+        const mid = item.itemId as string;
+        menuItemCounts[mid] = (menuItemCounts[mid] || 0) + (item.quantity || 1);
+      }
+      await Promise.all(
+        Object.entries(menuItemCounts).map(([menuItemId, qty]) =>
+          supabase.rpc('increment_times_ordered', { item_id: menuItemId, qty })
+        )
+      );
+
       // total_amount se actualiza por trigger en la BD (excluyendo batches CREADO)
       // No actualizar manualmente para evitar sobrescribir el valor correcto
 

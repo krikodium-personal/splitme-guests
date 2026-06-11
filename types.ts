@@ -104,6 +104,8 @@ export interface MenuItem {
   availability?: boolean;
   /** Cantidad en stock. Si < 5, mostrar "Últimas unidades! X disponibles". */
   stock_quantity?: number | null;
+  /** Número de veces que fue pedido. Usado para ordenar "Los más pedidos". */
+  times_ordered?: number;
   customer_customization?: {
     ingredientsToAdd?: string[];
     ingredientsToRemove?: string[];
