@@ -122,17 +122,17 @@ const SplitStatusView: React.FC<SplitStatusViewProps> = ({ onBack, onContinuePay
 
       <div className="fixed bottom-0 left-0 w-full p-4 bg-background-dark border-t border-white/5 z-20 space-y-3 shadow-2xl">
         {hasPendingPayments ? (
-          <button onClick={onContinuePayment} className="w-full h-14 rounded-2xl font-black flex items-center justify-center gap-2 bg-primary text-background-dark shadow-xl shadow-primary/20 active:scale-[0.98] transition-all">
+          <button onClick={onContinuePayment} className="w-full h-14 rounded-2xl font-black flex items-center justify-center gap-2 bg-primary text-black shadow-xl shadow-primary/20 active:scale-[0.98] transition-all">
             <span className="material-symbols-outlined font-black">payments</span>
             <span>Continuar con pagos</span>
           </button>
         ) : allDinersPaid ? (
-          <button onClick={onGoToMenu} className="w-full h-14 rounded-2xl font-black flex items-center justify-center gap-2 bg-primary text-background-dark shadow-xl shadow-primary/20 active:scale-[0.98] transition-all">
+          <button onClick={onGoToMenu} className="w-full h-14 rounded-2xl font-black flex items-center justify-center gap-2 bg-primary text-black shadow-xl shadow-primary/20 active:scale-[0.98] transition-all">
             <span className="material-symbols-outlined font-black">restaurant_menu</span>
             <span>Volver al menú</span>
           </button>
         ) : (
-          <button onClick={onNewSplit} className="w-full h-14 rounded-2xl font-black flex items-center justify-center gap-2 bg-primary text-background-dark shadow-xl shadow-primary/20 active:scale-[0.98] transition-all">
+          <button onClick={onNewSplit} className="w-full h-14 rounded-2xl font-black flex items-center justify-center gap-2 bg-primary text-black shadow-xl shadow-primary/20 active:scale-[0.98] transition-all">
             <span className="material-symbols-outlined font-black">call_split</span>
             <span>Dividir nuevos cargos</span>
           </button>

@@ -7,7 +7,7 @@
   <title>Splitme</title>
   <link href="https://fonts.googleapis.com" rel="preconnect"/>
   <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
-  <link href="https://fonts.googleapis.com/css2?family=Spline+Sans:wght@300;400;500;600;700&family=Manrope:wght@200..800&family=Be+Vietnam+Pro:wght@400;500;700;800&family=Noto+Sans:wght@400;700&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Noto+Sans:wght@400;700&display=swap" rel="stylesheet"/>
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
   <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
   <!-- Librería de Escaneo QR -->
@@ -18,17 +18,19 @@
       theme: {
         extend: {
           colors: {
-            "primary": "#13ec6a",
-            "background-light": "#f6f8f7",
-            "background-dark": "#102217",
-            "surface-dark": "#1A2E22",
-            "surface-dark-alt": "#162b1f",
-            "border-dark": "#2a4234",
-            "text-secondary": "#9db9a8",
+            "primary": "#F0AE4A",
+            "primary-dark": "#D8961E",
+            "background-light": "#F5F4F0",
+            "background-dark": "#0A0A0A",
+            "background-dark-top": "#2C2B28",
+            "surface-dark": "#1A1816",
+            "surface-dark-alt": "#3E3D3D",
+            "border-dark": "#302C28",
+            "text-secondary": "#B8B2AC",
           },
           fontFamily: {
-            "display": ["Spline Sans", "Manrope", "sans-serif"],
-            "body": ["Noto Sans", "sans-serif"]
+            "display": ["DM Sans", "sans-serif"],
+            "body": ["DM Sans", "Noto Sans", "sans-serif"]
           },
           borderRadius: {
             "DEFAULT": "1rem", 
@@ -37,19 +39,24 @@
             "full": "9999px"
           },
           animation: {
+            'fade-in': 'fadeIn 0.2s ease-out forwards',
             'fade-in-up': 'fadeInUp 0.5s ease-out forwards',
             'pulse-ring': 'pulseRing 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
             'scan': 'scan 2.5s cubic-bezier(0.4, 0, 0.2, 1) infinite',
           },
           keyframes: {
+            fadeIn: {
+              '0%': { opacity: '0' },
+              '100%': { opacity: '1' },
+            },
             fadeInUp: {
               '0%': { opacity: '0', transform: 'translateY(10px)' },
               '100%': { opacity: '1', transform: 'translateY(0)' },
             },
             pulseRing: {
-              '0%': { transform: 'scale(0.8)', boxShadow: '0 0 0 0 rgba(19, 236, 106, 0.7)' },
-              '70%': { transform: 'scale(1)', boxShadow: '0 0 0 10px rgba(19, 236, 106, 0)' },
-              '100%': { transform: 'scale(0.8)', boxShadow: '0 0 0 0 rgba(19, 236, 106, 0)' },
+              '0%': { transform: 'scale(0.8)', boxShadow: '0 0 0 0 rgba(240, 174, 74, 0.7)' },
+              '70%': { transform: 'scale(1)', boxShadow: '0 0 0 10px rgba(240, 174, 74, 0)' },
+              '100%': { transform: 'scale(0.8)', boxShadow: '0 0 0 0 rgba(240, 174, 74, 0)' },
             },
             scan: {
               '0%': { top: '5%', opacity: '0' },
@@ -65,7 +72,7 @@
   <style>
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-    body { min-height: 100dvh; }
+    body { min-height: 100dvh; background: linear-gradient(to bottom, #2C2B28, #0A0A0A) fixed; }
     .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
     .material-symbols-outlined.filled { font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
     #qr-reader video {

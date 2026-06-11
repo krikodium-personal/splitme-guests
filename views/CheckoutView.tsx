@@ -316,11 +316,11 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
           <span className="material-symbols-outlined text-primary text-4xl" style={{ fontVariationSettings: "'wght' 600" }}>check</span>
         </div>
         <h2 className="text-white tracking-tight text-[28px] font-bold leading-tight px-4 text-center">¡División Lista!</h2>
-        <p className="text-[#9db9a8] text-sm mt-1">Orden #4829 • Mesa {tableNumber || '--'}</p>
+        <p className="text-text-secondary text-sm mt-1">Orden #4829 • Mesa {tableNumber || '--'}</p>
       </div>
 
       <div className="px-4 py-3">
-        <div className="w-full flex flex-col gap-1 rounded-2xl bg-surface-dark border border-[#3b5445] p-6 items-center text-center shadow-lg">
+        <div className="w-full flex flex-col gap-1 rounded-2xl bg-surface-dark border border-border-dark p-6 items-center text-center shadow-lg">
           <p className="text-white tracking-tighter text-4xl font-black leading-tight">${formatPrice(grandTotal)}</p>
           <div className="flex items-center gap-1.5 opacity-60">
             <span className="material-symbols-outlined text-sm">receipt_long</span>
@@ -332,7 +332,7 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
       <div className="px-4 py-2">
         <div 
           onClick={() => setShowQr(!showQr)}
-          className={`w-full rounded-2xl bg-gradient-to-br from-[#1c3024] to-[#13241b] border border-[#3b5445] p-4 flex flex-col transition-all duration-300 shadow-md cursor-pointer ${showQr ? 'gap-6' : 'gap-0'}`}
+          className={`w-full rounded-2xl bg-gradient-to-br from-surface-dark to-surface-dark/80 border border-border-dark p-4 flex flex-col transition-all duration-300 shadow-md cursor-pointer ${showQr ? 'gap-6' : 'gap-0'}`}
         >
           <div className="flex items-center justify-between w-full">
             <div className="flex items-center gap-4">
@@ -341,7 +341,7 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
               </div>
               <div className="flex flex-col">
                 <span className="text-white font-bold text-sm">QR de Pago Grupal</span>
-                <span className="text-[#9db9a8] text-xs">Muestra esto para que otros paguen</span>
+                <span className="text-text-secondary text-xs">Muestra esto para que otros paguen</span>
               </div>
             </div>
             <span className={`material-symbols-outlined text-primary transition-transform duration-300 ${showQr ? 'rotate-180' : ''}`}>expand_more</span>
@@ -393,7 +393,7 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
           const isPaid = diner.paid === true;
           
           return (
-            <div key={diner.id} className={`flex items-center p-3 rounded-2xl bg-surface-dark border border-[#3b5445]/50 shadow-sm transition-all ${isPaid ? 'opacity-40 grayscale-[0.5]' : 'border-white/5'}`}>
+            <div key={diner.id} className={`flex items-center p-3 rounded-2xl bg-surface-dark border border-border-dark shadow-sm transition-all ${isPaid ? 'opacity-40 grayscale-[0.5]' : 'border-white/5'}`}>
               <div className="relative">
                 <div className={`size-12 rounded-full flex items-center justify-center border-2 shadow-inner transition-colors ${isMe ? 'border-primary' : 'border-transparent'} ${getGuestColor(diner.id)}`}>
                   <span className="text-sm font-black text-white">{getInitials(diner.name)}</span>
@@ -403,11 +403,11 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
               <div className="ml-3 flex-1 min-w-0">
                 <p className="text-white font-bold truncate">{isMe ? 'Tú' : diner.name}</p>
                 {!isPaid ? (
-                <p className="text-xs font-black uppercase tracking-widest text-[#9db9a8]">
+                <p className="text-xs font-black uppercase tracking-widest text-text-secondary">
                   Debe ${formatPrice(diner.amount)}
                 </p>
                 ) : (
-                  <p className="text-xs font-black uppercase tracking-widest text-[#9db9a8]">
+                  <p className="text-xs font-black uppercase tracking-widest text-text-secondary">
                     Pagado: {diner.payment_method ? getPaymentMethodLabel(diner.payment_method) : 'N/A'}
                   </p>
                 )}
@@ -447,7 +447,7 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
                   }
                 }
               }} 
-              className="w-full bg-primary hover:bg-green-400 active:scale-[0.98] text-background-dark font-black text-lg h-16 rounded-2xl flex items-center justify-center gap-3 transition-all shadow-xl shadow-primary/20 group"
+              className="w-full bg-primary hover:bg-primary-dark active:scale-[0.98] text-black font-black text-lg h-16 rounded-2xl flex items-center justify-center gap-3 transition-all shadow-xl shadow-primary/20 group"
             >
               <span>Finalizar</span>
               <span className="material-symbols-outlined font-black group-hover:translate-x-1 transition-transform">arrow_forward</span>
@@ -462,7 +462,7 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
                   console.error('[CheckoutView] No se puede pagar: no se encontró guestId');
                 }
               }} 
-              className="w-full bg-primary hover:bg-green-400 active:scale-[0.98] text-background-dark font-black text-lg h-16 rounded-2xl flex items-center justify-between px-8 transition-all shadow-xl shadow-primary/20 group"
+              className="w-full bg-primary hover:bg-primary-dark active:scale-[0.98] text-black font-black text-lg h-16 rounded-2xl flex items-center justify-between px-8 transition-all shadow-xl shadow-primary/20 group"
             >
               <div className="flex flex-col items-start leading-none">
                 <span className="text-[10px] uppercase font-black tracking-widest opacity-60">Pagar cuenta</span>
@@ -482,7 +482,7 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
                     console.error('[CheckoutView] No se puede pagar: currentUserId no está definido');
                   }
                 }} 
-                className="w-full bg-primary hover:bg-green-400 active:scale-[0.98] text-background-dark font-black text-lg h-16 rounded-2xl flex items-center justify-between px-8 transition-all shadow-xl shadow-primary/20 group"
+                className="w-full bg-primary hover:bg-primary-dark active:scale-[0.98] text-black font-black text-lg h-16 rounded-2xl flex items-center justify-between px-8 transition-all shadow-xl shadow-primary/20 group"
               >
                 <div className="flex flex-col items-start leading-none">
                   <span className="text-[10px] uppercase font-black tracking-widest opacity-60">Pagar mi parte</span>
@@ -499,7 +499,7 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
                       console.error('[CheckoutView] No se puede pagar: currentUserId no está definido');
                     }
                   }} 
-                  className="w-full flex items-center justify-center text-[#9db9a8] font-bold text-[10px] uppercase tracking-[0.2em] py-2 hover:text-white transition-colors"
+                  className="w-full flex items-center justify-center text-text-secondary font-bold text-[10px] uppercase tracking-[0.2em] py-2 hover:text-white transition-colors"
                 >
                   O pagar la cuenta completa (${formatPrice(remainingToSettle)})
                 </button>

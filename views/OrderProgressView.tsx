@@ -273,7 +273,7 @@ const OrderProgressView: React.FC<OrderProgressViewProps> = ({
                   )}
 
                   {isReady && (
-                    <div className="mb-4 bg-primary text-background-dark p-3 rounded-2xl flex items-center gap-3 animate-pulse shadow-lg shadow-primary/20">
+                    <div className="mb-4 bg-primary text-black p-3 rounded-2xl flex items-center gap-3 animate-pulse shadow-lg shadow-primary/20">
                       <span className="material-symbols-outlined font-black">celebration</span>
                       <span className="text-xs font-black uppercase tracking-widest">¡Tu pedido está llegando a la mesa!</span>
                     </div>
@@ -343,7 +343,7 @@ const OrderProgressView: React.FC<OrderProgressViewProps> = ({
       <div className="fixed bottom-0 left-0 w-full p-6 bg-gradient-to-t from-background-dark via-background-dark to-transparent pt-12 pb-10 z-50 space-y-4">
         <button 
           onClick={onNext} 
-          className="w-full h-16 bg-primary text-background-dark rounded-2xl font-black text-xl shadow-xl shadow-primary/20 active:scale-[0.98] transition-all flex items-center justify-center gap-3"
+          className="w-full h-16 bg-primary text-black rounded-2xl font-black text-xl shadow-xl shadow-primary/20 active:scale-[0.98] transition-all flex items-center justify-center gap-3"
         >
           <span className="material-symbols-outlined font-black">payments</span>
           <span>Pagar Cuenta</span>

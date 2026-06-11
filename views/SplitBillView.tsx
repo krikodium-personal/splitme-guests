@@ -431,7 +431,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
                   !canEditSplit 
                     ? 'opacity-40 cursor-not-allowed grayscale' 
                     : method === m.id 
-                      ? 'bg-primary text-background-dark shadow-lg' 
+                      ? 'bg-primary text-black shadow-lg' 
                       : 'text-text-secondary hover:text-white'
                 }`}
               >
@@ -686,7 +686,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
           {isTableFullyPaid ? (
             <button
               onClick={onGoToMenu}
-              className="w-full h-16 rounded-2xl font-black text-lg flex items-center justify-center gap-3 transition-all bg-primary text-background-dark shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-[0.98]"
+              className="w-full h-16 rounded-2xl font-black text-lg flex items-center justify-center gap-3 transition-all bg-primary text-black shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-[0.98]"
             >
               <span className="material-symbols-outlined font-black">restaurant_menu</span>
               <span>Volver al menú</span>
@@ -696,7 +696,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
               onClick={handleConfirm} 
               disabled={!canConfirmSplit}
               className={`w-full h-16 rounded-2xl font-black text-lg flex items-center justify-center gap-3 transition-all ${
-                canConfirmSplit ? 'bg-primary text-background-dark shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-[0.98]' : 'bg-white/5 text-white/20 cursor-not-allowed grayscale'
+                canConfirmSplit ? 'bg-primary text-black shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-[0.98]' : 'bg-white/5 text-white/20 cursor-not-allowed grayscale'
               }`}
             >
               <span>Confirmar División</span>

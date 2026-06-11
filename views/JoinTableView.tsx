@@ -112,7 +112,7 @@ const JoinTableView: React.FC<JoinTableViewProps> = ({
               <button
                 onClick={handleAddSelf}
                 disabled={!newGuestName.trim() || isAdding || guests.length >= tableCapacity}
-                className="flex-1 py-3 rounded-xl bg-primary text-background-dark font-black disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="flex-1 py-3 rounded-xl bg-primary text-black font-black disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {isAdding ? (
                   <>

@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Guest, MenuItem, MenuSectionHeader, OrderItem, VariantGroup, VariantOption } from '../types';
 import { getInitials, getGuestColor } from './GuestInfoView';
@@ -58,7 +58,7 @@ const renderNutritionalValue = (value: number | null | undefined, unit: string) 
 
 const NutritionalItem = ({ label, value, unit, isPrimary = false }: { label: string, value: any, unit: string, isPrimary?: boolean }) => (
   <div className={`flex flex-col border-l-2 ${isPrimary ? 'border-primary' : 'border-white/10'} pl-4 py-1`}>
-    <span className="text-[10px] uppercase font-black text-text-secondary tracking-widest mb-1.5">{label}</span>
+    <span className="text-[10px] font-medium text-white/40 mb-1.5">{label}</span>
     {renderNutritionalValue(value, unit)}
   </div>
 );
@@ -136,8 +136,7 @@ const slugToCategory = (slug: string, categories: any[]): string | null => {
   );
   if (category) return category.name;
   
-  // Si no se encuentra, intentar con "Destacados"
-  if (normalizedSlug === 'destacados') return 'Destacados';
+  if (normalizedSlug === 'inicio') return 'Inicio';
   
   return null;
 };
@@ -152,7 +151,75 @@ const subcategorySlugToId = (slug: string, categories: any[], parentCategoryName
   return subcategory?.id || null;
 };
 
-const MenuView: React.FC<MenuViewProps> = ({ 
+interface CustomSelectOption { id: string; label: string; }
+interface CustomSelectProps {
+  value: string;
+  options: CustomSelectOption[];
+  placeholder?: string;
+  onChange: (value: string) => void;
+  hasError?: boolean;
+}
+const CustomSelect: React.FC<CustomSelectProps> = ({ value, options, placeholder, onChange, hasError }) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const selected = options.find(o => o.id === value);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className={`w-full flex items-center justify-between px-4 py-3 rounded-xl text-left font-bold focus:outline-none focus:ring-2 transition-all ${
+          hasError
+            ? 'border-2 border-red-500 focus:ring-red-500 bg-white/5'
+            : 'border border-white/10 focus:ring-primary bg-white/5'
+        } ${selected ? 'text-white' : 'text-white/40'}`}
+      >
+        <span className="truncate text-sm">{selected ? selected.label : (placeholder || 'Seleccione una opción')}</span>
+        <span className={`material-symbols-outlined text-base text-white/50 ml-2 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}>expand_more</span>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 right-0 bottom-full mb-2 z-[200] bg-[#1A1816] border border-white/10 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden animate-fade-in">
+          {placeholder && (
+            <button
+              type="button"
+              onClick={() => { onChange(''); setOpen(false); }}
+              className="w-full text-left px-4 py-3 text-sm text-white/40 hover:bg-white/5 transition-colors border-b border-white/5"
+            >
+              {placeholder}
+            </button>
+          )}
+          {options.map(opt => (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => { onChange(opt.id); setOpen(false); }}
+              className={`w-full text-left px-4 py-3.5 text-sm font-medium transition-colors ${
+                opt.id === value
+                  ? 'bg-primary/15 text-primary'
+                  : 'text-white hover:bg-white/5'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const MenuView: React.FC<MenuViewProps> = ({
   guests, setGuests, cart, onAddToCart, onUpdateCartItem, onNext, 
   selectedGuestId, onSelectGuest, initialCategory, onCategoryChange, 
   editingCartItem, onCancelEdit, menuItems, categories: supabaseCategories,
@@ -189,8 +256,7 @@ const MenuView: React.FC<MenuViewProps> = ({
       const categoryName = slugToCategory(categorySlug, supabaseCategories);
       if (categoryName) onCategoryChange(categoryName);
     } else {
-      // Solo al cargar /menu sin categoría: redirigir a Destacados
-      navigate('/menu/destacados', { replace: true });
+      navigate('/menu/inicio', { replace: true });
     }
   }, [categorySlug, supabaseCategories, onCategoryChange, navigate]);
 
@@ -214,6 +280,7 @@ const MenuView: React.FC<MenuViewProps> = ({
   const guestsRowRef = useRef<HTMLDivElement | null>(null);
   const lastScrollYRef = useRef(0);
   const lastTouchYRef = useRef(0);
+  const lastTouchXRef = useRef(0);
   const lastGestureTimeRef = useRef(0);
   const headerBlockRef = useRef<HTMLDivElement | null>(null);
   const headerHoveredRef = useRef(false);
@@ -339,23 +406,29 @@ const MenuView: React.FC<MenuViewProps> = ({
     };
     const onWheel = (e: WheelEvent) => {
       if (!el.contains(e.target as Node)) return;
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
       if (Math.abs(e.deltaY) < 2) return;
       applyFromGesture(e.deltaY > 0);
     };
     const onWheelDoc = (e: WheelEvent) => {
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
       if (Math.abs(e.deltaY) < 2) return;
       applyFromGesture(e.deltaY > 0);
     };
     const onTouchStart = (e: TouchEvent) => {
       lastTouchYRef.current = e.touches[0]?.clientY ?? 0;
+      lastTouchXRef.current = e.touches[0]?.clientX ?? 0;
     };
     const onTouchMove = (e: TouchEvent) => {
       const y = e.touches[0]?.clientY ?? 0;
-      const prev = lastTouchYRef.current;
+      const x = e.touches[0]?.clientX ?? 0;
+      const dy = y - lastTouchYRef.current;
+      const dx = x - lastTouchXRef.current;
       lastTouchYRef.current = y;
-      const d = y - prev;
-      if (Math.abs(d) < 4) return;
-      applyFromGesture(d < 0);
+      lastTouchXRef.current = x;
+      if (Math.abs(dx) > Math.abs(dy)) return;
+      if (Math.abs(dy) < 4) return;
+      applyFromGesture(dy < 0);
     };
     const touchOpts = { passive: true, capture: true } as const;
     el.addEventListener('scroll', onScroll, { passive: true });
@@ -388,8 +461,8 @@ const MenuView: React.FC<MenuViewProps> = ({
     const dbCategories = (supabaseCategories || [])
       .filter(c => c.parent_id === null)
       .map(c => c.name);
-    const filteredDbCats = dbCategories.filter(cat => cat.toLowerCase() !== 'destacados');
-    return ['Destacados', ...filteredDbCats];
+    const filteredDbCats = dbCategories.filter(cat => !['destacados', 'inicio'].includes(cat.toLowerCase()));
+    return ['Inicio', ...filteredDbCats];
   }, [supabaseCategories]);
 
   // Cantidad total de productos por comensal (todos los estados: elegido + pedido)
@@ -408,15 +481,14 @@ const MenuView: React.FC<MenuViewProps> = ({
     const counts: Record<string, number> = {};
     categoriesList.forEach(catName => {
       const catObj = supabaseCategories.find(c => c.name === catName);
-      if (!catObj && catName !== 'Destacados') return;
-      
+      if (!catObj && catName !== 'Inicio') return;
+
       const subIds = catObj ? supabaseCategories.filter(c => c.parent_id === catObj.id).map(c => c.id) : [];
       const validIds = catObj ? [catObj.id, ...subIds] : [];
-      
-      // Filtramos por guestSpecificCart para reflejar solo lo que ese invitado pidió en todos sus lotes
+
       counts[catName] = guestSpecificCart.reduce((sum, cartItem) => {
         const menuItem = menuItems.find(m => m.id === cartItem.itemId);
-        if (catName === 'Destacados') return menuItem?.is_featured ? sum + cartItem.quantity : sum;
+        if (catName === 'Inicio') return menuItem?.is_featured ? sum + cartItem.quantity : sum;
         return menuItem && validIds.includes(menuItem.category_id) ? sum + cartItem.quantity : sum;
       }, 0);
     });
@@ -777,7 +849,7 @@ const MenuView: React.FC<MenuViewProps> = ({
 
   // Obtener subcategorías disponibles para la categoría actual, respetando sort_order del admin
   const availableSubcategories = useMemo(() => {
-    if (initialCategory === 'Destacados') return [];
+    if (initialCategory === 'Inicio') return [];
     
     const parentCatObj = supabaseCategories.find(c => c.name === initialCategory);
     if (!parentCatObj) return [];
@@ -810,7 +882,7 @@ const MenuView: React.FC<MenuViewProps> = ({
       const subCat = supabaseCategories.find(c => c.id === selectedSubcategory);
       return subCat?.description?.trim() || null;
     }
-    if (initialCategory === 'Destacados') return null;
+    if (initialCategory === 'Inicio') return null;
     const mainCat = supabaseCategories.find(c => c.name === initialCategory && c.parent_id === null);
     return mainCat?.description?.trim() || null;
   }, [initialCategory, selectedSubcategory, supabaseCategories]);
@@ -828,7 +900,7 @@ const MenuView: React.FC<MenuViewProps> = ({
   }, [guestSpecificCart, availableSubcategories, menuItems]);
 
   const filteredItems = useMemo(() => {
-    if (initialCategory === 'Destacados') return menuItems.filter(item => item.is_featured);
+    if (initialCategory === 'Inicio') return menuItems.filter(item => item.is_featured);
     
     const parentCatObj = supabaseCategories.find(c => c.name === initialCategory);
     if (!parentCatObj) return [];
@@ -845,6 +917,19 @@ const MenuView: React.FC<MenuViewProps> = ({
     
     return items;
   }, [initialCategory, menuItems, supabaseCategories, selectedSubcategory]);
+
+  // Carruseles para la pantalla Inicio
+  const featuredItems = useMemo(() => menuItems.filter(item => item.is_featured), [menuItems]);
+
+  const mostPedidosItems = useMemo(() => {
+    // Placeholder: ordenados por id desc como proxy — reemplazar con datos reales de historial
+    return [...menuItems].sort((a, b) => b.id.localeCompare(a.id)).slice(0, 12);
+  }, [menuItems]);
+
+  const mejorCalificadosItems = useMemo(() => {
+    // Placeholder: ordenados por nombre como proxy — reemplazar con ratings reales
+    return [...menuItems].sort((a, b) => a.name.localeCompare(b.name)).slice(0, 12);
+  }, [menuItems]);
 
   // Agrupar items por menu_section_headers (subtítulos definidos en admin).
   // Solo aplicar agrupación cuando hay una subcategoría seleccionada (ej. "Cafés Especiales").
@@ -1006,10 +1091,10 @@ const MenuView: React.FC<MenuViewProps> = ({
         <header className="pb-2 border-b border-white/5">
         <div className="px-6 flex items-center justify-between pt-1 mb-4">
           <div className="flex flex-col">
-            <h1 className="text-[10px] font-black uppercase tracking-widest flex items-baseline gap-2 flex-wrap">
-              <span className="text-primary">MESA {table?.table_number?.toString().padStart(2, '0') || '04'}</span>
-              <span className="text-white/60">·</span>
-              <span className="text-white">{restaurant?.name || 'The Burger Joint'}</span>
+            <h1 className="text-[13px] font-medium flex items-center gap-2 flex-wrap">
+              <span className="text-white/90">Mesa {table?.table_number || '4'}</span>
+              <span className="text-white/25">·</span>
+              <span className="text-white/55">{restaurant?.name || 'The Burger Joint'}</span>
             </h1>
           </div>
         </div>
@@ -1021,8 +1106,8 @@ const MenuView: React.FC<MenuViewProps> = ({
                 onClick={() => onSelectGuest(g.id)}
                 className={`relative size-10 rounded-full transition-all duration-300 ${
                   selectedGuestId === g.id 
-                    ? 'ring-4 ring-primary ring-offset-4 ring-offset-background-dark scale-105' 
-                    : 'opacity-40 hover:opacity-100'
+                    ? 'ring-2 ring-primary ring-offset-2 ring-offset-background-dark'
+                    : 'opacity-40 hover:opacity-90'
                 }`}
               >
                 <div className={`w-full h-full rounded-full overflow-hidden flex items-center justify-center font-black text-sm ${getGuestColor(g.id)}`}>
@@ -1030,13 +1115,13 @@ const MenuView: React.FC<MenuViewProps> = ({
                 </div>
                 {guestItemCounts[g.id] > 0 && (
                   <div className={`absolute -bottom-1 -right-1 rounded-full min-w-[18px] h-[18px] flex items-center justify-center border-2 border-background-dark shadow-lg text-[10px] font-black ${
-                    selectedGuestId === g.id ? 'bg-primary text-background-dark' : 'bg-white/20 text-white'
+                    selectedGuestId === g.id ? 'bg-primary text-black' : 'bg-white/20 text-white'
                   }`}>
                     {guestItemCounts[g.id]}
                   </div>
                 )}
               </button>
-              <span className={`text-[9px] font-black uppercase tracking-widest text-center truncate w-full ${selectedGuestId === g.id ? 'text-primary' : 'text-text-secondary opacity-60'}`}>
+              <span className={`text-[10px] font-medium text-center truncate w-full ${selectedGuestId === g.id ? 'text-white' : 'text-white/40'}`}>
                 {(g.name.split(' (')[0] || backupNames[g.id]?.split(' (')[0] || '...')}
               </span>
             </div>
@@ -1055,7 +1140,7 @@ const MenuView: React.FC<MenuViewProps> = ({
 
       <nav className="flex gap-4 overflow-x-auto no-scrollbar px-4 py-1 bg-background-dark border-b border-white/5 shrink-0">
         {categoriesList.map(cat => {
-          const isDestacados = cat === 'Destacados';
+          const isInicio = cat === 'Inicio';
           const isSelected = initialCategory === cat;
           
           return (
@@ -1066,17 +1151,15 @@ const MenuView: React.FC<MenuViewProps> = ({
               onCategoryChange(cat);
               window.history.replaceState(null, '', `/menu/${slug}`);
             }}
-              className={`flex items-center justify-center gap-1.5 h-9 px-4 rounded-full whitespace-nowrap text-sm font-bold transition-colors shrink-0 ${
-                isSelected 
-                  ? 'bg-primary text-background-dark' 
-                  : isDestacados 
-                    ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30' 
-                    : 'bg-white/5 text-text-secondary'
+              className={`flex items-center justify-center gap-1.5 h-9 px-4 rounded-full whitespace-nowrap text-sm font-semibold transition-colors shrink-0 ${
+                isSelected
+                  ? 'bg-primary text-black shadow-md shadow-primary/30'
+                  : 'bg-surface-dark-alt text-text-secondary border border-border-dark'
               }`}
           >
-            {isDestacados && <span className="material-symbols-outlined text-[14px]">star</span>}
+            {isInicio && <span className="material-symbols-outlined text-[14px]">home</span>}
             {cat} {categoryCounts[cat] > 0 && (
-              <span className="ml-1.5 inline-flex min-w-[18px] h-[18px] rounded-full bg-red-500 items-center justify-center text-[10px] font-black text-white">
+              <span className={`ml-1.5 inline-flex min-w-[18px] h-[18px] rounded-full items-center justify-center text-[10px] font-semibold ${isSelected ? 'bg-white/30 text-white' : 'bg-primary/20 text-primary'}`}>
                 {categoryCounts[cat]}
               </span>
             )}
@@ -1093,14 +1176,14 @@ const MenuView: React.FC<MenuViewProps> = ({
               setSelectedSubcategory(null);
               window.history.replaceState(null, '', `/menu/${categorySlug}`);
             }}
-            className={`flex items-center px-3 py-1.5 rounded-full whitespace-nowrap text-xs font-bold transition-colors shrink-0 ${
+            className={`flex items-center px-3 py-1.5 rounded-full whitespace-nowrap text-xs font-semibold transition-colors shrink-0 ${
               selectedSubcategory === null
-                ? 'bg-primary/30 text-primary border border-primary/50'
-                : 'bg-white/5 text-text-secondary border border-white/5'
+                ? 'bg-primary/20 text-primary border border-primary/30'
+                : 'bg-surface-dark-alt text-text-secondary border border-border-dark'
             }`}
           >
             Todos {categoryCounts[initialCategory] > 0 && (
-              <span className="ml-1.5 inline-flex min-w-[18px] h-[18px] rounded-full bg-red-500 items-center justify-center text-[10px] font-black text-white">
+              <span className={`ml-1.5 inline-flex min-w-[18px] h-[18px] rounded-full items-center justify-center text-[10px] font-semibold ${selectedSubcategory === null ? 'bg-white/30 text-white' : 'bg-primary/20 text-primary'}`}>
                 {categoryCounts[initialCategory]}
               </span>
             )}
@@ -1117,14 +1200,14 @@ const MenuView: React.FC<MenuViewProps> = ({
                   setSelectedSubcategory(subcat.id);
                   window.history.replaceState(null, '', `/menu/${categorySlug}/${subcategorySlug}`);
                 }}
-                className={`flex items-center px-3 py-1.5 rounded-full whitespace-nowrap text-xs font-bold transition-colors shrink-0 ${
+                className={`flex items-center px-3 py-1.5 rounded-full whitespace-nowrap text-xs font-semibold transition-colors shrink-0 ${
                   isSelected
-                    ? 'bg-primary/30 text-primary border border-primary/50'
-                    : 'bg-white/5 text-text-secondary border border-white/5'
+                    ? 'bg-primary/20 text-primary border border-primary/30'
+                    : 'bg-surface-dark-alt text-text-secondary border border-border-dark'
                 }`}
               >
                 {subcat.name} {count > 0 && (
-                  <span className="ml-1.5 inline-flex min-w-[18px] h-[18px] rounded-full bg-red-500 items-center justify-center text-[10px] font-black text-white">
+                  <span className={`ml-1.5 inline-flex min-w-[18px] h-[18px] rounded-full items-center justify-center text-[10px] font-semibold ${isSelected ? 'bg-white/30 text-white' : 'bg-primary/20 text-primary'}`}>
                     {count}
                   </span>
                 )}
@@ -1142,12 +1225,104 @@ const MenuView: React.FC<MenuViewProps> = ({
       </div>
 
       <div style={{ paddingTop: scrollTop <= 10 ? headerHeight : 0 }} className="transition-[padding] duration-200">
+      {initialCategory === 'Inicio' ? (
+        <main className="pb-36 flex-1 pt-5 space-y-8">
+          {([
+            { title: 'Elegidos por el Chef', items: featuredItems, icon: 'restaurant_menu' },
+            { title: 'Los más pedidos', items: mostPedidosItems, icon: 'trending_up' },
+            { title: 'Los mejor calificados', items: mejorCalificadosItems, icon: 'star' },
+          ] as { title: string; items: typeof menuItems; icon: string }[]).map(({ title, items, icon }) => items.length > 0 && (
+            <div key={title}>
+              <div className="flex items-center gap-2 px-4 mb-4">
+                <span className="material-symbols-outlined text-primary text-[18px]">{icon}</span>
+                <h2 className="text-[17px] font-bold text-white">{title}</h2>
+              </div>
+              <div className="flex gap-3 overflow-x-auto no-scrollbar px-5 scroll-pl-5 snap-x snap-mandatory pb-1">
+                {items.map(item => {
+                  const qty = getDishQuantityForGuest(item.id);
+                  const simpleItem = getSimpleCartItemForGuest(item.id);
+                  const catName = supabaseCategories.find(c => c.id === item.category_id)?.name;
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() => handleOpenPdp(item)}
+                      className="relative w-44 h-56 rounded-3xl overflow-hidden shrink-0 cursor-pointer shadow-xl shadow-black/50 active:scale-[0.97] transition-transform snap-start bg-surface-dark-alt"
+                    >
+                      {getItemImageUrl(item.image_url) ? (
+                        <img src={getItemImageUrl(item.image_url)} alt={item.name} className="w-full h-full object-cover absolute inset-0" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center bg-surface-dark-alt">
+                          <span className="material-symbols-outlined text-white/20 text-5xl">restaurant</span>
+                        </div>
+                      )}
+                      {/* gradientes top y bottom para legibilidad */}
+                      <div className="absolute inset-0 bg-gradient-to-b from-black/70 via-transparent to-transparent pointer-events-none" />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent pointer-events-none" />
+                      {/* top: categoría + nombre + pill Nuevo */}
+                      <div className="absolute top-0 left-0 right-0 p-3.5">
+                        <div className="flex items-start justify-between gap-1 mb-1">
+                          <span className="text-white/55 text-[10px] font-semibold uppercase tracking-wide leading-none">{catName || ''}</span>
+                          {item.is_new && (
+                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold shrink-0 text-[#0D1F1E]" style={{ background: '#2DD4BF' }}>Nuevo</span>
+                          )}
+                        </div>
+                        <p className="text-white font-bold text-[14px] leading-snug line-clamp-2">{item.name}</p>
+                      </div>
+                      {/* bottom: rating + precio + CTA */}
+                      <div className="absolute bottom-0 left-0 right-0 p-3.5 flex flex-col gap-2 pointer-events-none">
+                        {item.average_rating != null && (
+                          <div className="flex items-center gap-1 self-start bg-black/50 backdrop-blur-sm rounded-full px-2 py-0.5">
+                            <span className="material-symbols-outlined filled text-primary text-[12px] leading-none">star</span>
+                            <span className="text-white text-[11px] font-semibold tabular-nums">{Number(item.average_rating).toFixed(1)}</span>
+                          </div>
+                        )}
+                        {/* precio + CTA */}
+                        <div className="flex items-center justify-between gap-2 pointer-events-auto" onClick={e => e.stopPropagation()}>
+                          <span className="text-white font-semibold text-[15px] tabular-nums">${formatPrice(Number(item.price))}</span>
+                          {/* botón agregar / stepper */}
+                          <div>
+                        {item.availability === false ? null : addingItems.has(item.id) ? (
+                          <div className="size-8 rounded-full bg-primary/80 flex items-center justify-center">
+                            <div className="size-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          </div>
+                        ) : qty > 0 ? (
+                          <div className="flex items-center gap-1 bg-black/60 backdrop-blur-sm rounded-full px-2 py-1 border border-white/20">
+                            <button
+                              onClick={e => { simpleItem ? handleDecrement(e, item.id) : (() => { const anyItem = guestSpecificCart.find(i => i.itemId === item.id && (i.status === 'elegido' || (!i.status && !i.isConfirmed))); if (anyItem) onUpdateCartItem(anyItem.id, { quantity: anyItem.quantity - 1 }); })(); }}
+                              className="text-primary"
+                            >
+                              <span className="material-symbols-outlined text-base leading-none">{qty === 1 ? 'delete' : 'remove'}</span>
+                            </button>
+                            <span className="text-white text-xs font-bold tabular-nums min-w-[14px] text-center">{qty}</span>
+                            <button onClick={e => handleIncrement(e, item)} className="text-primary">
+                              <span className="material-symbols-outlined text-base leading-none">add</span>
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={e => handleIncrement(e, item)}
+                            className="size-8 rounded-full bg-primary shadow-lg shadow-primary/40 flex items-center justify-center active:scale-90 transition-transform"
+                          >
+                            <span className="material-symbols-outlined text-black text-base leading-none">add</span>
+                          </button>
+                        )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </main>
+      ) : (
       <main className="p-4 pb-32 flex-1">
         <div className="flex flex-col gap-6">
           {itemsGroupedBySectionHeader.map((group, groupIdx) => (
             <section key={group.sectionId ?? `ungrouped-${groupIdx}`} className="flex flex-col gap-3">
               {group.sectionTitle && (
-                <h3 className="text-sm font-bold text-text-secondary uppercase tracking-wider px-1">
+                <h3 className="text-[13px] font-semibold text-white/40 px-1">
                   {group.sectionTitle}
                 </h3>
               )}
@@ -1161,19 +1336,25 @@ const MenuView: React.FC<MenuViewProps> = ({
             const tableItemsForDish = cart.filter(i => i.itemId === item.id);
 
             return (
-              <div 
-                key={item.id} 
+              <div
+                key={item.id}
                 onClick={() => handleOpenPdp(item)}
-                className="bg-surface-dark border border-white/5 rounded-3xl p-4 flex flex-col transition-all cursor-pointer group relative overflow-hidden"
+                className="bg-surface-dark border border-border-dark rounded-2xl p-4 flex flex-col transition-all cursor-pointer active:scale-[0.99] group relative overflow-hidden shadow-md shadow-black/40"
               >
                 <div className="flex gap-4">
-                  <div className="size-24 rounded-2xl bg-center bg-cover border border-white/5 shrink-0 shadow-lg bg-white/5" style={{ backgroundImage: getItemImageUrl(item.image_url) ? `url("${getItemImageUrl(item.image_url).replace(/"/g, '\\"')}")` : undefined }}></div>
+                  <div className="size-24 rounded-2xl shrink-0 overflow-hidden shadow-lg shadow-black/50 bg-surface-dark-alt flex items-center justify-center">
+                    {getItemImageUrl(item.image_url) ? (
+                      <img src={getItemImageUrl(item.image_url)} alt={item.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <span className="material-symbols-outlined text-white/20 text-3xl">restaurant</span>
+                    )}
+                  </div>
                   <div className="flex-1 flex flex-col justify-center min-w-0">
                   <div className="flex items-center gap-2 mb-1.5">
                     <h3 className="font-bold text-base truncate">{item.name}</h3>
                     {item.is_new && (
-                      <span className="px-2 py-0.5 rounded-full bg-primary text-background-dark text-[10px] font-black uppercase tracking-wider shrink-0">
-                        NUEVO
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 text-[#0D1F1E]" style={{ background: '#2DD4BF' }}>
+                        Nuevo
                       </span>
                     )}
                   </div>
@@ -1199,14 +1380,14 @@ const MenuView: React.FC<MenuViewProps> = ({
                   )}
                   <p className="text-text-secondary text-xs line-clamp-2 mb-3">{item.description}</p>
                   <div className="flex items-center justify-between gap-3">
-                    <span className="text-primary font-black text-lg">${formatPrice(Number(item.price))}</span>
+                    <span className="text-white font-semibold text-[17px]">${formatPrice(Number(item.price))}</span>
                     <div 
                       className="flex items-center z-10 shrink-0"
                       onClick={(e) => e.stopPropagation()}
                     >
                       {item.availability === false ? (
-                        <span className="px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest text-white/60">
-                          AGOTADO
+                        <span className="px-3 py-2 rounded-xl bg-surface-dark-alt border border-border-dark text-xs font-medium text-white/40">
+                          Agotado
                         </span>
                       ) : addingItems.has(item.id) ? (
                         // Mostrar spinner mientras se guarda
@@ -1214,7 +1395,7 @@ const MenuView: React.FC<MenuViewProps> = ({
                           <div className="size-4 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
                         </div>
                       ) : totalQty > 0 ? (
-                        <div className="flex items-center gap-2 bg-background-dark/80 backdrop-blur-md border border-white/10 rounded-xl overflow-hidden shadow-lg">
+                        <div className="flex items-center gap-2 bg-surface-dark-alt border border-border-dark rounded-xl overflow-hidden shadow-md shadow-black/30">
                           <button 
                             onClick={(e) => {
                               if (simpleItem) {
@@ -1243,11 +1424,11 @@ const MenuView: React.FC<MenuViewProps> = ({
                           </button>
                         </div>
                       ) : (
-                        <button 
+                        <button
                           onClick={(e) => handleIncrement(e, item)}
-                          className="w-[42px] h-[41px] rounded-xl bg-black/40 border border-white/20 hover:bg-black/60 active:scale-95 transition-all flex items-center justify-center shrink-0"
+                          className="size-9 rounded-full bg-primary active:scale-95 transition-all flex items-center justify-center shrink-0"
                         >
-                          <span className="material-symbols-outlined font-black text-base text-white">add</span>
+                          <span className="material-symbols-outlined font-black text-base text-background-dark">add</span>
                         </button>
                       )}
                     </div>
@@ -1257,8 +1438,8 @@ const MenuView: React.FC<MenuViewProps> = ({
 
                 {/* Mensaje de últimas unidades cuando stock_quantity < 5 y está disponible */}
                 {item.availability !== false && item.stock_quantity != null && item.stock_quantity < 5 && (
-                  <p className="mt-3 text-[10px] font-black uppercase tracking-wider text-amber-400/90">
-                    Últimas unidades! {item.stock_quantity} disponible{item.stock_quantity !== 1 ? 's' : ''}
+                  <p className="mt-3 text-[11px] font-medium text-amber-400">
+                    Últimas unidades — {item.stock_quantity} disponible{item.stock_quantity !== 1 ? 's' : ''}
                   </p>
                 )}
 
@@ -1268,12 +1449,12 @@ const MenuView: React.FC<MenuViewProps> = ({
                   .map(i => (
                     <div key={i.id} className="mt-4 flex flex-wrap items-center gap-1.5 border-t border-white/5 pt-3 animate-fade-in">
                       {i.extras?.map(ex => (
-                        <span key={ex} className="text-[9px] font-black uppercase bg-primary/10 text-primary px-2 py-0.5 rounded-md border border-primary/20">+{ex}</span>
+                        <span key={ex} className="text-[10px] font-medium bg-primary/10 text-primary px-2 py-0.5 rounded-md border border-primary/20">+{ex}</span>
                       ))}
                       {i.removedIngredients?.map(rem => (
-                        <span key={rem} className="text-[9px] font-black uppercase bg-red-500/10 text-red-400 px-2 py-0.5 rounded-md border border-red-500/20">-{rem}</span>
+                        <span key={rem} className="text-[10px] font-medium bg-red-500/10 text-red-400 px-2 py-0.5 rounded-md border border-red-500/20">–{rem}</span>
                       ))}
-                      {i.quantity > 1 && <span className="text-[9px] font-black text-white/50 ml-1">x{i.quantity}</span>}
+                      {i.quantity > 1 && <span className="text-[10px] font-medium text-white/40 ml-1">×{i.quantity}</span>}
                     </div>
                   ))}
               </div>
@@ -1284,6 +1465,7 @@ const MenuView: React.FC<MenuViewProps> = ({
           ))}
         </div>
       </main>
+      )}
       </div>
       </div>
       {/* Footer: fixed al bottom del viewport, siempre visible */}
@@ -1291,7 +1473,7 @@ const MenuView: React.FC<MenuViewProps> = ({
         <button 
           onClick={onNext}
           disabled={cart.length === 0}
-          className="w-full h-16 bg-primary text-background-dark rounded-2xl flex items-center justify-between px-8 shadow-xl shadow-primary/20 font-black disabled:opacity-20 transition-all pointer-events-auto"
+          className="w-full h-[54px] bg-primary text-black rounded-[14px] flex items-center justify-between px-6 font-semibold text-[15px] disabled:opacity-20 transition-all pointer-events-auto"
         >
           <div className="flex items-center gap-3">
             <span className="material-symbols-outlined">shopping_cart</span>
@@ -1315,23 +1497,41 @@ const MenuView: React.FC<MenuViewProps> = ({
               </button>
             </div>
             <div className="overflow-y-auto flex-1 no-scrollbar">
-              <div 
-                className={`h-64 w-full relative flex items-center justify-center cursor-pointer overflow-hidden ${getItemImageUrl(showDetail.image_url) ? 'bg-white' : 'bg-white/5'}`}
+              <div
+                className={`h-72 w-full relative flex items-center justify-center cursor-pointer overflow-hidden ${getItemImageUrl(showDetail.image_url) ? 'bg-surface-dark-alt' : 'bg-surface-dark'}`}
                 onClick={(e) => { e.stopPropagation(); getItemImageUrl(showDetail.image_url) && setShowImageModal(true); }}
               >
                 {getItemImageUrl(showDetail.image_url) ? (
                   <>
-                    <img 
-                      src={getItemImageUrl(showDetail.image_url)} 
+                    <img
+                      src={getItemImageUrl(showDetail.image_url)}
                       alt={showDetail.name}
-                      className="h-full w-auto max-w-full object-contain object-center"
+                      className="w-full h-full object-cover object-center"
                     />
+                    {/* gradient overlay: fade imagen hacia el contenido */}
+                    <div className="absolute inset-0 bg-gradient-to-t from-surface-dark via-surface-dark/30 to-transparent pointer-events-none" />
+                    {showDetail.is_new && (
+                      <div className="absolute top-4 left-4 z-20 pointer-events-none">
+                        <span className="px-3 py-1.5 rounded-full text-[11px] font-bold tracking-wide text-[#0D1F1E]" style={{ background: '#2DD4BF' }}>
+                          Nuevo
+                        </span>
+                      </div>
+                    )}
                     <div className="absolute bottom-3 right-3 size-9 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center border border-white/20 pointer-events-none">
                       <span className="material-symbols-outlined text-white text-xl">zoom_in</span>
                     </div>
                   </>
                 ) : (
-                  <span className="material-symbols-outlined text-6xl text-white/20">restaurant</span>
+                  <>
+                    <span className="material-symbols-outlined text-6xl text-white/20">restaurant</span>
+                    {showDetail.is_new && (
+                      <div className="absolute top-4 left-4 z-20 pointer-events-none">
+                        <span className="px-3 py-1.5 rounded-full text-[11px] font-bold tracking-wide text-[#0D1F1E]" style={{ background: '#2DD4BF' }}>
+                          Nuevo
+                        </span>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
 
@@ -1355,19 +1555,14 @@ const MenuView: React.FC<MenuViewProps> = ({
               <div className="p-8">
                 <div className="flex justify-between items-start mb-4">
                   <div className="flex items-center gap-3 pr-4">
-                    <h2 className="text-3xl font-black leading-tight">{showDetail.name}</h2>
-                    {showDetail.is_new && (
-                      <span className="px-3 py-1 rounded-full bg-primary text-background-dark text-xs font-black uppercase tracking-wider shrink-0">
-                        NUEVO
-                      </span>
-                    )}
+                    <h2 className="text-[22px] font-bold leading-tight">{showDetail.name}</h2>
                   </div>
                   {hasVariants && variantPriceRange && variantReplaceGroups.length > 0 && !selectedReplaceOptionId ? (
-                    <span className="text-2xl font-black text-primary">
-                      ${formatPrice(variantPriceRange.min)} - ${formatPrice(variantPriceRange.max)}
+                    <span className="text-[22px] font-semibold text-white/90">
+                      ${formatPrice(variantPriceRange.min)} – ${formatPrice(variantPriceRange.max)}
                     </span>
                   ) : (
-                    <span className="text-2xl font-black text-primary">${formatPrice(variantUnitPrice)}</span>
+                    <span className="text-[22px] font-semibold text-white/90">${formatPrice(variantUnitPrice)}</span>
                   )}
                 </div>
 
@@ -1384,30 +1579,24 @@ const MenuView: React.FC<MenuViewProps> = ({
                       const atLimit = !useDropdown && maxSel != null && selectedInGroup.length >= maxSel;
                       return (
                       <div key={group.id} className={`rounded-2xl p-4 border ${isRequiredAndError ? 'border-red-500 bg-red-500/5' : 'bg-background-dark/30 border-white/5'}`}>
-                        <label className="text-[10px] font-black uppercase text-text-secondary tracking-widest mb-3 block">
+                        <label className="text-[12px] font-semibold text-white/55 mb-3 block">
                           {group.name}{isRequiredGroup(group) && <span className="text-primary ml-1">(obligatorio)</span>}
                           {!useDropdown && maxSel != null && <span className="text-white/50 font-normal ml-1">— hasta {maxSel} {maxSel === 1 ? 'opción' : 'opciones'}</span>}
                         </label>
                         {useDropdown ? (
-                          <select
+                          <CustomSelect
                             value={selectedReplaceOptionId || ''}
-                            onChange={(e) => {
-                              setSelectedReplaceOptionId(e.target.value || null);
-                              if (e.target.value) setRequiredVariantError(false);
+                            placeholder={isRequiredGroup(group) ? 'Seleccione una opción' : undefined}
+                            options={group.variant_options.map(opt => ({
+                              id: opt.id,
+                              label: `${opt.name} — $${formatPrice(Number(opt.price_amount))}${opt.description ? ` · ${opt.description}` : ''}`
+                            }))}
+                            onChange={(val) => {
+                              setSelectedReplaceOptionId(val || null);
+                              if (val) setRequiredVariantError(false);
                             }}
-                            className={`w-full bg-white/5 rounded-xl px-4 py-3 text-white font-bold focus:ring-2 outline-none ${
-                              isRequiredAndError ? 'border-2 border-red-500 focus:ring-red-500' : 'border border-white/10 focus:ring-primary'
-                            }`}
-                          >
-                            {isRequiredGroup(group) && (
-                              <option value="" className="bg-surface-dark text-white/60">Seleccione una opción</option>
-                            )}
-                            {group.variant_options.map(opt => (
-                              <option key={opt.id} value={opt.id} className="bg-surface-dark text-white" title={opt.description}>
-                                {opt.name} — ${formatPrice(Number(opt.price_amount))}{opt.description ? ` · ${opt.description}` : ''}
-                              </option>
-                            ))}
-                          </select>
+                            hasError={isRequiredAndError}
+                          />
                         ) : (
                           <div className="space-y-2">
                             {group.variant_options.map(opt => {
@@ -1468,32 +1657,27 @@ const MenuView: React.FC<MenuViewProps> = ({
                       const atLimit = maxSel != null && selectedInGroup.length >= maxSel;
                       return (
                       <div key={group.id} className={`rounded-2xl p-4 border ${isRequiredAddAndError ? 'border-red-500 bg-red-500/5' : 'bg-background-dark/30 border-white/5'}`}>
-                        <label className="text-[10px] font-black uppercase text-text-secondary tracking-widest mb-3 block">
+                        <label className="text-[12px] font-semibold text-white/55 mb-3 block">
                           {group.name}{isRequiredGroup(group) && <span className="text-primary ml-1">(obligatorio)</span>}
                           {maxSel != null && <span className="text-white/50 font-normal ml-1">— hasta {maxSel} {maxSel === 1 ? 'opción' : 'opciones'}</span>}
                         </label>
                         {useDropdown ? (
-                          <select
+                          <CustomSelect
                             value={selectedInGroup[0] || ''}
-                            onChange={(e) => {
-                              const val = e.target.value || null;
+                            placeholder="Seleccione una opción"
+                            options={group.variant_options.map(opt => ({
+                              id: opt.id,
+                              label: `${opt.name} +$${formatPrice(Number(opt.price_amount))}${opt.description ? ` · ${opt.description}` : ''}`
+                            }))}
+                            onChange={(val) => {
                               setSelectedAddOptionIds(prev => {
                                 const fromOtherGroups = prev.filter(id => !optIds.includes(id));
                                 return val ? [...fromOtherGroups, val] : fromOtherGroups;
                               });
                               if (isRequiredGroup(group)) setRequiredVariantError(false);
                             }}
-                            className={`w-full bg-white/5 rounded-xl px-4 py-3 text-white font-bold focus:ring-2 outline-none ${
-                              isRequiredAddAndError ? 'border-2 border-red-500 focus:ring-red-500' : 'border border-white/10 focus:ring-primary'
-                            }`}
-                          >
-                            <option value="" className="bg-surface-dark text-white/60">Seleccione una opción</option>
-                            {group.variant_options.map(opt => (
-                              <option key={opt.id} value={opt.id} className="bg-surface-dark text-white" title={opt.description}>
-                                {opt.name} +${formatPrice(Number(opt.price_amount))}{opt.description ? ` · ${opt.description}` : ''}
-                              </option>
-                            ))}
-                          </select>
+                            hasError={isRequiredAddAndError}
+                          />
                         ) : (
                           <div className="space-y-2">
                             {group.variant_options.map(opt => {
@@ -1573,7 +1757,7 @@ const MenuView: React.FC<MenuViewProps> = ({
                 <div className="space-y-6">
                   {hasCustomization(showDetail) && (
                     <div className="bg-background-dark/30 rounded-[2.5rem] p-6 border border-white/5">
-                      <div className="flex items-center gap-2 mb-6"><span className="material-symbols-outlined text-primary text-xl">tune</span><h3 className="text-[10px] font-black uppercase text-white tracking-[0.3em]">Personalización</h3></div>
+                      <div className="flex items-center gap-2 mb-5"><span className="material-symbols-outlined text-primary text-xl">tune</span><h3 className="text-[13px] font-semibold text-white/70">Personalización</h3></div>
                       <div className="space-y-6">
                         {showDetail.customer_customization?.ingredientsToRemove && showDetail.customer_customization.ingredientsToRemove.length > 0 && (
                           <div>
@@ -1590,7 +1774,7 @@ const MenuView: React.FC<MenuViewProps> = ({
                             <p className="text-[9px] font-black uppercase text-primary tracking-widest mb-3">Agregar:</p>
                             <div className="flex flex-wrap gap-2">
                               {showDetail.customer_customization.ingredientsToAdd.map(ing => (
-                                <button key={ing} onClick={() => setSelectedExtras(p => p.includes(ing) ? p.filter(x => x !== ing) : [...p, ing])} className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all ${selectedExtras.includes(ing) ? 'bg-primary text-background-dark border-primary' : 'bg-white/5 text-white border-white/10'}`}>{ing}</button>
+                                <button key={ing} onClick={() => setSelectedExtras(p => p.includes(ing) ? p.filter(x => x !== ing) : [...p, ing])} className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all ${selectedExtras.includes(ing) ? 'bg-primary text-black border-primary' : 'bg-white/5 text-white border-white/10'}`}>{ing}</button>
                               ))}
                             </div>
                           </div>
@@ -1600,7 +1784,7 @@ const MenuView: React.FC<MenuViewProps> = ({
                   )}
                   {hasNutritionalInfo(showDetail) && (
                     <div className="bg-background-dark/30 rounded-[2.5rem] p-6 border border-white/5">
-                      <div className="flex items-center gap-2 mb-6"><span className="material-symbols-outlined text-primary text-xl">nutrition</span><h3 className="text-[10px] font-black uppercase text-white tracking-[0.3em]">Información Nutricional</h3></div>
+                      <div className="flex items-center gap-2 mb-5"><span className="material-symbols-outlined text-primary text-xl">nutrition</span><h3 className="text-[13px] font-semibold text-white/70">Información Nutricional</h3></div>
                       <div className="grid grid-cols-2 gap-y-8 gap-x-4">
                         <NutritionalItem label="Calorías" value={showDetail.calories} unit="kcal" isPrimary />
                         <NutritionalItem label="Proteínas" value={showDetail.protein_g} unit="g" />
@@ -1619,26 +1803,26 @@ const MenuView: React.FC<MenuViewProps> = ({
             
             <div className="p-4 bg-surface-dark border-t border-white/5 space-y-3">
               {showDetail.availability !== false && showDetail.stock_quantity != null && showDetail.stock_quantity < 5 && (
-                <p className="text-[10px] font-black uppercase tracking-wider text-amber-400/90 mb-2">
-                  Últimas unidades! {showDetail.stock_quantity} disponible{showDetail.stock_quantity !== 1 ? 's' : ''}
+                <p className="text-[11px] font-medium text-amber-400 mb-2">
+                  Últimas unidades — {showDetail.stock_quantity} disponible{showDetail.stock_quantity !== 1 ? 's' : ''}
                 </p>
               )}
               {showDetail.availability === false ? (
-                <div className="w-full h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-white/60">AGOTADO</span>
+                <div className="w-full h-14 rounded-2xl bg-surface-dark-alt border border-border-dark flex items-center justify-center">
+                  <span className="text-sm font-medium text-white/40">Agotado</span>
                 </div>
               ) : existingInCart ? (
                 <div className="flex flex-col gap-3">
                   <button 
                     onClick={handleUpdateCurrent} 
-                    className="w-full h-16 bg-primary text-background-dark rounded-2xl font-black text-lg shadow-xl shadow-primary/20 active:scale-[0.98] transition-all"
+                    className="w-full h-[54px] bg-primary text-black rounded-[14px] font-semibold text-[15px] active:scale-[0.98] transition-all"
                   >
                     Actualizar Plato
                   </button>
                   <button 
                     onClick={handleAddNew} 
                     disabled={addingItems.has(showDetail.id)}
-                    className="w-full h-14 bg-white/5 border border-white/10 text-white rounded-2xl font-bold text-sm active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    className="w-full h-[46px] bg-white/5 border border-border-dark text-white/70 rounded-[12px] font-medium text-[14px] active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
                     {addingItems.has(showDetail.id) ? (
                       <>
@@ -1654,7 +1838,7 @@ const MenuView: React.FC<MenuViewProps> = ({
                 <button 
                   onClick={handleAddNew} 
                   disabled={addingItems.has(showDetail.id)}
-                  className="w-full h-16 bg-primary text-background-dark rounded-2xl font-black text-lg shadow-xl shadow-primary/20 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  className="w-full h-[54px] bg-primary text-black rounded-[14px] font-semibold text-[15px] active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   {addingItems.has(showDetail.id) ? (
                     <>
@@ -1684,8 +1868,8 @@ const MenuView: React.FC<MenuViewProps> = ({
           <div className="bg-surface-dark w-full rounded-t-[40px] p-8 pb-12 border-t border-white/10 relative z-10 shadow-2xl animate-fade-in-up">
             <div className="flex justify-center mb-6"><div className="w-12 h-1.5 bg-white/10 rounded-full"></div></div>
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-black text-white tracking-tight">{pendingGuestSelection ? '¿Quién sos?' : 'Gestionar Comensales'}</h2>
-              {!pendingGuestSelection && <span className="text-[10px] font-black text-primary uppercase bg-primary/10 px-3 py-1 rounded-full">Capacidad {guests.length}/{tableCapacity}</span>}
+              <h2 className="text-[20px] font-bold text-white tracking-tight">{pendingGuestSelection ? '¿Quién sos?' : 'Gestionar Comensales'}</h2>
+              {!pendingGuestSelection && <span className="text-[11px] font-medium text-primary bg-primary/10 px-3 py-1 rounded-full">{guests.length}/{tableCapacity}</span>}
             </div>
             {pendingGuestSelection && <p className="text-text-secondary text-sm mb-4">Tocá tu nombre para continuar.</p>}
             {!pendingGuestSelection && activeOrderId && (
@@ -1745,7 +1929,7 @@ const MenuView: React.FC<MenuViewProps> = ({
             {!pendingGuestSelection && (guests.length < tableCapacity ? (
               <div className="flex gap-3">
                 <input type="text" value={newGuestName} onChange={e => setNewGuestName(e.target.value)} placeholder="Nuevo invitado..." className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-4 text-white font-bold outline-none focus:ring-2 focus:ring-primary transition-all" />
-                <button onClick={handleAddGuest} className="bg-primary text-background-dark px-6 rounded-2xl font-black active:scale-95 transition-all">Añadir</button>
+                <button onClick={handleAddGuest} className="bg-primary text-black px-6 rounded-2xl font-semibold active:scale-95 transition-all">Añadir</button>
               </div>
             ) : (
               <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-center gap-3">
@@ -1756,7 +1940,7 @@ const MenuView: React.FC<MenuViewProps> = ({
             {!pendingGuestSelection && (hasChanges ? (
               <button 
                 onClick={handleSaveChanges} 
-                className="w-full h-14 bg-primary text-background-dark rounded-2xl mt-6 font-black text-lg shadow-xl shadow-primary/20 active:scale-[0.98] transition-all"
+                className="w-full h-[54px] bg-primary text-black rounded-[14px] mt-6 font-semibold text-[15px] active:scale-[0.98] transition-all"
               >
                 Guardar cambios
               </button>
@@ -1780,7 +1964,7 @@ const MenuView: React.FC<MenuViewProps> = ({
             <p className="text-white font-bold text-center text-lg">Producto no disponible</p>
             <button
               onClick={() => setShowUnavailableModal(false)}
-              className="w-full h-14 bg-primary text-background-dark rounded-2xl font-black text-lg shadow-xl shadow-primary/20 active:scale-[0.98] transition-all"
+              className="w-full h-[54px] bg-primary text-black rounded-[14px] font-semibold text-[15px] active:scale-[0.98] transition-all"
             >
               Aceptar
             </button>
@@ -1819,7 +2003,7 @@ const MenuView: React.FC<MenuViewProps> = ({
       {waiter ? (
         <button
           onClick={() => setIsWaiterModalOpen(true)}
-          className="fixed bottom-28 right-4 z-[70] size-14 rounded-full shadow-lg shadow-primary/30 flex items-center justify-center overflow-hidden border-2 border-primary/50 transition-all active:scale-95 hover:ring-4 hover:ring-primary/30"
+          className="fixed bottom-28 right-4 z-[70] size-14 rounded-full shadow-xl shadow-black/40 flex items-center justify-center overflow-hidden border-2 border-primary/60 transition-all active:scale-95"
           title="Solicitar al mesero"
         >
           <img
@@ -1828,11 +2012,7 @@ const MenuView: React.FC<MenuViewProps> = ({
             className="w-full h-full object-cover"
           />
         </button>
-      ) : (
-        <div className="fixed bottom-28 right-4 z-[70] size-14 bg-red-500 rounded-full flex items-center justify-center text-white text-xs" title="DEBUG: No hay waiter">
-          ?
-        </div>
-      )}
+      ) : null}
 
       {/* Modal de solicitud al mesero */}
       <WaiterRequestModal

@@ -294,7 +294,7 @@ const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuI
     return (
       <div className="flex flex-col items-center justify-center flex-1 h-screen bg-background-dark text-white p-8 text-center animate-fade-in">
         <div className="size-24 bg-primary rounded-full flex items-center justify-center mb-8 animate-bounce shadow-lg shadow-primary/20">
-          <span className="material-symbols-outlined text-background-dark text-6xl font-black">check</span>
+          <span className="material-symbols-outlined text-white text-6xl font-black">check</span>
         </div>
         <h2 className="text-3xl font-black mb-3 tracking-tight">¡Gracias por tu opinión!</h2>
         <p className="text-text-secondary text-lg leading-relaxed">
@@ -361,7 +361,7 @@ const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuI
                 className="size-24 rounded-full object-cover border-4 border-primary/30 p-1 relative z-10" 
                 src={waiter?.profile_photo_url || 'https://lh3.googleusercontent.com/aida-public/AB6AXuDyiwOtsINFh8RspVDg_Wx4QKXthNxCS7ZJlDSZvL6ADwFD3WRUpKHGhrscxV9dcR7w7guM4E-iFCNXx-tDgHs1BrbfGjolJoASehM-SEc4Pe6bKEx7zjcF4WAcON7mbdWJCepEdMPkBZ36lB_4tPTsJeNzTNqRNGKgusVb3U_X0WGEAgij6Y48HIunhj_BC8lxMdsB5ublmAltnyYerUKa_NkT8aybLFkaaRkQGQ_irdtS2ZQwrNGNj6b1ZrWY1HRClBeExJL615bG'}
               />
-              <div className="absolute -bottom-1 -right-1 bg-primary text-background-dark text-[10px] font-black px-2 py-0.5 rounded-full z-20 border-2 border-surface-dark shadow-sm">
+              <div className="absolute -bottom-1 -right-1 bg-primary text-black text-[10px] font-black px-2 py-0.5 rounded-full z-20 border-2 border-surface-dark shadow-sm">
                 {waiter?.average_rating || '5.0'}
               </div>
             </div>
@@ -407,7 +407,7 @@ const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuI
           onClick={handleSendFeedback} 
           disabled={isSubmitting || restaurantRating === 0}
           className={`w-full h-16 rounded-2xl font-black text-lg flex items-center justify-center gap-3 transition-all shadow-2xl ${
-            (isSubmitting || restaurantRating === 0) ? 'bg-white/5 text-white/20 cursor-not-allowed' : 'bg-primary text-background-dark shadow-primary/20 hover:scale-[1.02] active:scale-[0.98]'
+            (isSubmitting || restaurantRating === 0) ? 'bg-white/5 text-white/20 cursor-not-allowed' : 'bg-primary text-black shadow-primary/20 hover:scale-[1.02] active:scale-[0.98]'
           }`}
         >
           {isSubmitting ? (

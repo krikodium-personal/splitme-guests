@@ -90,13 +90,13 @@ const CashPaymentView: React.FC<CashPaymentViewProps> = ({
     return (
       <div className="flex flex-col flex-1 h-screen bg-background-dark text-white items-center justify-center p-8 text-center">
         <div className="size-24 bg-primary rounded-full flex items-center justify-center mb-8 shadow-lg shadow-primary/20">
-          <span className="material-symbols-outlined text-background-dark text-6xl font-black">check_circle</span>
+          <span className="material-symbols-outlined text-white text-6xl font-black">check_circle</span>
         </div>
         <h2 className="text-3xl font-black mb-3 tracking-tight">¡Pago confirmado!</h2>
         <p className="text-text-secondary text-lg mb-10">Gracias por tu pago en efectivo.</p>
         <button 
           onClick={onNext}
-          className="w-full max-w-xs h-16 rounded-2xl font-black text-lg bg-primary text-background-dark shadow-primary/20 flex items-center justify-center gap-2"
+          className="w-full max-w-xs h-16 rounded-2xl font-black text-lg bg-primary text-black shadow-primary/20 flex items-center justify-center gap-2"
         >
           <span>Continuar</span>
           <span className="material-symbols-outlined font-black">arrow_forward</span>

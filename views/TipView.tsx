@@ -91,7 +91,7 @@ const TipView: React.FC<TipViewProps> = ({ onNext, onSkip, cart, menuItems, gues
                 onClick={() => setTipPercentage(t.value)}
                 className={`relative flex h-14 flex-col items-center justify-center rounded-2xl border transition-all active:scale-95 ${
                   tipPercentage === t.value
-                    ? 'bg-primary border-primary text-background-dark font-black shadow-lg shadow-primary/20'
+                    ? 'bg-primary border-primary text-black font-black shadow-lg shadow-primary/20'
                     : 'bg-surface-dark border-white/5 text-white/40 font-bold hover:border-white/20'
                 }`}
               >
@@ -182,7 +182,7 @@ const TipView: React.FC<TipViewProps> = ({ onNext, onSkip, cart, menuItems, gues
       <div className="fixed bottom-0 left-0 w-full p-4 bg-gradient-to-t from-background-dark via-background-dark to-transparent pt-12 pb-8 z-20">
         <button
           onClick={onNext}
-          className="w-full h-16 rounded-2xl font-black text-lg flex items-center justify-center gap-3 bg-primary text-background-dark shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all shadow-2xl"
+          className="w-full h-16 rounded-2xl font-black text-lg flex items-center justify-center gap-3 bg-primary text-black shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all shadow-2xl"
         >
           <span>Continuar</span>
           <span className="material-symbols-outlined font-black">arrow_forward</span>

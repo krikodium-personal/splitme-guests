@@ -284,8 +284,8 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
             </div>
           ) : (
             <>
-              <span className="text-xl font-black text-background-dark uppercase tracking-tighter">{getCTAButtonText()}</span>
-              <span className="material-symbols-outlined text-background-dark font-black group-hover:translate-x-1 transition-transform">arrow_forward</span>
+              <span className="text-xl font-black text-white uppercase tracking-tighter">{getCTAButtonText()}</span>
+              <span className="material-symbols-outlined text-white font-black group-hover:translate-x-1 transition-transform">arrow_forward</span>
             </>
           )}
         </button>

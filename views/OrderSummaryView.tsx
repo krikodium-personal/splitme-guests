@@ -208,7 +208,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
             onClick={() => setViewMode('batches')}
             className={`flex-1 py-2.5 px-4 rounded-lg font-black text-xs transition-all ${
               viewMode === 'batches'
-                ? 'bg-primary text-background-dark shadow-lg'
+                ? 'bg-primary text-black shadow-lg'
                 : 'text-white/60 hover:text-white/80'
             }`}
           >
@@ -218,7 +218,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
             onClick={() => setViewMode('guests')}
             className={`flex-1 py-2.5 px-4 rounded-lg font-black text-xs transition-all ${
               viewMode === 'guests'
-                ? 'bg-primary text-background-dark shadow-lg'
+                ? 'bg-primary text-black shadow-lg'
                 : 'text-white/60 hover:text-white/80'
             }`}
           >
@@ -246,7 +246,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                         <button
                           onClick={() => onSendGroup(groupKey)}
                           disabled={!!sendingGroup}
-                          className="h-10 px-5 bg-primary text-background-dark rounded-xl font-black text-xs flex items-center gap-2 shadow-lg active:scale-[0.98] transition-all"
+                          className="h-10 px-5 bg-primary text-black rounded-xl font-black text-xs flex items-center gap-2 shadow-lg active:scale-[0.98] transition-all"
                         >
                           <span className={`material-symbols-outlined text-base ${sendingGroup === groupKey ? 'animate-spin' : ''}`}>{sendingGroup === groupKey ? 'sync' : 'send'}</span>
                           {sendingGroup === groupKey ? 'Enviando...' : 'Pedir ahora'}
@@ -493,7 +493,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
             <button onClick={() => {
               if (pendingItems.length > 0) setShowUnsentProductsModal(true);
               else onPay?.();
-            }} className="w-full h-14 rounded-2xl font-black flex items-center justify-center gap-2 transition-all bg-primary hover:bg-green-400 active:scale-[0.98] text-background-dark shadow-xl shadow-primary/20">
+            }} className="w-full h-14 rounded-2xl font-black flex items-center justify-center gap-2 transition-all bg-primary hover:bg-primary-dark active:scale-[0.98] text-black shadow-xl shadow-primary/20">
               <span className="material-symbols-outlined font-black">payments</span>
               <span>Dividir y pagar cuenta</span>
             </button>
@@ -509,17 +509,12 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
       {waiter ? (
         <button
           onClick={() => setIsWaiterModalOpen(true)}
-          className="fixed bottom-28 right-4 z-[70] size-14 bg-primary hover:bg-green-400 text-background-dark rounded-full shadow-lg shadow-primary/30 flex items-center justify-center transition-all active:scale-95"
+          className="fixed bottom-28 right-4 z-[70] size-14 bg-primary hover:bg-primary-dark text-black rounded-full shadow-lg shadow-primary/30 flex items-center justify-center transition-all active:scale-95"
           title="Solicitar al mesero"
         >
           <span className="material-symbols-outlined text-2xl">notifications</span>
         </button>
-      ) : (
-        // Debug: Botón temporal para verificar que el componente se renderiza
-        <div className="fixed bottom-28 right-4 z-[70] size-14 bg-red-500 rounded-full flex items-center justify-center text-white text-xs" title="DEBUG: No hay waiter">
-          ?
-        </div>
-      )}
+      ) : null}
 
       {/* Modal: confirmar quitar producto del pedido (solo batches ENVIADO) */}
       {itemToRemoveFromBatch && (
@@ -560,7 +555,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
             <div className="flex flex-col gap-3">
               <button
                 onClick={() => { setShowUnsentProductsModal(false); onPay?.(); }}
-                className="w-full h-14 bg-primary text-background-dark rounded-2xl font-black text-lg shadow-xl shadow-primary/20 active:scale-[0.98] transition-all"
+                className="w-full h-14 bg-primary text-black rounded-2xl font-black text-lg shadow-xl shadow-primary/20 active:scale-[0.98] transition-all"
               >
                 Prefiero pagar
               </button>
