@@ -1276,7 +1276,8 @@ const MenuView: React.FC<MenuViewProps> = ({
             <div className="relative h-56 mx-4 rounded-3xl overflow-hidden">
               <div
                 ref={bannerScrollRef}
-                className="flex h-full w-full overflow-x-auto no-scrollbar snap-x snap-mandatory"
+                className="flex h-full w-full no-scrollbar"
+                style={{ overflowX: 'scroll', scrollSnapType: 'x mandatory', WebkitOverflowScrolling: 'touch' } as React.CSSProperties}
                 onScroll={e => {
                   const el = e.currentTarget;
                   const idx = Math.round(el.scrollLeft / el.offsetWidth);
@@ -1284,7 +1285,7 @@ const MenuView: React.FC<MenuViewProps> = ({
                 }}
               >
                 {banners.map(banner => (
-                  <div key={banner.id} className="min-w-full h-full shrink-0 snap-start relative">
+                  <div key={banner.id} className="h-full relative" style={{ scrollSnapAlign: 'start', flexShrink: 0, width: '100%' }}>
                     <img src={banner.image_url} alt="" className="w-full h-full object-cover" />
                     {(banner.title || banner.description) && (
                       <>
