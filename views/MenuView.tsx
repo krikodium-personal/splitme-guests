@@ -1272,6 +1272,26 @@ const MenuView: React.FC<MenuViewProps> = ({
       <div style={{ paddingTop: scrollTop <= 10 ? headerHeight : 0 }} className="transition-[padding] duration-200">
       {initialCategory === 'Inicio' ? (
         <main className="pb-36 flex-1 pt-5 space-y-8">
+          {menuItems.length === 0 && (
+            <div className="space-y-8 px-0">
+              {/* Banner skeleton */}
+              <div className="h-56 mx-4 rounded-3xl bg-white/5 animate-pulse" />
+              {/* Carousel skeletons */}
+              {[1, 2, 3].map(s => (
+                <div key={s}>
+                  <div className="flex items-center gap-2 px-4 mb-4">
+                    <div className="w-4 h-4 rounded-full bg-white/10 animate-pulse" />
+                    <div className="w-36 h-4 rounded-full bg-white/10 animate-pulse" />
+                  </div>
+                  <div className="flex gap-3 px-5 overflow-hidden">
+                    {[1, 2, 3].map(c => (
+                      <div key={c} className="w-44 h-56 rounded-3xl bg-white/5 animate-pulse shrink-0" />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           {banners.length > 0 && (
             <div className="relative h-56 mx-4 rounded-3xl overflow-hidden">
               <div
