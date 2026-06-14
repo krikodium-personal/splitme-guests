@@ -1238,12 +1238,14 @@ const App: React.FC = () => {
         if (fallback.data) {
           const enriched = await enrichMenuItemsWithVariants(fallback.data, supabase);
           setMenuItems(enriched);
+          setMenuItemsReady(true);
         }
         return;
       }
       if (data) {
         const enriched = await enrichMenuItemsWithVariants(data, supabase);
         setMenuItems(enriched);
+        setMenuItemsReady(true);
       }
     } catch (e) {
       console.warn('[DineSplit] Error al refrescar menu items:', e);
@@ -1510,6 +1512,7 @@ const App: React.FC = () => {
           setCategories(categoriesRes.data || []);
           setSectionHeaders((sectionHeadersRes.data as MenuSectionHeader[]) || []);
           setMenuItems(await enrichMenuItemsWithVariants(menuItemsRes.data || [], supabase));
+          setMenuItemsReady(true);
           setActiveOrderId(orderIdForLoad);
           setOrderId(orderIdForLoad);
 
@@ -1669,6 +1672,7 @@ const App: React.FC = () => {
             setCategories(categoriesRes.data || []);
             setSectionHeaders((sectionHeadersRes.data as MenuSectionHeader[]) || []);
             setMenuItems(await enrichMenuItemsWithVariants(menuItemsRes.data || [], supabase));
+            setMenuItemsReady(true);
             setActiveOrderId(orderId);
 
             // Cargar waiter si la mesa tiene waiter_id
@@ -2506,9 +2510,9 @@ const App: React.FC = () => {
 
   if (loading && currentView !== 'MENU') {
     return (
-      <div className="h-screen flex flex-col items-center justify-center bg-background-dark text-primary font-black animate-pulse">
-        <div className="size-12 border-4 border-primary border-t-transparent rounded-full animate-spin mb-4"></div>
-        SplitMe
+      <div className="h-screen flex flex-col items-center justify-center bg-background-dark font-black">
+        <div className="size-14 border-[3px] border-white/20 border-t-primary rounded-full animate-spin mb-5"></div>
+        <span className="text-white text-lg tracking-widest">SplitMe</span>
       </div>
     );
   }
