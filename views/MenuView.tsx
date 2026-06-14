@@ -37,6 +37,8 @@ interface MenuViewProps {
   onGuestIdentified?: (guestId: string) => void;
   /** Refresca disponibilidad y stock de productos al cambiar sección/subsección (tiempo real). */
   onRefreshMenuItems?: () => Promise<void>;
+  /** True cuando los menuItems ya están cargados. False mientras se están cargando (muestra skeleton). */
+  menuItemsReady?: boolean;
 }
 
 export const formatPrice = (price: number) => {
@@ -224,7 +226,7 @@ const MenuView: React.FC<MenuViewProps> = ({
   guests, setGuests, cart, onAddToCart, onUpdateCartItem, onNext, 
   selectedGuestId, onSelectGuest, initialCategory, onCategoryChange, 
   editingCartItem, onCancelEdit, menuItems, categories: supabaseCategories,
-  sectionHeaders = [], table, restaurant, waiter, onSaveGuestChanges, activeOrderId, identifiedGuestId, pendingGuestSelection, onGuestIdentified, onRefreshMenuItems
+  sectionHeaders = [], table, restaurant, waiter, onSaveGuestChanges, activeOrderId, identifiedGuestId, pendingGuestSelection, onGuestIdentified, onRefreshMenuItems, menuItemsReady = true
 }) => {
   const { category: categorySlug, subcategory: subcategorySlug } = useParams<{ category?: string; subcategory?: string }>();
   const navigate = useNavigate();
@@ -1272,7 +1274,7 @@ const MenuView: React.FC<MenuViewProps> = ({
       <div style={{ paddingTop: scrollTop <= 10 ? headerHeight : 0 }} className="transition-[padding] duration-200">
       {initialCategory === 'Inicio' ? (
         <main className="pb-36 flex-1 pt-5 space-y-8">
-          {menuItems.length === 0 && (
+          {!menuItemsReady && (
             <div className="space-y-8 px-0">
               {/* Banner skeleton */}
               <div className="h-56 mx-4 rounded-3xl bg-white/5 animate-pulse" />

@@ -162,6 +162,7 @@ const App: React.FC = () => {
     console.log('[App] currentWaiter changed:', currentWaiter);
   }, [currentWaiter]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [menuItemsReady, setMenuItemsReady] = useState(false);
   const [categories, setCategories] = useState<any[]>([]);
   const [sectionHeaders, setSectionHeaders] = useState<MenuSectionHeader[]>([]);
   const [guests, setGuests] = useState<Guest[]>([{ id: '1', name: 'Comensal 1 (Tú)', isHost: true }]);
@@ -563,31 +564,37 @@ const App: React.FC = () => {
       // PERSISTENCIA (cookies para sobrevivir a recargas)
       setSession({ res: accessCode.toUpperCase(), table: tableNum.toString() });
 
-      // Cargar datos complementarios
-      // Buscar el mesero asignado a la mesa usando waiter_id
-      const [waiterRes, catRes, itemRes, sectionHeadersRes] = await Promise.all([
-        tableData.waiter_id 
+      // Cargar datos complementarios (sin menu_items para poder navegar antes y mostrar skeleton)
+      const [waiterRes, catRes, sectionHeadersRes] = await Promise.all([
+        tableData.waiter_id
           ? supabase.from('waiters').select('*').eq('id', tableData.waiter_id).maybeSingle()
           : Promise.resolve({ data: null, error: null }),
         supabase.from('categories').select('*').eq('restaurant_id', resData.id).order('sort_order'),
-        supabase.from('menu_items').select('*, variant_groups(*, variant_options(*))').eq('restaurant_id', resData.id).order('sort_order'),
         supabase.from('menu_section_headers').select('*').eq('restaurant_id', resData.id).order('sort_order')
       ]);
-
-      let menuItemsData = itemRes.data || [];
-      if (itemRes.error) {
-        const fallback = await supabase.from('menu_items').select('*').eq('restaurant_id', resData.id).order('sort_order');
-        menuItemsData = fallback.data || [];
-      }
-      menuItemsData = await enrichMenuItemsWithVariants(menuItemsData, supabase);
 
       setRestaurant(resData);
       setCurrentTable(tableData);
       setCurrentWaiter(waiterRes.data || null);
       setCategories(catRes.data || []);
       setSectionHeaders((sectionHeadersRes.data as MenuSectionHeader[]) || []);
-      setMenuItems(menuItemsData);
+      setMenuItems([]);
+      setMenuItemsReady(false);
       setTableAndRestaurant(tableData, resData);
+
+      // Cargar menu_items en background (el skeleton se muestra mientras tanto)
+      const loadMenuItems = async () => {
+        const itemRes = await supabase.from('menu_items').select('*, variant_groups(*, variant_options(*))').eq('restaurant_id', resData.id).order('sort_order');
+        let menuItemsData = itemRes.data || [];
+        if (itemRes.error) {
+          const fallback = await supabase.from('menu_items').select('*').eq('restaurant_id', resData.id).order('sort_order');
+          menuItemsData = fallback.data || [];
+        }
+        menuItemsData = await enrichMenuItemsWithVariants(menuItemsData, supabase);
+        setMenuItems(menuItemsData);
+        setMenuItemsReady(true);
+      };
+      loadMenuItems();
       
       // PASO 3: Verificar orden activa
       // Si la mesa está Libre (cerrada en admin), siempre iniciar sesión nueva — no buscar órdenes previas
@@ -2592,13 +2599,14 @@ const App: React.FC = () => {
             menuItems={menuItems} 
             categories={categories}
             sectionHeaders={sectionHeaders}
-            restaurant={restaurant} 
+            restaurant={restaurant}
             table={currentTable}
             waiter={currentWaiter}
             onSaveGuestChanges={handleSaveGuestChanges}
             activeOrderId={activeOrderId}
             identifiedGuestId={getActiveGuestId()}
             pendingGuestSelection={pendingGuestSelection}
+            menuItemsReady={menuItemsReady}
             onGuestIdentified={(id) => { setActiveGuestIdCookie(id); setPendingGuestSelection(false); }}
             onRefreshMenuItems={refreshMenuItems}
           />
