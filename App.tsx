@@ -2497,7 +2497,7 @@ const App: React.FC = () => {
     }
   }, [supabase, activeOrderId, fetchOrderItemsFromDB, cart]);
 
-  if (loading) {
+  if (loading && currentView !== 'MENU') {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-background-dark text-primary font-black animate-pulse">
         <div className="size-12 border-4 border-primary border-t-transparent rounded-full animate-spin mb-4"></div>
