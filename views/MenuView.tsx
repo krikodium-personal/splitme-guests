@@ -1277,7 +1277,7 @@ const MenuView: React.FC<MenuViewProps> = ({
           {!menuItemsReady && (
             <div className="space-y-8 px-0">
               {/* Banner skeleton */}
-              <div className="h-56 mx-4 rounded-3xl bg-white/5 animate-pulse" />
+              <div className="h-56 mx-4 rounded-3xl bg-white/10 animate-pulse" />
               {/* Carousel skeletons */}
               {[1, 2, 3].map(s => (
                 <div key={s}>
@@ -1287,7 +1287,7 @@ const MenuView: React.FC<MenuViewProps> = ({
                   </div>
                   <div className="flex gap-3 px-5 overflow-hidden">
                     {[1, 2, 3].map(c => (
-                      <div key={c} className="w-44 h-56 rounded-3xl bg-white/5 animate-pulse shrink-0" />
+                      <div key={c} className="w-44 h-56 rounded-3xl bg-white/10 animate-pulse shrink-0" />
                     ))}
                   </div>
                 </div>
