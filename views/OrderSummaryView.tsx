@@ -485,7 +485,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
       <div className="fixed bottom-0 left-0 w-full p-4 bg-background-dark border-t border-white/5 z-20 space-y-3 shadow-2xl">
         <div className="flex justify-between items-center px-2">
            <span className="text-text-secondary font-medium">Total Acumulado</span>
-           <span className="text-[28px] font-black tabular-nums">${formatPrice(grandTotal)}</span>
+           <span className="text-[28px] font-black">${formatPrice(grandTotal)}</span>
         </div>
         
         <div className="flex flex-col gap-3">
