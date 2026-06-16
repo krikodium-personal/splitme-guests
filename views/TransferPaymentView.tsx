@@ -10,9 +10,10 @@ interface TransferPaymentViewProps {
   guestId?: string;
   orderId?: string;
   chargeId?: string | null;
+  externalPaid?: boolean;
 }
 
-const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amount, restaurant, guestId, orderId, chargeId }) => {
+const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amount, restaurant, guestId, orderId, chargeId, externalPaid }) => {
   const navigate = useNavigate();
   const [bankData, setBankData] = useState({
     alias: '',
@@ -54,6 +55,18 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
   useEffect(() => {
     setResolvedChargeId(chargeId || null);
   }, [chargeId]);
+
+  // Reacciona al pago confirmado desde el estado global del App (vía Realtime del App)
+  useEffect(() => {
+    if (externalPaid && !isPaid) {
+      setIsPaid(true);
+      setIsWaitingConfirmation(false);
+      setIsTransferConfirmed(true);
+      const audio = new Audio('https://hqaiuywzklrwywdhmqxw.supabase.co/storage/v1/object/public/sounds/pagado.wav');
+      audio.play().catch(() => {});
+      if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+    }
+  }, [externalPaid]);
 
   useEffect(() => {
     const findPendingCharge = async () => {

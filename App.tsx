@@ -2809,13 +2809,14 @@ const App: React.FC = () => {
           />
         } />
         <Route path="/transfer-payment" element={
-          <TransferPaymentView 
+          <TransferPaymentView
             onBack={() => navigateToView('INDIVIDUAL_SHARE')}
             amount={paymentAmount || 0}
             restaurant={restaurant}
             guestId={guestIdParam || activeGuestId}
             orderId={activeOrderId || ''}
             chargeId={paymentChargeId || activeSplitData?.find(s => s.id === (guestIdParam || activeGuestId))?.charge_id || null}
+            externalPaid={guests.find(g => g.id === (guestIdParam || activeGuestId))?.paid || false}
           />
         } />
         <Route path="/cash-payment" element={
