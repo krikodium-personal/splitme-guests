@@ -1199,7 +1199,7 @@ const MenuView: React.FC<MenuViewProps> = ({
           >
             {isInicio && <span className="material-symbols-outlined text-[14px]">home</span>}
             {cat} {categoryCounts[cat] > 0 && (
-              <span className={`ml-1.5 inline-flex min-w-[18px] h-[18px] rounded-full items-center justify-center text-[10px] font-semibold ${isSelected ? 'bg-white/30 text-white' : 'bg-primary/20 text-primary'}`}>
+              <span className={`ml-1.5 inline-flex min-w-[18px] h-[18px] rounded-full items-center justify-center text-[10px] font-semibold ${isSelected ? 'bg-white/30 text-white' : 'bg-primary/50 text-primary'}`}>
                 {categoryCounts[cat]}
               </span>
             )}
@@ -1222,12 +1222,12 @@ const MenuView: React.FC<MenuViewProps> = ({
             }}
             className={`flex items-center px-3 py-1.5 rounded-full whitespace-nowrap text-xs font-semibold transition-colors shrink-0 ${
               selectedSubcategory === null
-                ? 'bg-primary/20 text-primary border border-primary/30'
+                ? 'bg-primary/50 text-primary border border-primary/30'
                 : 'bg-surface-dark-alt text-text-secondary border border-border-dark'
             }`}
           >
             Todos {categoryCounts[initialCategory] > 0 && (
-              <span className={`ml-1.5 inline-flex min-w-[18px] h-[18px] rounded-full items-center justify-center text-[10px] font-semibold ${selectedSubcategory === null ? 'bg-white/30 text-white' : 'bg-primary/20 text-primary'}`}>
+              <span className={`ml-1.5 inline-flex min-w-[18px] h-[18px] rounded-full items-center justify-center text-[10px] font-semibold ${selectedSubcategory === null ? 'bg-white/30 text-white' : 'bg-primary/50 text-primary'}`}>
                 {categoryCounts[initialCategory]}
               </span>
             )}
@@ -1250,12 +1250,12 @@ const MenuView: React.FC<MenuViewProps> = ({
                 }}
                 className={`flex items-center px-3 py-1.5 rounded-full whitespace-nowrap text-xs font-semibold transition-colors shrink-0 ${
                   isSelected
-                    ? 'bg-primary/20 text-primary border border-primary/30'
+                    ? 'bg-primary/50 text-primary border border-primary/30'
                     : 'bg-surface-dark-alt text-text-secondary border border-border-dark'
                 }`}
               >
                 {subcat.name} {count > 0 && (
-                  <span className={`ml-1.5 inline-flex min-w-[18px] h-[18px] rounded-full items-center justify-center text-[10px] font-semibold ${isSelected ? 'bg-white/30 text-white' : 'bg-primary/20 text-primary'}`}>
+                  <span className={`ml-1.5 inline-flex min-w-[18px] h-[18px] rounded-full items-center justify-center text-[10px] font-semibold ${isSelected ? 'bg-white/30 text-white' : 'bg-primary/50 text-primary'}`}>
                     {count}
                   </span>
                 )}
