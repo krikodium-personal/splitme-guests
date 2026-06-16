@@ -1199,7 +1199,7 @@ const MenuView: React.FC<MenuViewProps> = ({
           >
             {isInicio && <span className="material-symbols-outlined text-[14px]">home</span>}
             {cat} {categoryCounts[cat] > 0 && (
-              <span className={`ml-1.5 inline-flex min-w-[18px] h-[18px] rounded-full items-center justify-center text-[10px] font-semibold ${isSelected ? 'bg-white/30 text-white' : 'bg-primary/50 text-gray-800'}`}>
+              <span className={`ml-1.5 inline-flex min-w-[18px] h-[18px] rounded-full items-center justify-center text-[10px] font-semibold ${isSelected ? 'bg-white/30 text-gray-800' : 'bg-primary/50 text-gray-800'}`}>
                 {categoryCounts[cat]}
               </span>
             )}
@@ -1227,7 +1227,7 @@ const MenuView: React.FC<MenuViewProps> = ({
             }`}
           >
             Todos {categoryCounts[initialCategory] > 0 && (
-              <span className={`ml-1.5 inline-flex min-w-[18px] h-[18px] rounded-full items-center justify-center text-[10px] font-semibold ${selectedSubcategory === null ? 'bg-white/30 text-white' : 'bg-primary/50 text-gray-800'}`}>
+              <span className={`ml-1.5 inline-flex min-w-[18px] h-[18px] rounded-full items-center justify-center text-[10px] font-semibold ${selectedSubcategory === null ? 'bg-white/30 text-gray-800' : 'bg-primary/50 text-gray-800'}`}>
                 {categoryCounts[initialCategory]}
               </span>
             )}
@@ -1255,7 +1255,7 @@ const MenuView: React.FC<MenuViewProps> = ({
                 }`}
               >
                 {subcat.name} {count > 0 && (
-                  <span className={`ml-1.5 inline-flex min-w-[18px] h-[18px] rounded-full items-center justify-center text-[10px] font-semibold ${isSelected ? 'bg-white/30 text-white' : 'bg-primary/50 text-gray-800'}`}>
+                  <span className={`ml-1.5 inline-flex min-w-[18px] h-[18px] rounded-full items-center justify-center text-[10px] font-semibold ${isSelected ? 'bg-white/30 text-gray-800' : 'bg-primary/50 text-gray-800'}`}>
                     {count}
                   </span>
                 )}
