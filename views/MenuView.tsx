@@ -244,6 +244,7 @@ const MenuView: React.FC<MenuViewProps> = ({
   const [banners, setBanners] = useState<{ id: string; image_url: string; title: string | null; description: string | null }[]>([]);
   const [activeBannerIndex, setActiveBannerIndex] = useState(0);
   const bannerScrollRef = useRef<HTMLDivElement>(null);
+  const [showWaiterTip, setShowWaiterTip] = useState(() => !localStorage.getItem('splitme_waiter_tip_seen'));
   const [selectedReplaceOptionId, setSelectedReplaceOptionId] = useState<string | null>(null);
   const [selectedReplaceOptionIds, setSelectedReplaceOptionIds] = useState<Record<string, string[]>>({}); // Para grupos con selection=multiple
   const [selectedAddOptionIds, setSelectedAddOptionIds] = useState<string[]>([]);
@@ -2111,17 +2112,51 @@ const MenuView: React.FC<MenuViewProps> = ({
 
       {/* Botón flotante: foto del mesero asignado - arriba del footer, siempre visible */}
       {waiter ? (
-        <button
-          onClick={() => setIsWaiterModalOpen(true)}
-          className="fixed bottom-28 right-4 z-[70] size-14 rounded-full shadow-xl shadow-black/40 flex items-center justify-center overflow-hidden border-2 border-primary/60 transition-all active:scale-95"
-          title="Solicitar al mesero"
-        >
-          <img
-            src={waiter?.profile_photo_url || 'https://lh3.googleusercontent.com/aida-public/AB6AXuDyiwOtsINFh8RspVDg_Wx4QKXthNxCS7ZJlDSZvL6ADwFD3WRUpKHGhrscxV9dcR7w7guM4E-iFCNXx-tDgHs1BrbfGjolJoASehM-SEc4Pe6bKEx7zjcF4WAcON7mbdWJCepEdMPkBZ36lB_4tPTsJeNzTNqRNGKgusVb3U_X0WGEAgij6Y48HIunhj_BC8lxMdsB5ublmAltnyYerUKa_NkT8aybLFkaaRkQGQ_irdtS2ZQwrNGNj6b1ZrWY1HRClBeExJL615bG'}
-            alt={waiter?.nickname || waiter?.full_name || 'Mesero'}
-            className="w-full h-full object-cover"
-          />
-        </button>
+        <>
+          {/* Globo de ayuda — solo la primera vez */}
+          {showWaiterTip && (
+            <button
+              onClick={() => {
+                localStorage.setItem('splitme_waiter_tip_seen', '1');
+                setShowWaiterTip(false);
+              }}
+              className="fixed bottom-[7.5rem] right-20 z-[71] max-w-[200px] text-left"
+              aria-label="Cerrar sugerencia"
+            >
+              <div className="relative bg-white rounded-2xl rounded-br-sm px-4 py-3 shadow-2xl shadow-black/40">
+                <p className="text-[13px] font-semibold text-gray-800 leading-snug">
+                  ¡Tocá la foto de tu mesero para pedirle lo que necesites sin necesidad de llamarlo!
+                </p>
+                {/* Flecha apuntando hacia el botón del mesero (abajo-derecha) */}
+                <div
+                  className="absolute -right-2 bottom-2"
+                  style={{
+                    width: 0, height: 0,
+                    borderTop: '8px solid transparent',
+                    borderBottom: '0px solid transparent',
+                    borderLeft: '12px solid white',
+                  }}
+                />
+              </div>
+            </button>
+          )}
+
+          <button
+            onClick={() => {
+              localStorage.setItem('splitme_waiter_tip_seen', '1');
+              setShowWaiterTip(false);
+              setIsWaiterModalOpen(true);
+            }}
+            className="fixed bottom-28 right-4 z-[70] size-14 rounded-full shadow-xl shadow-black/40 flex items-center justify-center overflow-hidden border-2 border-primary/60 transition-all active:scale-95"
+            title="Solicitar al mesero"
+          >
+            <img
+              src={waiter?.profile_photo_url || 'https://lh3.googleusercontent.com/aida-public/AB6AXuDyiwOtsINFh8RspVDg_Wx4QKXthNxCS7ZJlDSZvL6ADwFD3WRUpKHGhrscxV9dcR7w7guM4E-iFCNXx-tDgHs1BrbfGjolJoASehM-SEc4Pe6bKEx7zjcF4WAcON7mbdWJCepEdMPkBZ36lB_4tPTsJeNzTNqRNGKgusVb3U_X0WGEAgij6Y48HIunhj_BC8lxMdsB5ublmAltnyYerUKa_NkT8aybLFkaaRkQGQ_irdtS2ZQwrNGNj6b1ZrWY1HRClBeExJL615bG'}
+              alt={waiter?.nickname || waiter?.full_name || 'Mesero'}
+              className="w-full h-full object-cover"
+            />
+          </button>
+        </>
       ) : null}
 
       {/* Modal de solicitud al mesero */}
