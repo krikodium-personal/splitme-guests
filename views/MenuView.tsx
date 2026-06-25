@@ -1506,8 +1506,8 @@ const MenuView: React.FC<MenuViewProps> = ({
                           <div className="size-4 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
                         </div>
                       ) : totalQty > 0 ? (
-                        <div className="flex items-center gap-2 bg-surface-dark-alt border border-border-dark rounded-xl overflow-hidden shadow-md shadow-black/30">
-                          <button 
+                        <div className="flex items-center gap-1 bg-surface-dark-alt border border-border-dark rounded-xl overflow-hidden shadow-md shadow-black/30">
+                          <button
                             onClick={(e) => {
                               if (simpleItem) {
                                 handleDecrement(e, item.id);
@@ -1516,22 +1516,22 @@ const MenuView: React.FC<MenuViewProps> = ({
                                 if (anyItem) onUpdateCartItem(anyItem.id, { quantity: anyItem.quantity - 1 });
                               }
                             }}
-                            className={`h-9 w-9 flex items-center justify-center active:bg-white/5 transition-colors ${showTrash ? 'text-red-500' : 'text-primary'}`}
+                            className={`h-8 w-8 flex items-center justify-center active:bg-white/5 transition-colors ${showTrash ? 'text-red-500' : 'text-primary'}`}
                           >
-                            <span className="material-symbols-outlined font-black text-lg">
+                            <span className="material-symbols-outlined font-black text-base">
                               {showTrash ? 'delete' : 'remove'}
                             </span>
                           </button>
-                          
-                          <div className="min-w-[2rem] flex items-center justify-center">
+
+                          <div className="min-w-[1.5rem] flex items-center justify-center">
                             <span className="text-sm font-black tabular-nums text-white">{totalQty}</span>
                           </div>
 
-                          <button 
+                          <button
                             onClick={(e) => handleIncrement(e, item)}
-                            className="h-9 w-9 flex items-center justify-center text-primary active:bg-white/5 transition-colors"
+                            className="h-8 w-8 flex items-center justify-center text-primary active:bg-white/5 transition-colors"
                           >
-                            <span className="material-symbols-outlined font-black text-lg">add</span>
+                            <span className="material-symbols-outlined font-black text-base">add</span>
                           </button>
                         </div>
                       ) : (
