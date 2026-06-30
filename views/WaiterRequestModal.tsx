@@ -136,12 +136,21 @@ const WaiterRequestModal: React.FC<WaiterRequestModalProps> = ({
  ? `${waiter.full_name} ${waiter.nickname}`
  : waiter?.nickname || waiter?.full_name || 'Mesero';
 
- return (
- <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
- <div className="bg-surface-dark rounded-3xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto">
- {/* Header con botón cerrar */}
- <div className="sticky top-0 bg-surface-dark border-b border-border-dark p-4 flex items-center justify-between z-10">
- <h2 className="text-xl font-bold text-white flex-1 text-center">Solicitar al Mesero</h2>
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="waiter-request-modal-title"
+      onClick={onClose}
+    >
+      <div
+        className="bg-surface-dark rounded-3xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header con botón cerrar */}
+        <div className="sticky top-0 bg-surface-dark border-b border-border-dark p-4 flex items-center justify-between z-10">
+          <h2 id="waiter-request-modal-title" className="text-xl font-bold text-white flex-1 text-center">Solicitar al Mesero</h2>
  <button
  onClick={onClose}
  className="text-text-secondary hover:text-white transition-colors ml-auto"
