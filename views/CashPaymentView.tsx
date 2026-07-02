@@ -126,7 +126,7 @@ const CashPaymentView: React.FC<CashPaymentViewProps> = ({
         <div className="bg-surface-dark rounded-3xl p-6 border border-white/5 w-full mb-6">
           <div className="flex flex-col items-center text-center">
             <p className="text-text-secondary text-xs font-bold uppercase tracking-widest mb-3">Monto a Pagar</p>
-            <p className="text-5xl font-black text-primary tabular-nums mb-4">${formatPrice(amount)}</p>
+            <p className="text-5xl font-black text-primary price-amount mb-4">${formatPrice(amount)}</p>
             {guestName && (
               <p className="text-text-secondary text-sm font-medium">Comensal: {guestName}</p>
             )}

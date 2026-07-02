@@ -321,7 +321,7 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
 
       <div className="px-4 py-3">
         <div className="w-full flex flex-col gap-1 rounded-2xl bg-surface-dark border border-border-dark p-6 items-center text-center shadow-lg">
-          <p className="text-white tracking-tighter text-4xl font-black leading-tight">${formatPrice(grandTotal)}</p>
+          <p className="text-white tracking-tighter text-4xl font-black leading-tight price-amount">${formatPrice(grandTotal)}</p>
           <div className="flex items-center gap-1.5 opacity-60">
             <span className="material-symbols-outlined text-sm">receipt_long</span>
             <p className="text-sm font-bold uppercase tracking-widest">Total de la Mesa</p>
@@ -466,7 +466,7 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
             >
               <div className="flex flex-col items-start leading-none">
                 <span className="text-[10px] uppercase font-black tracking-widest opacity-60">Pagar cuenta</span>
-                <span className="text-xl tabular-nums">${formatPrice(grandTotal)}</span>
+                <span className="text-xl price-amount">${formatPrice(grandTotal)}</span>
               </div>
               <span className="material-symbols-outlined font-black group-hover:translate-x-1 transition-transform">arrow_forward</span>
             </button>
@@ -486,7 +486,7 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
               >
                 <div className="flex flex-col items-start leading-none">
                   <span className="text-[10px] uppercase font-black tracking-widest opacity-60">Pagar mi parte</span>
-                  <span className="text-xl tabular-nums">${formatPrice(myShare)}</span>
+                  <span className="text-xl price-amount">${formatPrice(myShare)}</span>
                 </div>
                 <span className="material-symbols-outlined font-black group-hover:translate-x-1 transition-transform">arrow_forward</span>
               </button>

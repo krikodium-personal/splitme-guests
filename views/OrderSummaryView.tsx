@@ -272,7 +272,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                                 {replaceInfo && (
                                   <p className="text-[10px] uppercase"><span className="text-white/60">{replaceInfo.groupName}: </span><span className="font-bold text-white">{replaceInfo.optionNames.join(', ')}</span></p>
                                 )}
-                                <p className="text-primary text-[13px] font-semibold tabular-nums">${formatPrice(item.unitPrice ?? Number(dish?.price || 0))}</p>
+                                <p className="text-primary text-[13px] font-semibold price-amount">${formatPrice(item.unitPrice ?? Number(dish?.price || 0))}</p>
                               </div>
                               <div className="flex items-center gap-3 bg-background-dark/50 rounded-full px-2 py-1 shrink-0 border border-white/5">
                                 <button onClick={() => onUpdateQuantity(item.id, -1)} className="size-6 rounded-full hover:bg-white/10 flex items-center justify-center"><span className="material-symbols-outlined text-xs">remove</span></button>
@@ -355,7 +355,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                               )}
                               <p className="text-white/30 text-[10px] font-black uppercase tracking-widest">Cantidad: {item.quantity}</p>
                             </div>
-                            <span className="text-[15px] font-semibold text-white/80 tabular-nums">${formatPrice((item.unitPrice ?? dish?.price ?? 0) * item.quantity)}</span>
+                            <span className="text-[15px] font-semibold text-white/80 price-amount">${formatPrice((item.unitPrice ?? dish?.price ?? 0) * item.quantity)}</span>
                             {canRemove && (
                               <button
                                 onClick={() => setItemToRemoveFromBatch(item)}
@@ -420,7 +420,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                       </div>
                       <div className="text-right">
                         <p className="text-xs text-white/40 font-medium uppercase tracking-widest mb-1">Subtotal</p>
-                        <p className="text-[22px] font-black tabular-nums">${formatPrice(total)}</p>
+                        <p className="text-[22px] font-black price-amount">${formatPrice(total)}</p>
                       </div>
                     </div>
 
@@ -444,11 +444,11 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                                 <div className="flex items-center gap-3 text-xs text-white/60">
                                   <span className="font-medium">Cantidad: {item.quantity}</span>
                                   <span className="text-white/40">×</span>
-                                  <span className="font-black tabular-nums">${formatPrice(unitPrice)}</span>
+                                  <span className="font-black price-amount">${formatPrice(unitPrice)}</span>
                                 </div>
                               </div>
                               <div className="text-right shrink-0">
-                                <p className="text-[15px] font-semibold tabular-nums">${formatPrice(itemTotal)}</p>
+                                <p className="text-[15px] font-semibold price-amount">${formatPrice(itemTotal)}</p>
                               </div>
                             </div>
                             {/* Variantes add y personalizaciones */}
@@ -485,7 +485,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
       <div className="fixed bottom-0 left-0 w-full p-4 bg-background-dark border-t border-white/5 z-20 space-y-3 shadow-2xl">
         <div className="flex justify-between items-center px-2">
            <span className="text-text-secondary font-medium">Total Acumulado</span>
-           <span className="text-[28px] font-black">${formatPrice(grandTotal)}</span>
+           <span className="text-[28px] font-black price-amount">${formatPrice(grandTotal)}</span>
         </div>
         
         <div className="flex flex-col gap-3">

@@ -360,10 +360,10 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
       <main className="flex-1 overflow-y-auto no-scrollbar pb-40">
         <div className="flex flex-col items-center justify-center py-10 px-6 text-center animate-fade-in">
           <span className="text-[10px] font-black text-primary uppercase tracking-[0.3em] mb-2">Saldo a pagar</span>
-          <h2 className="text-5xl font-black tracking-tighter leading-none text-white">${formatPrice(splitTotal)}</h2>
+          <h2 className="text-5xl font-black tracking-tighter leading-none text-white price-amount">${formatPrice(splitTotal)}</h2>
           <div className="mt-4 flex flex-col items-center gap-1">
             <p className="text-text-secondary text-[10px] font-black uppercase tracking-widest opacity-60">Total histórico de la mesa</p>
-            <p className="text-white/70 text-sm font-black tabular-nums">${formatPrice(grandTotal)}</p>
+            <p className="text-white/70 text-sm font-black price-amount">${formatPrice(grandTotal)}</p>
           </div>
           <p className="text-text-secondary text-[10px] font-black uppercase tracking-widest mt-4 opacity-40">Precios finales con impuestos incluidos</p>
         </div>
@@ -397,7 +397,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
                         <div className="min-w-0 flex-1">
                           <div className="flex items-start justify-between gap-3">
                             <p className="text-xs font-black text-white truncate">{guest.name}</p>
-                            <p className="text-xs font-black text-primary tabular-nums shrink-0">${formatPrice(guest.amount)}</p>
+                            <p className="text-xs font-black text-primary price-amount shrink-0">${formatPrice(guest.amount)}</p>
                           </div>
                           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1 text-[10px] font-bold text-amber-500/80">
                             <span>{guest.methodLabel}</span>
@@ -563,7 +563,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
                             <span className="text-primary font-black">x{item.quantity}</span>
                             <span className="text-white font-medium truncate max-w-[150px]">{item.name}</span>
                           </div>
-                          <span className="text-text-secondary font-bold tabular-nums">${formatPrice(item.price * item.quantity)}</span>
+                          <span className="text-text-secondary font-bold price-amount">${formatPrice(item.price * item.quantity)}</span>
                         </div>
                       ))
                     ) : (

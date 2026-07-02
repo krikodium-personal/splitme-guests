@@ -185,7 +185,7 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
 
       <div className="flex flex-col items-center justify-center pt-8 pb-10 animate-fade-in-up">
         <div className="text-text-secondary text-[10px] font-black uppercase tracking-[0.3em] mb-2 opacity-60">Monto total a pagar</div>
-        <h2 className="text-5xl font-black tracking-tighter tabular-nums">${formatPrice(finalTotal)}</h2>
+        <h2 className="text-5xl font-black tracking-tighter price-amount">${formatPrice(finalTotal)}</h2>
         <div className="mt-4 flex items-center gap-2 rounded-full bg-primary/10 px-4 py-1.5 border border-primary/20">
           <span className="material-symbols-outlined text-primary text-sm font-black filled">verified_user</span>
           <span className="text-[9px] font-black uppercase tracking-widest text-primary">Transacción Segura</span>
@@ -198,7 +198,7 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
           <div className="bg-surface-dark rounded-3xl p-5 border border-white/5">
              <div className="flex justify-between items-center">
                 <span className="text-text-secondary font-medium text-sm">Consumos asignados</span>
-                <span className="text-xl font-black text-primary tabular-nums">${formatPrice(finalTotal)}</span>
+                <span className="text-xl font-black text-primary price-amount">${formatPrice(finalTotal)}</span>
              </div>
           </div>
         </section>

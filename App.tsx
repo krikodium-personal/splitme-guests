@@ -2677,6 +2677,9 @@ const App: React.FC = () => {
           <SplitStatusView
             guests={guests}
             splitData={existingSplitStatusData}
+            cart={cartForSplit}
+            menuItems={menuItems}
+            orderGuestCharges={orderGuestCharges}
             onBack={() => navigateToView('ORDER_SUMMARY')}
             onContinuePayment={() => navigateToView('CHECKOUT')}
             onNewSplit={() => navigateToView('SPLIT_BILL')}

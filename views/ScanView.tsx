@@ -103,7 +103,7 @@ const ScanView: React.FC<ScanViewProps> = ({ onNext, restaurantName }) => {
 
           <div className="text-center">
             <h2 className="text-white text-[32px] font-bold leading-tight mb-2">¡A comer!</h2>
-            <p className="text-white/55 text-sm leading-relaxed">Escaneá el código QR de tu mesa<br/>para vincular tu dispositivo.</p>
+            <p className="text-white/55 text-sm leading-relaxed">Escaneá el código QR de tu mesa o ingresa los datos manualmente para entrar al menú y empezar tu pedido.</p>
           </div>
 
           {/* Scanner */}

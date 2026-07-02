@@ -298,7 +298,7 @@ const OrderProgressView: React.FC<OrderProgressViewProps> = ({
                                 )}
                                 <p className="text-text-secondary text-[10px] font-medium">Cantidad: {item.quantity}</p>
                               </div>
-                              <span className="text-xs font-black tabular-nums text-white/40">${formatPrice(unitPrice * item.quantity)}</span>
+                              <span className="text-xs font-black price-amount text-white/40">${formatPrice(unitPrice * item.quantity)}</span>
                               {canRemove && (
                                 <button
                                   onClick={() => setItemToRemoveFromBatch(item)}

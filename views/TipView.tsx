@@ -108,15 +108,15 @@ const TipView: React.FC<TipViewProps> = ({ onNext, onSkip, cart, menuItems, gues
             <div className="bg-surface-dark rounded-2xl p-4 border border-white/5">
               <div className="flex justify-between items-center mb-2">
                 <span className="text-text-secondary text-sm font-medium">Total pagado por vos</span>
-                <span className="font-bold tabular-nums">${formatPrice(orderTotal)}</span>
+                <span className="font-bold price-amount">${formatPrice(orderTotal)}</span>
               </div>
               <div className="flex justify-between items-center mb-3 pb-3 border-b border-white/10">
                 <span className="text-text-secondary text-sm font-medium">Propina ({tipPercentage}%)</span>
-                <span className="font-bold tabular-nums text-primary">${formatPrice(tipAmount)}</span>
+                <span className="font-bold price-amount text-primary">${formatPrice(tipAmount)}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-white font-black uppercase text-[10px] tracking-widest">Total con propina</span>
-                <span className="text-xl font-black text-primary tabular-nums">${formatPrice(orderTotal + tipAmount)}</span>
+                <span className="text-xl font-black text-primary price-amount">${formatPrice(orderTotal + tipAmount)}</span>
               </div>
             </div>
           )}

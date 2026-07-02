@@ -105,7 +105,7 @@ const GuestSelectionView: React.FC<GuestSelectionViewProps> = ({
               ) : null)}
             </div>
             <div className="flex flex-col items-end">
-              <p className="text-white font-black text-xl tabular-nums">
+              <p className="text-white font-black text-xl price-amount">
                 ${formatPrice(guest.total)}
               </p>
               <span className="material-symbols-outlined text-primary text-xl mt-1">

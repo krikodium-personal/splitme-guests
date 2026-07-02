@@ -41,12 +41,7 @@ interface MenuViewProps {
   menuItemsReady?: boolean;
 }
 
-export const formatPrice = (price: number) => {
-  return new Intl.NumberFormat('es-AR', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(price);
-};
+export { formatPrice, priceAmountClass } from '../lib/currency';
 
 const renderNutritionalValue = (value: number | null | undefined, unit: string) => {
   const isNull = value === null || value === undefined;
@@ -1389,7 +1384,7 @@ const MenuView: React.FC<MenuViewProps> = ({
                         )}
                         {/* precio + CTA */}
                         <div className="flex items-center justify-between gap-2 pointer-events-auto" onClick={e => e.stopPropagation()}>
-                          <span className="text-white font-semibold text-[15px] tabular-nums">${formatPrice(Number(item.price))}</span>
+                          <span className="text-white font-semibold text-[15px] price-amount">${formatPrice(Number(item.price))}</span>
                           {/* botón agregar / stepper */}
                           <div>
                         {item.availability === false ? null : addingItems.has(item.id) ? (
@@ -1590,7 +1585,7 @@ const MenuView: React.FC<MenuViewProps> = ({
             <span className="material-symbols-outlined">shopping_cart</span>
             <span>Ver Pedido {pendingCount > 0 && <span className="ml-1 opacity-60">({pendingCount})</span>}</span>
           </div>
-          <span className="tabular-nums">${formatPrice(totalSessionPrice)}</span>
+          <span className="price-amount">${formatPrice(totalSessionPrice)}</span>
         </button>
       </footer>
 

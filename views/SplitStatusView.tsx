@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Guest } from '../types';
+import { Guest, MenuItem, OrderGuestCharge, OrderItem } from '../types';
 import { formatPrice } from './MenuView';
 import { getGuestColor, getInitials } from './GuestInfoView';
 
@@ -11,6 +11,9 @@ interface SplitStatusViewProps {
   onChangeSplit: () => void;
   guests: Guest[];
   splitData: any[] | null;
+  cart: OrderItem[];
+  menuItems: MenuItem[];
+  orderGuestCharges?: OrderGuestCharge[];
 }
 
 const getPaymentMethodLabel = (method?: string | null) => {
@@ -29,7 +32,37 @@ const getPaymentMethodLabel = (method?: string | null) => {
   }
 };
 
-const SplitStatusView: React.FC<SplitStatusViewProps> = ({ onBack, onContinuePayment, onNewSplit, onGoToMenu, onChangeSplit, guests, splitData }) => {
+const SplitStatusView: React.FC<SplitStatusViewProps> = ({
+  onBack,
+  onContinuePayment,
+  onNewSplit,
+  onGoToMenu,
+  onChangeSplit,
+  guests,
+  splitData,
+  cart,
+  menuItems,
+  orderGuestCharges = [],
+}) => {
+  const orderTotal = useMemo(() => {
+    return cart.reduce((sum, item) => {
+      const menuItem = menuItems.find(m => m.id === item.itemId);
+      const unitPrice = item.unitPrice ?? menuItem?.price ?? 0;
+      return sum + unitPrice * item.quantity;
+    }, 0);
+  }, [cart, menuItems]);
+
+  const totalPaid = useMemo(() => {
+    const paidFromCharges = orderGuestCharges
+      .filter(charge => charge.status === 'paid')
+      .reduce((sum, charge) => sum + (Number(charge.amount) || 0), 0);
+    if (paidFromCharges > 0) return paidFromCharges;
+
+    return guests
+      .filter(guest => guest.paid === true)
+      .reduce((sum, guest) => sum + (Number(guest.payment_total) || Number(guest.individualAmount) || 0), 0);
+  }, [orderGuestCharges, guests]);
+
   const diners = useMemo(() => {
     return (splitData || [])
       .map((share) => {
@@ -50,11 +83,10 @@ const SplitStatusView: React.FC<SplitStatusViewProps> = ({ onBack, onContinuePay
   }, [guests, splitData]);
 
   const totalAssigned = diners.reduce((sum, diner) => sum + diner.amount, 0);
-  const totalPaid = diners.reduce((sum, diner) => sum + (diner.paid ? diner.amount : 0), 0);
-  const pendingTotal = Math.max(0, totalAssigned - totalPaid);
+  const pendingTotal = Math.max(0, orderTotal - totalPaid);
   const paidCount = diners.filter(diner => diner.paid).length;
   const hasPendingPayments = pendingTotal > 0.01;
-  const allDinersPaid = diners.length > 0 && paidCount === diners.length && !hasPendingPayments;
+  const allDinersPaid = orderTotal > 0 && totalPaid >= orderTotal - 0.01;
 
   return (
     <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden pb-36 bg-background-dark text-white font-display antialiased">
@@ -69,7 +101,7 @@ const SplitStatusView: React.FC<SplitStatusViewProps> = ({ onBack, onContinuePay
       <main className="flex-1 px-4 pt-8">
         <section className="text-center mb-8">
           <p className="text-primary text-[10px] font-black uppercase tracking-[0.35em] mb-3">Saldo pendiente</p>
-          <h2 className="text-5xl font-black tracking-tighter tabular-nums">${formatPrice(pendingTotal)}</h2>
+          <h2 className="text-5xl font-black tracking-tighter price-amount">${formatPrice(pendingTotal)}</h2>
           <p className="mt-4 text-xs font-black uppercase tracking-[0.18em] text-text-secondary">
             {paidCount} de {diners.length} comensales pagaron
           </p>
@@ -78,11 +110,11 @@ const SplitStatusView: React.FC<SplitStatusViewProps> = ({ onBack, onContinuePay
         <section className="grid grid-cols-2 gap-3 mb-6">
           <div className="rounded-2xl bg-surface-dark border border-white/5 p-4">
             <p className="text-[10px] font-black uppercase tracking-widest text-text-secondary mb-2">Dividido</p>
-            <p className="text-xl font-black tabular-nums">${formatPrice(totalAssigned)}</p>
+            <p className="text-xl font-black price-amount">${formatPrice(totalAssigned)}</p>
           </div>
           <div className="rounded-2xl bg-surface-dark border border-white/5 p-4">
             <p className="text-[10px] font-black uppercase tracking-widest text-text-secondary mb-2">Pagado</p>
-            <p className="text-xl font-black text-primary tabular-nums">${formatPrice(totalPaid)}</p>
+            <p className="text-xl font-black text-primary price-amount">${formatPrice(totalPaid)}</p>
           </div>
         </section>
 
@@ -107,7 +139,7 @@ const SplitStatusView: React.FC<SplitStatusViewProps> = ({ onBack, onContinuePay
                       {methodLabel ? ` · ${methodLabel}` : ''}
                     </p>
                   </div>
-                  <p className="text-lg font-black tabular-nums shrink-0">${formatPrice(diner.amount)}</p>
+                  <p className="text-lg font-black price-amount shrink-0">${formatPrice(diner.amount)}</p>
                 </div>
               </article>
             );

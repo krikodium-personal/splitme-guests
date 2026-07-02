@@ -325,7 +325,7 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
           <div className="bg-surface-dark rounded-3xl p-6 border border-white/5">
             <div className="flex flex-col items-center text-center">
               <p className="text-text-secondary text-xs font-bold uppercase tracking-widest mb-2">Monto a Transferir</p>
-              <p className="text-4xl font-black text-primary tabular-nums">${formatPrice(amount)}</p>
+              <p className="text-4xl font-black text-primary price-amount">${formatPrice(amount)}</p>
             </div>
           </div>
         </section>
