@@ -41,7 +41,8 @@ interface MenuViewProps {
   menuItemsReady?: boolean;
 }
 
-export { formatPrice, priceAmountClass } from '../lib/currency';
+import { formatPrice, priceAmountClass } from '../lib/currency';
+export { formatPrice, priceAmountClass };
 
 const renderNutritionalValue = (value: number | null | undefined, unit: string) => {
   const isNull = value === null || value === undefined;

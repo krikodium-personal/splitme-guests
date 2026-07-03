@@ -4,7 +4,6 @@ import { useLocation } from 'react-router-dom';
 import { Guest, OrderItem, MenuItem } from '../types';
 import { formatPrice } from './MenuView';
 import { supabase } from '../lib/supabase';
-import BuildBadge from '../BuildBadge';
 
 interface IndividualShareViewProps {
   onBack: () => void;
@@ -266,8 +265,6 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
           </div>
         </section>
       </div>
-
-      <BuildBadge />
 
       <div className="fixed bottom-0 left-0 right-0 z-50 max-w-md mx-auto w-full border-t border-white/5 bg-background-dark/95 backdrop-blur-xl p-6 pb-10 shadow-[0_-10px_50px_rgba(0,0,0,0.6)]">
         <button 
