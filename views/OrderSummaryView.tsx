@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect } from 'react';
-import { Guest, OrderItem, MenuItem, OrderBatch } from '../types';
+import { Guest, OrderItem, MenuItem, OrderBatch, PaymentScope } from '../types';
 import { formatPrice } from './MenuView';
 import { getInitials, getGuestColor } from './GuestInfoView';
 import WaiterRequestModal from './WaiterRequestModal';
@@ -53,7 +53,7 @@ interface OrderSummaryViewProps {
   onNavigateToCategory: (guestId: string, category: string) => void;
   onEditItem: (cartItem: OrderItem) => void;
   onSendGroup: (groupKey: OrderGroupKey) => void;
-  onPay?: () => void;
+  onPay?: (scope: PaymentScope) => void;
   sendingGroup?: OrderGroupKey | null;
   onUpdateQuantity: (id: string, delta: number) => void;
   onRemoveItemFromBatch?: (cartItemId: string) => Promise<void>;
@@ -72,6 +72,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
   const getItemImageUrl = (imageUrl?: string | null) => (imageUrl || '').trim() || restaurant?.logo_url || '';
   const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
   const [showUnsentProductsModal, setShowUnsentProductsModal] = useState(false);
+  const [showUnservedModal, setShowUnservedModal] = useState(false);
   const [itemToRemoveFromBatch, setItemToRemoveFromBatch] = useState<OrderItem | null>(null);
 
   // Debug: Log waiter data
@@ -167,6 +168,29 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
     return result;
   }, [batches, confirmedItems]);
 
+  // Enviados a cocina pero todavía no servidos (ENVIADO, PREPARANDO, LISTO...)
+  const unservedItems = useMemo(
+    () => confirmedByBatch
+      .filter(b => (b.status || '').trim().toUpperCase() !== 'SERVIDO')
+      .flatMap(b => b.items),
+    [confirmedByBatch]
+  );
+
+  const servedTotal = useMemo(() => confirmedByBatch
+    .filter(b => (b.status || '').trim().toUpperCase() === 'SERVIDO')
+    .flatMap(b => b.items)
+    .reduce((sum, item) => {
+      const menuItem = menuItems.find(m => m.id === item.itemId);
+      return sum + (item.unitPrice ?? menuItem?.price ?? 0) * item.quantity;
+    }, 0),
+    [confirmedByBatch, menuItems]
+  );
+
+  const proceedToPay = () => {
+    if (unservedItems.length > 0) setShowUnservedModal(true);
+    else onPay?.('all');
+  };
+
   const getStatusConfig = (status: string) => {
     // Normalizar el status: trim y uppercase
     const s = (status || '').trim().toUpperCase();
@@ -203,6 +227,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
 
       {/* Toggle para cambiar entre vistas */}
       <div className="px-4 pt-4 pb-2 border-b border-white/5">
+        <p className="text-text-secondary text-xs font-bold mb-2 pl-1">Ver comanda organizada por:</p>
         <div className="flex gap-2 bg-surface-dark rounded-xl p-1 border border-white/5">
           <button
             onClick={() => setViewMode('batches')}
@@ -212,7 +237,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                 : 'text-white/60 hover:text-white/80'
             }`}
           >
-            Ver pedidos realizados
+            Pedidos
           </button>
           <button
             onClick={() => setViewMode('guests')}
@@ -222,7 +247,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                 : 'text-white/60 hover:text-white/80'
             }`}
           >
-            Ver pedidos de los comensales
+            Comensales
           </button>
         </div>
       </div>
@@ -492,7 +517,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
           {confirmedItems.length > 0 && (isCurrentUserHost ? (
             <button onClick={() => {
               if (pendingItems.length > 0) setShowUnsentProductsModal(true);
-              else onPay?.();
+              else proceedToPay();
             }} className="w-full h-14 rounded-2xl font-black flex items-center justify-center gap-2 transition-all bg-primary hover:bg-primary-dark active:scale-[0.98] text-black shadow-xl shadow-primary/20">
               <span className="material-symbols-outlined font-black">payments</span>
               <span>Dividir y pagar cuenta</span>
@@ -558,13 +583,63 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
             <p className="text-text-secondary text-sm leading-relaxed">¿Estás seguro que querés pagar o preferís mandarlos?</p>
             <div className="flex flex-col gap-3">
               <button
-                onClick={() => { setShowUnsentProductsModal(false); onPay?.(); }}
+                onClick={() => { setShowUnsentProductsModal(false); proceedToPay(); }}
                 className="w-full h-14 bg-primary text-black rounded-2xl font-black text-lg shadow-xl shadow-primary/20 active:scale-[0.98] transition-all"
               >
                 Prefiero pagar
               </button>
               <button
                 onClick={() => setShowUnsentProductsModal(false)}
+                className="w-full h-14 bg-white/5 border border-white/10 text-white rounded-2xl font-bold active:scale-[0.98] transition-all"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: hay platos enviados que todavía no fueron servidos */}
+      {showUnservedModal && (
+        <div className="fixed inset-0 z-[120] flex flex-col items-center justify-center animate-fade-in">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowUnservedModal(false)} />
+          <div className="relative z-10 bg-surface-dark rounded-3xl p-8 mx-4 max-w-sm w-full max-h-[90vh] overflow-y-auto border border-white/10 shadow-2xl flex flex-col gap-6">
+            <div className="flex flex-col gap-2">
+              <h3 className="text-xl font-black text-white">Hay platos que todavía no recibiste</h3>
+              <p className="text-text-secondary text-sm leading-relaxed">Si avanzás ahora vas a pagar productos que todavía no llegaron a la mesa.</p>
+            </div>
+            <ul className="flex flex-col gap-2 max-h-40 overflow-y-auto no-scrollbar">
+              {unservedItems.map(item => {
+                const dish = menuItems.find(m => m.id === item.itemId);
+                const batchStatus = batches.find(b => b.id === item.batch_id)?.status || '';
+                return (
+                  <li key={item.id} className="flex items-center justify-between gap-3 text-sm">
+                    <span className="truncate text-white/90">{item.quantity}× {dish?.name || 'Producto'}</span>
+                    <span className="shrink-0 text-[10px] font-black uppercase tracking-widest text-white/50">{getStatusConfig(batchStatus).label}</span>
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={() => { setShowUnservedModal(false); onPay?.('all'); }}
+                className="w-full min-h-14 py-3 px-4 bg-primary text-black rounded-2xl font-black shadow-xl shadow-primary/20 active:scale-[0.98] transition-all flex flex-col items-center justify-center"
+              >
+                <span>Avanzar y pagar todo lo encargado</span>
+                <span className="text-xs font-bold opacity-70 price-amount">${formatPrice(grandTotal)}</span>
+              </button>
+              <button
+                onClick={() => { setShowUnservedModal(false); onPay?.('served'); }}
+                disabled={servedTotal <= 0}
+                className="w-full min-h-14 py-3 px-4 bg-primary/10 border border-primary/40 text-primary rounded-2xl font-black active:scale-[0.98] transition-all flex flex-col items-center justify-center disabled:opacity-40 disabled:active:scale-100"
+              >
+                <span>Avanzar y pagar solo lo servido</span>
+                <span className="text-xs font-bold opacity-70 price-amount">
+                  {servedTotal > 0 ? `$${formatPrice(servedTotal)}` : 'Todavía no hay platos servidos'}
+                </span>
+              </button>
+              <button
+                onClick={() => setShowUnservedModal(false)}
                 className="w-full h-14 bg-white/5 border border-white/10 text-white rounded-2xl font-bold active:scale-[0.98] transition-all"
               >
                 Cancelar

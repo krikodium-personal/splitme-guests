@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Routes, Route, useNavigate, useLocation, Navigate, useSearchParams } from 'react-router-dom';
 import { supabase } from './lib/supabase';
-import { AppView, Guest, OrderGuestCharge, OrderItem, MenuItem, MenuSectionHeader, OrderBatch } from './types';
+import { AppView, Guest, OrderGuestCharge, OrderItem, MenuItem, MenuSectionHeader, OrderBatch, PaymentScope } from './types';
 import ScanView from './views/ScanView';
 import GuestInfoView from './views/GuestInfoView';
 import MenuView from './views/MenuView';
@@ -184,15 +184,32 @@ const App: React.FC = () => {
   const [orderGuestCharges, setOrderGuestCharges] = useState<OrderGuestCharge[]>([]);
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null); // Batch actual para nuevos items
 
-  // Cart filtrado para SplitBill: solo items ya enviados (excluir CREADO y sin batch_id)
-  const cartForSplit = React.useMemo(() => {
-    return cart.filter(item => {
-      const isInCreatedBatch = !item.batch_id || batches.some(b => b.id === item.batch_id && (b.status || '').toUpperCase() === 'CREADO');
-      return !isInCreatedBatch;
-    });
-  }, [cart, batches]);
   const [editingCartItem, setEditingCartItem] = useState<OrderItem | null>(null);
   const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
+  // 'served' = el comensal eligió pagar solo lo ya servido (persistido por orden en sessionStorage)
+  const [paymentScope, setPaymentScope] = useState<PaymentScope>('all');
+
+  useEffect(() => {
+    if (!activeOrderId) {
+      setPaymentScope('all');
+      return;
+    }
+    const stored = sessionStorage.getItem(`splitme_pay_scope_${activeOrderId}`);
+    setPaymentScope(stored === 'served' ? 'served' : 'all');
+  }, [activeOrderId]);
+
+  // Cart filtrado para SplitBill: solo items ya enviados (excluir CREADO y sin batch_id).
+  // Con paymentScope 'served', solo items de batches SERVIDO.
+  const cartForSplit = React.useMemo(() => {
+    return cart.filter(item => {
+      if (!item.batch_id) return false;
+      const batch = batches.find(b => b.id === item.batch_id);
+      const batchStatus = (batch?.status || '').trim().toUpperCase();
+      if (batchStatus === 'CREADO') return false;
+      if (paymentScope === 'served') return batchStatus === 'SERVIDO';
+      return true;
+    });
+  }, [cart, batches, paymentScope]);
   const [splitData, setSplitData] = useState<any[] | null>(null);
   const [showReadyToast, setShowReadyToast] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState<number>(0);
@@ -2640,7 +2657,9 @@ const App: React.FC = () => {
               navigateToView('MENU'); 
             }} 
             onSendGroup={handleSendGroup} 
-            onPay={() => {
+            onPay={(scope) => {
+              setPaymentScope(scope);
+              if (activeOrderId) sessionStorage.setItem(`splitme_pay_scope_${activeOrderId}`, scope);
               if (existingSplitStatusData && existingSplitStatusData.length > 0) {
                 navigateToView('SPLIT_STATUS');
                 return;

@@ -114,6 +114,8 @@ export interface MenuItem {
   variant_groups?: VariantGroup[];
 }
 
+export type PaymentScope = 'all' | 'served';
+
 export interface OrderBatch {
   id: string;
   order_id: string;

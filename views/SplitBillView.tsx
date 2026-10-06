@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { Guest, OrderBatch, OrderItem, MenuItem } from '../types';
 import { getInitials, getGuestColor } from './GuestInfoView';
 import { formatPrice } from './MenuView';
@@ -46,7 +46,11 @@ const formatPaymentReference = (paymentId?: string | null) => {
   return `...${trimmed.slice(-8)}`;
 };
 
-const buildAssignments = (items: OrderItem[], menuItems: MenuItem[]): BillItemAssignment[] => {
+const buildAssignments = (
+  items: OrderItem[],
+  menuItems: MenuItem[],
+  resolveOwner: (guestId: string) => string = (guestId) => guestId
+): BillItemAssignment[] => {
   const units: BillItemAssignment[] = [];
   items.forEach(item => {
     const menuItem = menuItems.find(m => m.id === item.itemId);
@@ -59,7 +63,7 @@ const buildAssignments = (items: OrderItem[], menuItems: MenuItem[]): BillItemAs
         name: menuItem?.name || 'Producto',
         image_url: menuItem?.image_url || '',
         unitPrice,
-        assignedGuestIds: i === 0 ? [item.guestId] : []
+        assignedGuestIds: i === 0 ? [resolveOwner(item.guestId)] : []
       });
     }
   });
@@ -69,12 +73,26 @@ const buildAssignments = (items: OrderItem[], menuItems: MenuItem[]): BillItemAs
 const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, onBack, onGoToMenu, onConfirm, menuItems }) => {
   const [method, setMethod] = useState<'equal' | 'item' | 'guest' | 'custom'>('item');
   const [selectedForEqual, setSelectedForEqual] = useState<string[]>([]);
+
+  // Comensales quitados de esta división (solo UI; no se borran de order_guests)
+  const [removedGuestIds, setRemovedGuestIds] = useState<string[]>([]);
+  // comensal quitado -> comensal que paga lo que pidió
+  const [reassignedTo, setReassignedTo] = useState<Record<string, string>>({});
+  const [guestToRemove, setGuestToRemove] = useState<string | null>(null);
+  const [reassignTargetId, setReassignTargetId] = useState<string | null>(null);
+  const removedGuestIdsRef = useRef<string[]>(removedGuestIds);
+  removedGuestIdsRef.current = removedGuestIds;
+  const reassignedToRef = useRef<Record<string, string>>(reassignedTo);
+  reassignedToRef.current = reassignedTo;
+
+  const resolveOwner = useCallback((guestId: string) => reassignedTo[guestId] ?? guestId, [reassignedTo]);
+  const activeGuests = useMemo(() => guests.filter(g => !removedGuestIds.includes(g.id)), [guests, removedGuestIds]);
   
   // Debug: Log guests cuando cambian
   useEffect(() => {
     console.log("[SplitBillView] Guests recibidos:", guests.length, guests);
     if (guests.length > 0) {
-      setSelectedForEqual(guests.map(g => g.id));
+      setSelectedForEqual(guests.filter(g => !removedGuestIdsRef.current.includes(g.id)).map(g => g.id));
     }
   }, [guests]);
   
@@ -177,7 +195,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
   const [assignments, setAssignments] = useState<BillItemAssignment[]>(() => buildAssignments(splitCart, menuItems));
 
   useEffect(() => {
-    setAssignments(buildAssignments(splitCart, menuItems));
+    setAssignments(buildAssignments(splitCart, menuItems, (guestId) => reassignedToRef.current[guestId] ?? guestId));
   }, [splitCart, menuItems]);
 
   const canEditSplit = !hasPaidGuests || hasPostPaymentBalance;
@@ -211,8 +229,9 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
         const menuItem = menuItems.find(m => m.id === item.itemId);
         const unitPrice = item.unitPrice ?? (menuItem?.price ?? 0);
         if (unitPrice > 0 || menuItem) {
-          const current: number = Number(shares[item.guestId] || 0);
-          shares[item.guestId] = current + (Number(unitPrice) * item.quantity);
+          const ownerId = resolveOwner(item.guestId);
+          const current: number = Number(shares[ownerId] || 0);
+          shares[ownerId] = current + (Number(unitPrice) * item.quantity);
         }
       });
     } else if (method === 'custom') {
@@ -224,11 +243,12 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
     }
 
     return guests.map(g => {
-      const guestSubtotal = Number(shares[g.id] || 0);
+      const isRemoved = removedGuestIds.includes(g.id);
+      const guestSubtotal = isRemoved ? 0 : Number(shares[g.id] || 0);
       const guestTotal = guestSubtotal; // Sin tasas adicionales
       
-      const items = splitCart
-        .filter(item => item.guestId === g.id)
+      const items = isRemoved ? [] : splitCart
+        .filter(item => resolveOwner(item.guestId) === g.id)
         .map(item => {
           const menuItem = menuItems.find(m => m.id === item.itemId);
           const unitPrice = item.unitPrice ?? (menuItem?.price || 0);
@@ -248,7 +268,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
         isAdditionalChargeSplit: hasPostPaymentBalance,
       };
     });
-  }, [method, selectedForEqual, assignments, customAmounts, splitCart, guests, menuItems, splitTotal, hasPostPaymentBalance]);
+  }, [method, selectedForEqual, assignments, customAmounts, splitCart, guests, menuItems, splitTotal, hasPostPaymentBalance, removedGuestIds, resolveOwner]);
 
   // Debug: Log guestShares cuando cambian
   useEffect(() => {
@@ -341,11 +361,83 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
     }
   };
 
+  // Lo que pidió el comensal (incluye lo que ya se le reasignó de otros quitados)
+  const getOrderedTotal = (guestId: string) => splitCart
+    .filter(item => resolveOwner(item.guestId) === guestId)
+    .reduce((sum, item) => {
+      const menuItem = menuItems.find(m => m.id === item.itemId);
+      return sum + (item.unitPrice ?? (menuItem?.price || 0)) * item.quantity;
+    }, 0);
+
+  const getRemovalAmount = (guestId: string) => {
+    if (method === 'equal') return getOrderedTotal(guestId);
+    const shareTotal = guestShares.find(s => s.id === guestId)?.total || 0;
+    return Math.max(shareTotal, getOrderedTotal(guestId));
+  };
+
+  const requestRemoveGuest = (guestId: string) => {
+    if (!canEditSplit || activeGuests.length <= 1) return;
+    const others = activeGuests.filter(g => g.id !== guestId);
+    setReassignTargetId(others.length === 1 ? others[0].id : null);
+    setGuestToRemove(guestId);
+  };
+
+  const closeRemoveModal = () => {
+    setGuestToRemove(null);
+    setReassignTargetId(null);
+  };
+
+  const confirmRemoveGuest = (removedId: string, targetId: string | null) => {
+    if (targetId) {
+      setReassignedTo(prev => {
+        const next: Record<string, string> = {};
+        Object.entries(prev).forEach(([fromId, toId]: [string, string]) => {
+          next[fromId] = toId === removedId ? targetId : toId;
+        });
+        next[removedId] = targetId;
+        return next;
+      });
+      setAssignments(prev => prev.map(a => a.assignedGuestIds.includes(removedId)
+        ? { ...a, assignedGuestIds: Array.from(new Set(a.assignedGuestIds.map(id => id === removedId ? targetId : id))) }
+        : a
+      ));
+      setCustomAmounts(prev => {
+        const moved = parseFloat(prev[removedId] || '0') || 0;
+        const current = parseFloat(prev[targetId] || '0') || 0;
+        return {
+          ...prev,
+          [targetId]: moved > 0 ? (current + moved).toFixed(2) : (prev[targetId] || '0'),
+          [removedId]: '0',
+        };
+      });
+    } else {
+      setAssignments(prev => prev.map(a => ({ ...a, assignedGuestIds: a.assignedGuestIds.filter(id => id !== removedId) })));
+      setCustomAmounts(prev => ({ ...prev, [removedId]: '0' }));
+    }
+    setSelectedForEqual(prev => prev.filter(id => id !== removedId));
+    setRemovedGuestIds(prev => [...prev, removedId]);
+    if (focusedGuestId === removedId) setFocusedGuestId(null);
+    closeRemoveModal();
+  };
+
+  const handleResetRemovedGuests = () => {
+    setRemovedGuestIds([]);
+    setReassignedTo({});
+    setAssignments(buildAssignments(splitCart, menuItems));
+    setSelectedForEqual(guests.map(g => g.id));
+    setCustomAmounts(Object.fromEntries(guests.map(g => [g.id, '0'])));
+  };
+
   const handleConfirm = () => {
     if (canConfirmSplit) {
-      onConfirm(guestShares);
+      onConfirm(guestShares.filter(share => !removedGuestIds.includes(share.id)));
     }
   };
+
+  const guestPendingRemoval = guestToRemove ? guests.find(g => g.id === guestToRemove) : null;
+  const pendingRemovalName = (guestPendingRemoval?.name || 'este comensal').split(' ')[0];
+  const pendingRemovalAmount = guestToRemove ? getRemovalAmount(guestToRemove) : 0;
+  const reassignCandidates = activeGuests.filter(g => g.id !== guestToRemove);
 
   return (
     <div className="flex flex-col flex-1 h-screen bg-background-dark text-white overflow-hidden font-display">
@@ -442,6 +534,46 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
           </div>
         </div>
 
+        {guests.length > 0 && (
+          <div className="px-4 mb-6">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-[10px] font-black uppercase tracking-widest text-text-secondary">Comensales en la división</p>
+              {removedGuestIds.length > 0 && canEditSplit && (
+                <button onClick={handleResetRemovedGuests} className="text-[10px] font-black uppercase tracking-widest text-primary">
+                  Restablecer
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {activeGuests.map(guest => (
+                <div key={guest.id} className="flex items-center gap-2 pl-1 pr-1.5 py-1 rounded-full bg-white/5 border border-white/10">
+                  <div className={`size-7 rounded-full flex items-center justify-center font-black text-[9px] shrink-0 ${getGuestColor(guest.id)}`}>
+                    {getInitials(guest.name)}
+                  </div>
+                  <span className="text-xs font-bold max-w-[110px] truncate">{guest.name.split(' ')[0]}</span>
+                  {canEditSplit && activeGuests.length > 1 && (
+                    <button
+                      onClick={() => requestRemoveGuest(guest.id)}
+                      aria-label={`Quitar a ${guest.name} de la división`}
+                      className="size-6 rounded-full flex items-center justify-center text-white/50 hover:text-white hover:bg-white/10 transition-colors"
+                    >
+                      <span className="material-symbols-outlined text-sm">close</span>
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            {removedGuestIds.length > 0 && (
+              <p className="text-[11px] text-white/40 mt-2">
+                Fuera de la división: {guests.filter(g => removedGuestIds.includes(g.id)).map(g => {
+                  const targetName = guests.find(t => t.id === reassignedTo[g.id])?.name.split(' ')[0];
+                  return targetName ? `${g.name.split(' ')[0]} (paga ${targetName})` : g.name.split(' ')[0];
+                }).join(', ')}
+              </p>
+            )}
+          </div>
+        )}
+
         <div className="px-4 pb-8 space-y-6">
           {guests.length === 0 && (
             <div className="text-center py-8 text-text-secondary animate-fade-in-up">
@@ -461,7 +593,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
                 </div>
               )}
               <div className="grid grid-cols-2 gap-3">
-                {guests.map(guest => (
+                {activeGuests.map(guest => (
                   <button 
                     key={guest.id} 
                     onClick={() => toggleEqualGuest(guest.id)}
@@ -512,7 +644,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
                       </div>
                     </div>
                     <div className="flex gap-1.5 py-1 shrink-0">
-                      {guests.map(guest => (
+                      {activeGuests.map(guest => (
                         <button 
                           key={guest.id} 
                           onClick={() => toggleItemAssignment(unit.id, guest.id)} 
@@ -538,7 +670,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
           {method === 'guest' && guests.length > 0 && (
             <div className="space-y-4 animate-fade-in-up">
               <p className="text-center text-sm text-text-secondary px-6">Cada comensal paga lo que pidió inicialmente.</p>
-              {guestShares.length > 0 ? guestShares.map(share => (
+              {guestShares.length > 0 ? guestShares.filter(share => !removedGuestIds.includes(share.id)).map(share => (
                 <div key={share.id} className="bg-surface-dark border border-white/5 rounded-2xl p-5 flex flex-col gap-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
@@ -585,7 +717,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
 
           {method === 'custom' && guests.length > 0 && (
             <div className="space-y-4 animate-fade-in-up">
-               {guests.map(guest => (
+               {activeGuests.map(guest => (
                  <div key={guest.id} className={`flex items-center gap-4 bg-surface-dark border border-white/5 p-4 rounded-2xl ${!canEditSplit ? 'opacity-60' : ''}`}>
                     <div className={`size-12 rounded-full flex items-center justify-center font-black text-sm shrink-0 ${getGuestColor(guest.id)}`}>
                       {getInitials(guest.name)}
@@ -705,6 +837,87 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
           )}
         </div>
       </footer>
+
+      {guestToRemove && (
+        <div className="fixed inset-0 z-[120] flex flex-col items-center justify-center animate-fade-in">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={closeRemoveModal} />
+          <div className="relative z-10 bg-surface-dark rounded-3xl p-8 mx-4 max-w-sm w-full max-h-[90vh] overflow-y-auto border border-white/10 shadow-2xl flex flex-col gap-6">
+            {pendingRemovalAmount > 0 ? (
+              <>
+                <div className="flex flex-col gap-2">
+                  <h3 className="text-xl font-black text-white">Quitar a {pendingRemovalName} de la división</h3>
+                  <p className="text-text-secondary text-sm leading-relaxed">
+                    ¿Quién va a pagar lo que pidió {pendingRemovalName} (<span className="font-bold text-white price-amount">${formatPrice(pendingRemovalAmount)}</span>)?
+                  </p>
+                  {method === 'equal' && (
+                    <p className="text-text-secondary text-xs leading-relaxed opacity-70">
+                      En la división equitativa el total se reparte entre los que quedan. Si cambiás a "Comensal", lo que pidió {pendingRemovalName} lo paga quien elijas.
+                    </p>
+                  )}
+                </div>
+                <div className="flex flex-col gap-2">
+                  {reassignCandidates.map(guest => {
+                    const isSelected = reassignTargetId === guest.id;
+                    return (
+                      <button
+                        key={guest.id}
+                        onClick={() => setReassignTargetId(guest.id)}
+                        className={`flex items-center gap-3 p-3 rounded-2xl border transition-all text-left ${
+                          isSelected ? 'bg-primary/10 border-primary' : 'bg-white/5 border-white/10 hover:border-white/20'
+                        }`}
+                      >
+                        <div className={`size-9 rounded-full flex items-center justify-center font-black text-[10px] shrink-0 ${getGuestColor(guest.id)}`}>
+                          {getInitials(guest.name)}
+                        </div>
+                        <span className="flex-1 text-sm font-bold text-white truncate">{guest.name}</span>
+                        <span className={`material-symbols-outlined text-xl ${isSelected ? 'text-primary' : 'text-white/20'}`}>
+                          {isSelected ? 'radio_button_checked' : 'radio_button_unchecked'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="flex flex-col gap-3">
+                  <button
+                    onClick={() => reassignTargetId && confirmRemoveGuest(guestToRemove, reassignTargetId)}
+                    disabled={!reassignTargetId}
+                    className="w-full h-14 bg-primary text-black rounded-2xl font-black text-lg shadow-xl shadow-primary/20 active:scale-[0.98] transition-all disabled:opacity-40 disabled:active:scale-100"
+                  >
+                    Reasignar y quitar
+                  </button>
+                  <button
+                    onClick={closeRemoveModal}
+                    className="w-full h-14 bg-white/5 border border-white/10 text-white rounded-2xl font-bold active:scale-[0.98] transition-all"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex flex-col gap-2">
+                  <h3 className="text-xl font-black text-white">Quitar a {pendingRemovalName} de la división</h3>
+                  <p className="text-text-secondary text-sm leading-relaxed">{pendingRemovalName} no tiene consumos asignados, así que no va a pagar nada en esta división.</p>
+                </div>
+                <div className="flex flex-col gap-3">
+                  <button
+                    onClick={() => confirmRemoveGuest(guestToRemove, null)}
+                    className="w-full h-14 bg-primary text-black rounded-2xl font-black text-lg shadow-xl shadow-primary/20 active:scale-[0.98] transition-all"
+                  >
+                    Quitar
+                  </button>
+                  <button
+                    onClick={closeRemoveModal}
+                    className="w-full h-14 bg-white/5 border border-white/10 text-white rounded-2xl font-bold active:scale-[0.98] transition-all"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
