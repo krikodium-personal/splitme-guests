@@ -4,6 +4,8 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Guest, MenuItem, MenuSectionHeader, OrderItem, VariantGroup, VariantOption } from '../types';
 import { getInitials, getGuestColor } from './GuestInfoView';
 import WaiterRequestModal from './WaiterRequestModal';
+import { UpsellSheet, UpsellStrip } from '../components/UpsellSuggestions';
+import { getUpsellSuggestions } from '../lib/upsell';
 import { getVariantGroups } from '../lib/variantDisplay';
 import { supabase } from '../lib/supabase';
 
@@ -237,13 +239,16 @@ const MenuView: React.FC<MenuViewProps> = ({
   const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
   const crossGuestConfirmedRef = useRef(false);
   const [crossGuestPendingAction, setCrossGuestPendingAction] = useState<(() => void) | null>(null);
-  const [banners, setBanners] = useState<{ id: string; image_url: string; title: string | null; description: string | null }[]>([]);
+  const [banners, setBanners] = useState<{ id: string; image_url: string; title: string | null; description: string | null; target_category_id: string | null }[]>([]);
+  const pendingSubcategoryRef = useRef<string | null>(null);
   const [activeBannerIndex, setActiveBannerIndex] = useState(0);
   const bannerScrollRef = useRef<HTMLDivElement>(null);
   const [showWaiterTip, setShowWaiterTip] = useState(() => !localStorage.getItem('splitme_waiter_tip_seen'));
   const [selectedReplaceOptionId, setSelectedReplaceOptionId] = useState<string | null>(null);
   const [selectedReplaceOptionIds, setSelectedReplaceOptionIds] = useState<Record<string, string[]>>({}); // Para grupos con selection=multiple
   const [selectedAddOptionIds, setSelectedAddOptionIds] = useState<string[]>([]);
+  const [upsell, setUpsell] = useState<{ anchor: MenuItem; suggestions: MenuItem[] } | null>(null);
+  const dismissedUpsellRef = useRef<Set<string>>(new Set());
 
   /** Imagen del producto o logo del restaurante como fallback cuando no hay imagen. */
   const getItemImageUrl = (imageUrl?: string | null) => (imageUrl || '').trim() || restaurant?.logo_url || '';
@@ -282,7 +287,7 @@ const MenuView: React.FC<MenuViewProps> = ({
 
   useEffect(() => {
     if (!restaurant?.id) return;
-    supabase.from('banners').select('id, image_url, title, description').eq('restaurant_id', restaurant.id).eq('active', true).order('sort_order').then(({ data }) => {
+    supabase.from('banners').select('id, image_url, title, description, target_category_id').eq('restaurant_id', restaurant.id).eq('active', true).order('sort_order').then(({ data }) => {
       if (data?.length) setBanners(data);
     });
   }, [restaurant?.id]);
@@ -341,6 +346,73 @@ const MenuView: React.FC<MenuViewProps> = ({
     return guestSpecificCart.find(i => i.itemId === showDetail.id && (i.status === 'elegido' || (!i.status && !i.isConfirmed)));
   }, [showDetail, guestSpecificCart, editingCartItem]);
 
+  const pdpUpsells = useMemo(() => {
+    if (!showDetail) return [];
+    return getUpsellSuggestions({
+      source: showDetail,
+      menuItems,
+      cart,
+      categories: supabaseCategories,
+      guestId: selectedGuestId,
+    });
+  }, [showDetail, menuItems, cart, supabaseCategories, selectedGuestId]);
+
+  const offerUpsell = (item: MenuItem) => {
+    if (dismissedUpsellRef.current.has(item.id)) return;
+    const suggestions = getUpsellSuggestions({
+      source: item,
+      menuItems,
+      cart,
+      categories: supabaseCategories,
+      guestId: selectedGuestId,
+    });
+    if (suggestions.length === 0) return;
+    dismissedUpsellRef.current.add(item.id);
+    setUpsell({ anchor: item, suggestions });
+  };
+
+  const handleUpsellAdd = async (item: MenuItem) => {
+    if (addingItems.has(item.id)) return;
+    setAddingItems(prev => new Set(prev).add(item.id));
+    try {
+      await onAddToCart(item, selectedGuestId, [], []);
+      dismissedUpsellRef.current.add(item.id);
+      setUpsell(prev => {
+        if (!prev) return prev;
+        const optimisticCart: OrderItem[] = [
+          ...cart,
+          {
+            id: `upsell-temp-${item.id}`,
+            itemId: item.id,
+            guestId: selectedGuestId,
+            quantity: 1,
+            status: 'elegido',
+          },
+        ];
+        const next = getUpsellSuggestions({
+          source: prev.anchor,
+          menuItems,
+          cart: optimisticCart,
+          categories: supabaseCategories,
+          guestId: selectedGuestId,
+        });
+        return next.length ? { ...prev, suggestions: next } : null;
+      });
+    } catch (error: any) {
+      if (error?.message === 'PRODUCTO_NO_DISPONIBLE') {
+        setShowUnavailableModal(true);
+      } else {
+        console.error("Error al agregar sugerencia:", error);
+      }
+    } finally {
+      setAddingItems(prev => {
+        const next = new Set(prev);
+        next.delete(item.id);
+        return next;
+      });
+    }
+  };
+
   useEffect(() => {
     if (editingCartItem) {
       const item = menuItems.find(m => m.id === editingCartItem.itemId);
@@ -394,9 +466,10 @@ const MenuView: React.FC<MenuViewProps> = ({
     }
   }, [menuItems]);
 
-  // Resetear subcategoría cuando cambia la categoría principal
+  // Resetear subcategoría cuando cambia la categoría principal (salvo que venga de un banner con subcategoría)
   useEffect(() => {
-    setSelectedSubcategory(null);
+    setSelectedSubcategory(pendingSubcategoryRef.current);
+    pendingSubcategoryRef.current = null;
   }, [initialCategory]);
 
   // Resetear confirmación cross-guest cuando cambia el comensal seleccionado
@@ -493,6 +566,30 @@ const MenuView: React.FC<MenuViewProps> = ({
     const filteredDbCats = dbCategories.filter(cat => !['destacados', 'inicio'].includes(cat.toLowerCase()));
     return ['Inicio', ...filteredDbCats];
   }, [supabaseCategories]);
+
+  const resolveBannerTarget = (targetId: string | null) => {
+    if (!targetId) return null;
+    const target = supabaseCategories.find(c => c.id === targetId);
+    if (!target) return null;
+    const parent = target.parent_id ? supabaseCategories.find(c => c.id === target.parent_id) : target;
+    if (!parent || !categoriesList.includes(parent.name)) return null;
+    return { categoryName: parent.name as string, subcategory: target.parent_id ? target : null };
+  };
+
+  const openBannerTarget = (targetId: string | null) => {
+    const resolved = resolveBannerTarget(targetId);
+    if (!resolved) return;
+    const { categoryName, subcategory } = resolved;
+    pendingSubcategoryRef.current = subcategory?.id ?? null;
+    onCategoryChange(categoryName);
+    const path = subcategory
+      ? `/menu/${categoryToSlug(categoryName)}/${categoryToSlug(subcategory.name)}`
+      : `/menu/${categoryToSlug(categoryName)}`;
+    window.history.replaceState(null, '', path);
+    mainScrollRef.current?.scrollTo({ top: 0, behavior: 'instant' });
+    lastScrollYRef.current = 0;
+    lastGestureTimeRef.current = 0;
+  };
 
   // Cantidad total de productos por comensal (todos los estados: elegido + pedido)
   const guestItemCounts = useMemo(() => {
@@ -618,6 +715,7 @@ const MenuView: React.FC<MenuViewProps> = ({
       setAddingItems(prev => new Set(prev).add(item.id));
       try {
         await onAddToCart(item, selectedGuestId, [], []);
+        offerUpsell(item);
       } catch (error: any) {
         if (error?.message === 'PRODUCTO_NO_DISPONIBLE') {
           setShowUnavailableModal(true);
@@ -715,7 +813,9 @@ const MenuView: React.FC<MenuViewProps> = ({
         variantSelections: [...new Set([...allReplaceIds, ...selectedAddOptionIds])]
       } : undefined;
       await onAddToCart(showDetail, selectedGuestId, [...selectedExtras], [...selectedIngredientsToRemove], variantOpts);
+      const added = showDetail;
       handleClosePdp();
+      offerUpsell(added);
     } catch (error: any) {
       if (error?.message === 'PRODUCTO_NO_DISPONIBLE') {
         setShowUnavailableModal(true);
@@ -1303,20 +1403,34 @@ const MenuView: React.FC<MenuViewProps> = ({
                   setActiveBannerIndex(idx);
                 }}
               >
-                {banners.map(banner => (
-                  <div key={banner.id} className="h-full relative" style={{ scrollSnapAlign: 'start', flexShrink: 0, width: '100%' }}>
+                {banners.map(banner => {
+                  const isLinked = !!resolveBannerTarget(banner.target_category_id);
+                  return (
+                  <div
+                    key={banner.id}
+                    className={`h-full relative ${isLinked ? 'cursor-pointer' : ''}`}
+                    style={{ scrollSnapAlign: 'start', flexShrink: 0, width: '100%' }}
+                    role={isLinked ? 'link' : undefined}
+                    onClick={isLinked ? () => openBannerTarget(banner.target_category_id) : undefined}
+                  >
                     <img src={banner.image_url} alt="" className="w-full h-full object-cover" />
                     {(banner.title || banner.description) && (
                       <>
                         <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent pointer-events-none" />
-                        <div className="absolute bottom-0 left-0 right-0 p-4">
+                        <div className={`absolute bottom-0 left-0 right-0 p-4 ${isLinked ? 'pr-14' : ''}`}>
                           {banner.title && <p className="text-white font-bold text-[17px] leading-snug drop-shadow">{banner.title}</p>}
                           {banner.description && <p className="text-white/80 text-[13px] mt-0.5 leading-snug drop-shadow">{banner.description}</p>}
                         </div>
                       </>
                     )}
+                    {isLinked && (
+                      <span className="absolute bottom-4 right-4 size-8 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center pointer-events-none">
+                        <span className="material-symbols-outlined text-white text-[18px]">arrow_forward</span>
+                      </span>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
               {banners.length > 1 && (
                 <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5 z-10">
@@ -1674,6 +1788,14 @@ const MenuView: React.FC<MenuViewProps> = ({
                 </div>
 
                 <p className="text-text-secondary leading-relaxed mb-8">{showDetail.description}</p>
+
+                <UpsellStrip
+                  items={pdpUpsells}
+                  addingIds={addingItems}
+                  getItemImageUrl={getItemImageUrl}
+                  onAdd={handleUpsellAdd}
+                  onOpen={(item) => { setUpsell(null); handleOpenPdp(item); }}
+                />
 
                 {/* Variantes: selection=individual (dropdown) o selection=multiple (checkboxes) */}
                 {hasVariants && (
@@ -2106,7 +2228,17 @@ const MenuView: React.FC<MenuViewProps> = ({
         </div>
       )}
 
-      {/* Botón flotante: foto del mesero asignado - arriba del footer, siempre visible */}
+      {upsell && !showDetail && (
+        <UpsellSheet
+          anchorName={upsell.anchor.name}
+          items={upsell.suggestions}
+          addingIds={addingItems}
+          getItemImageUrl={getItemImageUrl}
+          onAdd={handleUpsellAdd}
+          onOpen={(item) => { setUpsell(null); handleOpenPdp(item); }}
+          onDismiss={() => setUpsell(null)}
+        />
+      )}
       {waiter ? (
         <>
           {/* Globo de ayuda — solo la primera vez */}

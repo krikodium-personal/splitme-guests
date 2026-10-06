@@ -90,6 +90,9 @@ Deno.serve(async (req) => {
       config.oauth_test_mode === true ||
       checkoutEnv === "sandbox" ||
       accessTokenPrefix(accessToken) === "TEST";
+    // Fee SplitMe se liquida aparte (tramos por volumen). Nunca retener vía marketplace_fee.
+    const feeBps = 0;
+    const marketplaceFee = 0;
     const preferenceBody: Record<string, unknown> = {
       items: [{
         title: description.substring(0, 127),
@@ -148,6 +151,8 @@ Deno.serve(async (req) => {
       seller_user_id: config.user_account ?? null,
       marketplace_id: marketplaceId,
       marketplace: useMarketplace,
+      platform_fee_bps: feeBps,
+      marketplace_fee: marketplaceFee,
     }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

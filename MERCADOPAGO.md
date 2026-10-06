@@ -1,6 +1,16 @@
 # Mercado Pago — Marketplace + Payment Brick (SplitMe)
 
-Integración **Marketplace (Split Payments)** con **Checkout Bricks**. En producción el pago va al restaurante vía OAuth y la comisión va en la preferencia (`marketplace_fee = 0`). No enviar `application_fee` en `/v1/payments`.
+Integración **Marketplace (Split Payments)** con **Checkout Bricks**. En producción el pago va al restaurante vía OAuth. **`marketplace_fee` siempre es 0**: la comisión de SplitMe se liquida aparte (tramos por volumen en `platform_fee_tiers`), no se retiene en el cobro de MP.
+
+## Take rate (fuera de MP)
+
+| Pieza | Rol |
+|---|---|
+| `platform_fee_tiers` | Tramos globales (`restaurant_id` NULL) o por local. |
+| Regla | Mes calendario. % plano según el tramo más alto alcanzado por **tx O ventas** (cargos `order_guest_charges` con `status = paid`). |
+| Defaults | 2% / 1% / 0,6% (umbrales configurables en Super Admin). |
+
+No enviar `application_fee` en `/v1/payments`.
 
 ## Arquitectura
 
