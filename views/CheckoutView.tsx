@@ -17,9 +17,11 @@ interface CheckoutViewProps {
   splitData: any[] | null;
   activeOrderId?: string | null;
   currentGuestId?: string | null;
+  /** % de descuento por monto de cuenta que aplica a toda la mesa. */
+  billDiscountPercent?: number;
 }
 
-const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNavigateToTip, cart, guests = [], menuItems, tableNumber, splitData, activeOrderId, currentGuestId }) => {
+const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNavigateToTip, cart, guests = [], menuItems, tableNumber, splitData, activeOrderId, currentGuestId, billDiscountPercent = 0 }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const [showQr, setShowQr] = useState(false);
@@ -124,12 +126,15 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
     };
   }, [activeOrderId]);
 
-  // Total global de la mesa (precios ya incluyen impuestos)
-  const grandTotal = useMemo(() => cart.reduce((sum, item) => {
-    const menuItem = menuItems.find(m => m.id === item.itemId);
-    const unitPrice = item.unitPrice ?? (menuItem?.price ?? 0);
-    return sum + unitPrice * item.quantity;
-  }, 0), [cart, menuItems]);
+  // Total global de la mesa (precios ya incluyen impuestos), con el descuento por monto de cuenta
+  const grandTotal = useMemo(() => {
+    const subtotal = cart.reduce((sum, item) => {
+      const menuItem = menuItems.find(m => m.id === item.itemId);
+      const unitPrice = item.unitPrice ?? (menuItem?.price ?? 0);
+      return sum + unitPrice * item.quantity;
+    }, 0);
+    return Math.round(subtotal * (1 - billDiscountPercent / 100) * 100) / 100;
+  }, [cart, menuItems, billDiscountPercent]);
 
   // Identificar al usuario actual (prioridad: currentGuestId de URL > host > primer guest)
   const currentUserGuest = useMemo(() => {

@@ -3,7 +3,12 @@ import { supabase } from './supabase';
 import { formatPrice } from './currency';
 import type { OrderItem } from '../types';
 
-export type PromotionType = 'nxm' | 'percent' | 'fixed_price' | 'amount_off' | 'second_unit';
+export type PromotionType = 'nxm' | 'percent' | 'fixed_price' | 'amount_off' | 'second_unit' | 'bill_tiers';
+
+export interface BillTier {
+  min_amount: number;
+  percent: number;
+}
 
 export interface Promotion {
   id: string;
@@ -23,6 +28,7 @@ export interface Promotion {
   /** 'HH:MM:SS'. null = todo el día. start > end = cruza medianoche */
   start_time: string | null;
   end_time: string | null;
+  bill_tiers?: BillTier[] | null;
   created_at: string;
 }
 
@@ -212,11 +218,35 @@ export const usePromotionsByIds = (ids: string[]): Map<string, Promotion> => {
   return promotions;
 };
 
+/** Hora actual que se actualiza al cambiar el minuto y al volver a la pestaña. */
+const useMinuteClock = (): Date => {
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      timer = setTimeout(() => {
+        setNow(new Date());
+        schedule();
+      }, 60_000 - (Date.now() % 60_000) + 50);
+    };
+    schedule();
+    const onVisible = () => { if (document.visibilityState === 'visible') setNow(new Date()); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
+
+  return now;
+};
+
 /** Promos vigentes por menu_item_id. Se re-evalúa cada minuto para que las franjas horarias aparezcan/desaparezcan solas. */
 export const useLivePromotions = (restaurantId?: string | null): Map<string, Promotion> => {
   const [promotions, setPromotions] = useState<Promotion[]>([]);
   const [links, setLinks] = useState<PromotionMenuItem[]>([]);
-  const [now, setNow] = useState(() => new Date());
+  const now = useMinuteClock();
 
   useEffect(() => {
     if (!restaurantId) {
@@ -257,22 +287,152 @@ export const useLivePromotions = (restaurantId?: string | null): Map<string, Pro
     return () => { cancelled = true; };
   }, [restaurantId]);
 
+  return useMemo(() => buildLivePromotionMap(promotions, links, now), [promotions, links, now]);
+};
+
+const sortTiers = (tiers: BillTier[] | null | undefined): BillTier[] =>
+  (tiers || [])
+    .map(t => ({ min_amount: Number(t.min_amount) || 0, percent: Number(t.percent) || 0 }))
+    .sort((a, b) => a.min_amount - b.min_amount);
+
+/** Misma regla que bill_tier_percent() en la DB: el rango con mayor monto mínimo alcanzado. */
+export const billTierPercent = (tiers: BillTier[] | null | undefined, subtotal: number): number => {
+  let pct = 0;
+  for (const t of sortTiers(tiers)) {
+    if (t.min_amount <= subtotal) pct = t.percent;
+  }
+  return pct;
+};
+
+export interface BillTierNudge {
+  missing: number;
+  percent: number;
+}
+
+/** Próximo rango con más descuento que el actual y cuánto falta para llegar. */
+export const getBillTierNudge = (tiers: BillTier[] | null | undefined, subtotal: number): BillTierNudge | null => {
+  const current = billTierPercent(tiers, subtotal);
+  const next = sortTiers(tiers).find(t => t.min_amount > subtotal && t.percent > current);
+  return next ? { missing: round2(next.min_amount - subtotal), percent: next.percent } : null;
+};
+
+export const formatBillPercent = formatPercent;
+
+export interface OrderBillDiscount {
+  /** % aplicado a la cuenta (calculado por la DB sobre lo enviado). */
+  percent: number;
+  /** Suma de lo enviado, antes del descuento. */
+  subtotal: number;
+  amount: number;
+  /** Ya hubo un pago: el % no cambia más. */
+  locked: boolean;
+  /** Rangos de la promo que aplica (o aplicaría) a la mesa. */
+  tiers: BillTier[];
+  promotionName: string | null;
+}
+
+/** Rango que dio el % actual (para explicar el descuento). */
+const getReachedBillTier = (tiers: BillTier[], subtotal: number, percent: number): BillTier | null => {
+  let reached: BillTier | null = null;
+  for (const t of sortTiers(tiers)) {
+    if (t.min_amount <= subtotal && t.percent === percent) reached = t;
+  }
+  return reached;
+};
+
+/** Ej.: "Promo mesa grande · por superar $200.000,00 en la mesa". Vacío si no hay descuento. */
+export const getBillDiscountReason = (discount: OrderBillDiscount | null | undefined): string => {
+  if (!discount || discount.percent <= 0) return '';
+  const tier = getReachedBillTier(discount.tiers, discount.subtotal, discount.percent);
+  return [
+    discount.promotionName,
+    tier ? (tier.min_amount > 0 ? `por superar $${formatPrice(tier.min_amount)} en la mesa` : 'para toda la mesa') : null,
+    discount.locked ? 'se mantiene por pagos ya realizados' : null,
+  ].filter(Boolean).join(' · ');
+};
+
+interface OrderDiscountRow {
+  subtotal_amount: number | null;
+  discount_percent: number | null;
+  discount_amount: number | null;
+  discount_locked: boolean | null;
+  bill_promotion_id: string | null;
+}
+
+const ORDER_DISCOUNT_COLUMNS = 'subtotal_amount, discount_percent, discount_amount, discount_locked, bill_promotion_id';
+
+/** Descuento por monto de cuenta de la mesa, en vivo (la DB lo recalcula con cada envío). */
+export const useOrderBillDiscount = (orderId?: string | null, restaurantId?: string | null): OrderBillDiscount => {
+  const [order, setOrder] = useState<OrderDiscountRow | null>(null);
+  const [billPromos, setBillPromos] = useState<Promotion[]>([]);
+  const now = useMinuteClock();
+
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>;
-    const schedule = () => {
-      timer = setTimeout(() => {
-        setNow(new Date());
-        schedule();
-      }, 60_000 - (Date.now() % 60_000) + 50);
+    if (!orderId) {
+      setOrder(null);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      const { data, error } = await supabase.from('orders').select(ORDER_DISCOUNT_COLUMNS).eq('id', orderId).maybeSingle();
+      if (cancelled) return;
+      if (error) {
+        console.warn('[DineSplit] Error al cargar descuento de la cuenta:', error);
+        return;
+      }
+      setOrder((data as OrderDiscountRow | null) ?? null);
     };
-    schedule();
-    const onVisible = () => { if (document.visibilityState === 'visible') setNow(new Date()); };
+    load();
+    const channel = supabase
+      .channel(`order-bill-discount-${orderId}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders', filter: `id=eq.${orderId}` }, payload => {
+        if (!cancelled) setOrder(payload.new as OrderDiscountRow);
+      })
+      .subscribe();
+    const onVisible = () => { if (document.visibilityState === 'visible') load(); };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
-      clearTimeout(timer);
+      cancelled = true;
       document.removeEventListener('visibilitychange', onVisible);
+      supabase.removeChannel(channel);
     };
-  }, []);
+  }, [orderId]);
 
-  return useMemo(() => buildLivePromotionMap(promotions, links, now), [promotions, links, now]);
+  useEffect(() => {
+    if (!restaurantId) {
+      setBillPromos([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from('promotions')
+        .select('*')
+        .eq('restaurant_id', restaurantId)
+        .eq('type', 'bill_tiers')
+        .eq('active', true);
+      if (cancelled) return;
+      if (error) {
+        console.warn('[DineSplit] Error al cargar promos de cuenta:', error);
+        return;
+      }
+      setBillPromos((data || []) as Promotion[]);
+    })();
+    return () => { cancelled = true; };
+  }, [restaurantId, order?.bill_promotion_id]);
+
+  return useMemo(() => {
+    const assigned = order?.bill_promotion_id ? billPromos.find(p => p.id === order.bill_promotion_id) : undefined;
+    const live = billPromos
+      .filter(p => isPromotionLive(p, now))
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+    return {
+      percent: Number(order?.discount_percent) || 0,
+      subtotal: Number(order?.subtotal_amount) || 0,
+      amount: Number(order?.discount_amount) || 0,
+      locked: !!order?.discount_locked,
+      tiers: sortTiers((assigned ?? live)?.bill_tiers),
+      promotionName: (assigned ?? live)?.name ?? null,
+    };
+  }, [order, billPromos, now]);
 };

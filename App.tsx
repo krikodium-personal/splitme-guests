@@ -23,6 +23,7 @@ import BuildBadge from './BuildBadge';
 import { getSession, setSession, getOrderId, setOrderId, removeOrderId, clearSession, getActiveGuestId, setActiveGuestIdCookie, setTableAndRestaurant, getTableAndRestaurant, isGuestEntryPath } from './lib/sessionCookies';
 import { getGroupKeyForCategoryId, type OrderGroupKey } from './lib/orderGroups';
 import { getVariantGroups } from './lib/variantDisplay';
+import { getBillDiscountReason, useOrderBillDiscount } from './lib/promotions';
 
 const READY_SOUND_URL = 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3';
 
@@ -186,6 +187,7 @@ const App: React.FC = () => {
 
   const [editingCartItem, setEditingCartItem] = useState<OrderItem | null>(null);
   const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
+  const billDiscount = useOrderBillDiscount(activeOrderId, restaurant?.id);
   // 'served' = el comensal eligió pagar solo lo ya servido (persistido por orden en sessionStorage)
   const [paymentScope, setPaymentScope] = useState<PaymentScope>('all');
 
@@ -2698,6 +2700,7 @@ const App: React.FC = () => {
             currentGuestId={guestIdParam || getActiveGuestId() || activeGuestId}
             activeOrderId={activeOrderId}
             restaurant={restaurant}
+            billDiscount={billDiscount}
           />
         } />
         <Route path="/progress" element={
@@ -2721,6 +2724,7 @@ const App: React.FC = () => {
             cart={cartForSplit}
             menuItems={menuItems}
             orderGuestCharges={orderGuestCharges}
+            billDiscountPercent={billDiscount.percent}
             onBack={() => navigateToView('ORDER_SUMMARY')}
             onContinuePayment={() => navigateToView('CHECKOUT')}
             onNewSplit={() => navigateToView('SPLIT_BILL')}
@@ -2746,6 +2750,8 @@ const App: React.FC = () => {
               }
             }} 
             menuItems={menuItems} 
+            billDiscountPercent={billDiscount.percent}
+            billDiscountReason={getBillDiscountReason(billDiscount)}
           />
         } />
         <Route path="/guest-selection" element={
@@ -2792,6 +2798,7 @@ const App: React.FC = () => {
             splitData={activeSplitData} 
             activeOrderId={activeOrderId}
             currentGuestId={guestIdParam || activeGuestId}
+            billDiscountPercent={billDiscount.percent}
           />
         } />
         <Route path="/individual-share" element={

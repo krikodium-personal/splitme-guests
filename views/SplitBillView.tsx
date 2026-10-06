@@ -3,6 +3,7 @@ import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { Guest, OrderBatch, OrderItem, MenuItem } from '../types';
 import { getInitials, getGuestColor } from './GuestInfoView';
 import { formatPrice } from './MenuView';
+import { formatBillPercent } from '../lib/promotions';
 
 interface SplitBillViewProps {
   guests: Guest[];
@@ -12,6 +13,10 @@ interface SplitBillViewProps {
   onGoToMenu: () => void;
   onConfirm: (shares: any[]) => void;
   menuItems: MenuItem[];
+  /** % de descuento por monto de cuenta que aplica a toda la mesa. */
+  billDiscountPercent?: number;
+  /** Por qué aplica el descuento (promo y rango alcanzado). */
+  billDiscountReason?: string;
 }
 
 interface BillItemAssignment {
@@ -70,7 +75,11 @@ const buildAssignments = (
   return units;
 };
 
-const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, onBack, onGoToMenu, onConfirm, menuItems }) => {
+const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, onBack, onGoToMenu, onConfirm, menuItems, billDiscountPercent = 0, billDiscountReason = '' }) => {
+  const discountFactor = 1 - Math.min(Math.max(billDiscountPercent, 0), 100) / 100;
+  const hasBillDiscount = discountFactor < 1;
+  /** Importe con el descuento de la cuenta aplicado (lo que efectivamente se cobra). */
+  const payable = useCallback((amount: number) => Math.round(amount * discountFactor * 100) / 100, [discountFactor]);
   const [method, setMethod] = useState<'equal' | 'item' | 'guest' | 'custom'>('item');
   const [selectedForEqual, setSelectedForEqual] = useState<string[]>([]);
 
@@ -191,6 +200,8 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
   const hasPostPaymentBalance = postPaymentTotal > 0.01;
   const splitCart = hasPostPaymentBalance ? postPaymentCart : cart;
   const splitTotal = hasPostPaymentBalance ? postPaymentTotal : grandTotal;
+  const payableSplitTotal = payable(splitTotal);
+  const payableGrandTotal = payable(grandTotal);
 
   const [assignments, setAssignments] = useState<BillItemAssignment[]>(() => buildAssignments(splitCart, menuItems));
 
@@ -245,7 +256,8 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
     return guests.map(g => {
       const isRemoved = removedGuestIds.includes(g.id);
       const guestSubtotal = isRemoved ? 0 : Number(shares[g.id] || 0);
-      const guestTotal = guestSubtotal; // Sin tasas adicionales
+      // Los montos personalizados ya se escriben con el descuento de la cuenta aplicado
+      const guestTotal = method === 'custom' ? guestSubtotal : payable(guestSubtotal);
       
       const items = isRemoved ? [] : splitCart
         .filter(item => resolveOwner(item.guestId) === g.id)
@@ -268,25 +280,26 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
         isAdditionalChargeSplit: hasPostPaymentBalance,
       };
     });
-  }, [method, selectedForEqual, assignments, customAmounts, splitCart, guests, menuItems, splitTotal, hasPostPaymentBalance, removedGuestIds, resolveOwner]);
+  }, [method, selectedForEqual, assignments, customAmounts, splitCart, guests, menuItems, splitTotal, hasPostPaymentBalance, removedGuestIds, resolveOwner, payable]);
 
   // Debug: Log guestShares cuando cambian
   useEffect(() => {
     console.log("[SplitBillView] GuestShares calculados:", guestShares.length, guestShares);
   }, [guestShares]);
 
-  const isTableFullyPaid = grandTotal > 0 && paidRegisteredTotal >= grandTotal - 0.01;
+  const isTableFullyPaid = payableGrandTotal > 0 && paidRegisteredTotal >= payableGrandTotal - 0.01;
   const hasGuestsPendingPayment = guests.some(g => g.paid !== true);
   const shouldShowSplitLockedAlert = hasPaidGuests && !isTableFullyPaid && hasGuestsPendingPayment && !hasPostPaymentBalance;
 
+  // Todo en importes a cobrar (con el descuento de la cuenta aplicado)
   const assignedSubtotal = useMemo(() => {
-    if (method === 'item') return assignments.filter(a => a.assignedGuestIds.length > 0).reduce((sum: number, a) => sum + a.unitPrice, 0);
+    if (method === 'item') return payable(assignments.filter(a => a.assignedGuestIds.length > 0).reduce((sum: number, a) => sum + a.unitPrice, 0));
     if (method === 'custom') return Object.values(customAmounts).reduce((sum: number, val) => sum + (parseFloat(val as string) || 0), 0);
-    if (method === 'equal') return selectedForEqual.length > 0 ? splitTotal : 0;
-    return splitTotal; 
-  }, [method, assignments, customAmounts, selectedForEqual, splitTotal]);
+    if (method === 'equal') return selectedForEqual.length > 0 ? payableSplitTotal : 0;
+    return payableSplitTotal;
+  }, [method, assignments, customAmounts, selectedForEqual, payableSplitTotal, payable]);
 
-  const isFullyAssigned = Math.abs(assignedSubtotal - splitTotal) < 0.01;
+  const isFullyAssigned = Math.abs(assignedSubtotal - payableSplitTotal) < 0.01;
   const isEqualSplitValid = method !== 'equal' || selectedForEqual.length > 0;
   const canConfirmSplit = isEqualSplitValid && (isFullyAssigned || method === 'equal' || method === 'guest');
 
@@ -322,7 +335,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
   const handleAddRemainingAmount = () => {
     if (!canEditSplit || !focusedGuestId) return; // No permitir cambios si hay pagos previos sin saldo nuevo o no hay comensal con foco
     
-    const remaining = splitTotal - assignedSubtotal;
+    const remaining = payableSplitTotal - assignedSubtotal;
     if (remaining <= 0) return;
 
     if (method === 'custom') {
@@ -370,9 +383,10 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
     }, 0);
 
   const getRemovalAmount = (guestId: string) => {
-    if (method === 'equal') return getOrderedTotal(guestId);
+    const orderedTotal = payable(getOrderedTotal(guestId));
+    if (method === 'equal') return orderedTotal;
     const shareTotal = guestShares.find(s => s.id === guestId)?.total || 0;
-    return Math.max(shareTotal, getOrderedTotal(guestId));
+    return Math.max(shareTotal, orderedTotal);
   };
 
   const requestRemoveGuest = (guestId: string) => {
@@ -452,10 +466,21 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
       <main className="flex-1 overflow-y-auto no-scrollbar pb-40">
         <div className="flex flex-col items-center justify-center py-10 px-6 text-center animate-fade-in">
           <span className="text-[10px] font-black text-primary uppercase tracking-[0.3em] mb-2">Saldo a pagar</span>
-          <h2 className="text-5xl font-black tracking-tighter leading-none text-white price-amount">${formatPrice(splitTotal)}</h2>
+          <h2 className="text-5xl font-black tracking-tighter leading-none text-white price-amount">${formatPrice(payableSplitTotal)}</h2>
+          {hasBillDiscount && (
+            <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-primary/15 border border-primary/30 px-3 py-1">
+              <span className="material-symbols-outlined text-primary text-sm">sell</span>
+              <span className="text-[11px] font-black text-primary">
+                {formatBillPercent(billDiscountPercent)}% off en la cuenta · antes <span className="line-through opacity-70 price-amount">${formatPrice(splitTotal)}</span>
+              </span>
+            </div>
+          )}
+          {hasBillDiscount && billDiscountReason && (
+            <p className="mt-2 max-w-xs text-[11px] font-medium text-white/50 leading-snug">{billDiscountReason}</p>
+          )}
           <div className="mt-4 flex flex-col items-center gap-1">
             <p className="text-text-secondary text-[10px] font-black uppercase tracking-widest opacity-60">Total histórico de la mesa</p>
-            <p className="text-white/70 text-sm font-black price-amount">${formatPrice(grandTotal)}</p>
+            <p className="text-white/70 text-sm font-black price-amount">${formatPrice(payableGrandTotal)}</p>
           </div>
           <p className="text-text-secondary text-[10px] font-black uppercase tracking-widest mt-4 opacity-40">Precios finales con impuestos incluidos</p>
         </div>
@@ -622,13 +647,13 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
                  <div className="flex justify-between items-center mb-2">
                    <span className="text-[10px] font-black text-text-secondary uppercase tracking-widest">Progreso de Asignación</span>
                    <span className={`text-[10px] font-black ${isFullyAssigned ? 'text-primary' : 'text-amber-500'}`}>
-                     ${formatPrice(assignedSubtotal)} / ${formatPrice(splitTotal)}
+                     ${formatPrice(assignedSubtotal)} / ${formatPrice(payableSplitTotal)}
                    </span>
                  </div>
                  <div className="h-2 w-full bg-white/5 rounded-full overflow-hidden">
                    <div
                      className={`h-full transition-all duration-500 rounded-full ${isFullyAssigned ? 'bg-primary' : 'bg-amber-500'}`}
-                     style={{ width: `${Math.min((assignedSubtotal / Math.max(splitTotal, 1)) * 100, 100)}%` }}
+                     style={{ width: `${Math.min((assignedSubtotal / Math.max(payableSplitTotal, 1)) * 100, 100)}%` }}
                    ></div>
                  </div>
               </div>
@@ -795,7 +820,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
               <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 flex items-center gap-3 animate-pulse">
                 <span className="material-symbols-outlined text-amber-500 text-xl">warning</span>
                 <p className="text-sm font-bold text-amber-500 uppercase tracking-widest leading-tight">
-                  Faltan ${formatPrice(splitTotal - assignedSubtotal)} por asignar
+                  Faltan ${formatPrice(payableSplitTotal - assignedSubtotal)} por asignar
                 </p>
               </div>
               {focusedGuestId && (
@@ -809,7 +834,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
                   className="w-full bg-amber-500/20 hover:bg-amber-500/30 active:scale-[0.98] border border-amber-500/30 text-amber-500 font-bold text-sm h-12 rounded-xl flex items-center justify-center gap-2 transition-all"
                 >
                   <span className="material-symbols-outlined text-lg">add_circle</span>
-                  <span>Agregar total faltante ${formatPrice(splitTotal - assignedSubtotal)}</span>
+                  <span>Agregar total faltante ${formatPrice(payableSplitTotal - assignedSubtotal)}</span>
                 </button>
               )}
             </>

@@ -6,7 +6,7 @@ import WaiterRequestModal from './WaiterRequestModal';
 import WaiterTabButton from '../components/WaiterTabButton';
 import { getGroupKeyForCategoryId, ORDER_GROUP_LABELS, type OrderGroupKey } from '../lib/orderGroups';
 import { getReplaceVariantInfo, getAddVariantLabels } from '../lib/variantDisplay';
-import { getDiscountedListUnitPrice, getGroupPromoNudge, promoBadgeLabel, usePromotionsByIds, type GroupPromoNudge, type Promotion } from '../lib/promotions';
+import { formatBillPercent, getBillTierNudge, getDiscountedListUnitPrice, getGroupPromoNudge, promoBadgeLabel, usePromotionsByIds, type GroupPromoNudge, type OrderBillDiscount, type Promotion } from '../lib/promotions';
 
 // Función helper para calcular tiempo transcurrido desde created_at
 const getTimeAgo = (createdAt: string | undefined): string => {
@@ -66,10 +66,11 @@ interface OrderSummaryViewProps {
   currentGuestId?: string | null;
   activeOrderId?: string | null;
   restaurant?: { logo_url?: string | null } | null;
+  billDiscount?: OrderBillDiscount;
 }
 
 const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({ 
-  guests, cart, batches, onBack, onSendGroup, onPay, sendingGroup = null, onUpdateQuantity, onRemoveItemFromBatch, menuItems, categories, currentGuestId, waiter, tableNumber, activeOrderId, restaurant
+  guests, cart, batches, onBack, onSendGroup, onPay, sendingGroup = null, onUpdateQuantity, onRemoveItemFromBatch, menuItems, categories, currentGuestId, waiter, tableNumber, activeOrderId, restaurant, billDiscount
 }) => {
   const getItemImageUrl = (imageUrl?: string | null) => (imageUrl || '').trim() || restaurant?.logo_url || '';
   const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
@@ -213,6 +214,18 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
     }, 0),
     [confirmedByBatch, menuItems]
   );
+
+  // Descuento por monto de cuenta: el % lo calcula la DB sobre lo enviado; el aviso cuenta también lo que falta enviar
+  const billPercent = billDiscount?.percent ?? 0;
+  const withBillDiscount = (amount: number) => Math.round(amount * (1 - billPercent / 100) * 100) / 100;
+  const payableGrandTotal = withBillDiscount(grandTotal);
+  const pendingTotal = pendingItems.reduce((sum, item) => {
+    const menuItem = menuItems.find(m => m.id === item.itemId);
+    return sum + (item.unitPrice ?? menuItem?.price ?? 0) * item.quantity;
+  }, 0);
+  const billNudge = billDiscount && !billDiscount.locked && billDiscount.tiers.length > 0
+    ? getBillTierNudge(billDiscount.tiers, grandTotal + pendingTotal)
+    : null;
 
   const proceedToPay = () => {
     if (unservedItems.length > 0) setShowUnservedModal(true);
@@ -573,9 +586,23 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
 
       <div className="fixed bottom-0 left-0 w-full p-4 bg-background-dark border-t border-white/5 z-20 space-y-3 shadow-2xl">
         <div className="flex justify-between items-center px-2">
-           <span className="text-text-secondary font-medium">Total Acumulado</span>
-           <span className="text-[28px] font-black price-amount">${formatPrice(grandTotal)}</span>
+           <span className="flex flex-col">
+             <span className="text-text-secondary font-medium">Total Acumulado</span>
+             {billPercent > 0 && grandTotal > 0 && (
+               <span className="text-xs font-bold text-primary">{formatBillPercent(billPercent)}% off</span>
+             )}
+           </span>
+           <span className="text-[28px] font-black price-amount">${formatPrice(payableGrandTotal)}</span>
         </div>
+        {billNudge && (
+          <div className="mx-2 flex items-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-3 py-2">
+            <span className="material-symbols-outlined text-primary text-lg shrink-0">local_offer</span>
+            <p className="text-xs text-white/80 leading-snug">
+              Sumá <span className="font-bold text-white price-amount">${formatPrice(billNudge.missing)}</span> más a la cuenta de la mesa y obtienen{' '}
+              <span className="font-bold text-primary">{formatBillPercent(billNudge.percent)}% off</span> en el total
+            </p>
+          </div>
+        )}
         
         <div className="flex flex-col gap-3">
           {confirmedItems.length > 0 && (isCurrentUserHost ? (
@@ -680,7 +707,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                 className="w-full min-h-14 py-3 px-4 bg-primary text-black rounded-2xl font-black shadow-xl shadow-primary/20 active:scale-[0.98] transition-all flex flex-col items-center justify-center"
               >
                 <span>Avanzar y pagar todo lo encargado</span>
-                <span className="text-xs font-bold opacity-70 price-amount">${formatPrice(grandTotal)}</span>
+                <span className="text-xs font-bold opacity-70 price-amount">${formatPrice(payableGrandTotal)}</span>
               </button>
               <button
                 onClick={() => { setShowUnservedModal(false); onPay?.('served'); }}
@@ -689,7 +716,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
               >
                 <span>Avanzar y pagar solo lo servido</span>
                 <span className="text-xs font-bold opacity-70 price-amount">
-                  {servedTotal > 0 ? `$${formatPrice(servedTotal)}` : 'Todavía no hay platos servidos'}
+                  {servedTotal > 0 ? `$${formatPrice(withBillDiscount(servedTotal))}` : 'Todavía no hay platos servidos'}
                 </span>
               </button>
               <button

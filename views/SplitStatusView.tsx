@@ -14,6 +14,8 @@ interface SplitStatusViewProps {
   cart: OrderItem[];
   menuItems: MenuItem[];
   orderGuestCharges?: OrderGuestCharge[];
+  /** % de descuento por monto de cuenta que aplica a toda la mesa. */
+  billDiscountPercent?: number;
 }
 
 const getPaymentMethodLabel = (method?: string | null) => {
@@ -43,14 +45,16 @@ const SplitStatusView: React.FC<SplitStatusViewProps> = ({
   cart,
   menuItems,
   orderGuestCharges = [],
+  billDiscountPercent = 0,
 }) => {
   const orderTotal = useMemo(() => {
-    return cart.reduce((sum, item) => {
+    const subtotal = cart.reduce((sum, item) => {
       const menuItem = menuItems.find(m => m.id === item.itemId);
       const unitPrice = item.unitPrice ?? menuItem?.price ?? 0;
       return sum + unitPrice * item.quantity;
     }, 0);
-  }, [cart, menuItems]);
+    return Math.round(subtotal * (1 - billDiscountPercent / 100) * 100) / 100;
+  }, [cart, menuItems, billDiscountPercent]);
 
   const totalPaid = useMemo(() => {
     const paidFromCharges = orderGuestCharges
