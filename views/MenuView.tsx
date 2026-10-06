@@ -4,10 +4,13 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Guest, MenuItem, MenuSectionHeader, OrderItem, VariantGroup, VariantOption } from '../types';
 import { getInitials, getGuestColor } from './GuestInfoView';
 import WaiterRequestModal from './WaiterRequestModal';
+import WaiterTabButton, { WAITER_TAB_INTRO_MS } from '../components/WaiterTabButton';
 import { UpsellSheet, UpsellStrip } from '../components/UpsellSuggestions';
 import { getUpsellSuggestions } from '../lib/upsell';
 import { getVariantGroups } from '../lib/variantDisplay';
 import { supabase } from '../lib/supabase';
+import { useLivePromotions, isPerUnitPromotion, promoUnitPrice, promoHint, promoBadgeLabel } from '../lib/promotions';
+import { PromoBadge } from '../components/PromoBadge';
 
 interface MenuViewProps {
   guests: Guest[];
@@ -41,6 +44,18 @@ interface MenuViewProps {
   onRefreshMenuItems?: () => Promise<void>;
   /** True cuando los menuItems ya están cargados. False mientras se están cargando (muestra skeleton). */
   menuItemsReady?: boolean;
+}
+
+interface MenuBanner {
+  id: string;
+  image_url: string | null;
+  title: string | null;
+  description: string | null;
+  target_category_id: string | null;
+  placement: 'home' | 'category' | null;
+  display_category_id: string | null;
+  cta_menu_item_id: string | null;
+  cta_label: string | null;
 }
 
 import { formatPrice, priceAmountClass } from '../lib/currency';
@@ -239,11 +254,16 @@ const MenuView: React.FC<MenuViewProps> = ({
   const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
   const crossGuestConfirmedRef = useRef(false);
   const [crossGuestPendingAction, setCrossGuestPendingAction] = useState<(() => void) | null>(null);
-  const [banners, setBanners] = useState<{ id: string; image_url: string; title: string | null; description: string | null; target_category_id: string | null }[]>([]);
+  const [allBanners, setAllBanners] = useState<MenuBanner[]>([]);
   const pendingSubcategoryRef = useRef<string | null>(null);
   const [activeBannerIndex, setActiveBannerIndex] = useState(0);
   const bannerScrollRef = useRef<HTMLDivElement>(null);
   const [showWaiterTip, setShowWaiterTip] = useState(() => !localStorage.getItem('splitme_waiter_tip_seen'));
+  const [waiterIntroDone, setWaiterIntroDone] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setWaiterIntroDone(true), WAITER_TAB_INTRO_MS);
+    return () => clearTimeout(t);
+  }, []);
   const [selectedReplaceOptionId, setSelectedReplaceOptionId] = useState<string | null>(null);
   const [selectedReplaceOptionIds, setSelectedReplaceOptionIds] = useState<Record<string, string[]>>({}); // Para grupos con selection=multiple
   const [selectedAddOptionIds, setSelectedAddOptionIds] = useState<string[]>([]);
@@ -287,10 +307,30 @@ const MenuView: React.FC<MenuViewProps> = ({
 
   useEffect(() => {
     if (!restaurant?.id) return;
-    supabase.from('banners').select('id, image_url, title, description, target_category_id').eq('restaurant_id', restaurant.id).eq('active', true).order('sort_order').then(({ data }) => {
-      if (data?.length) setBanners(data);
-    });
+    supabase
+      .from('banners')
+      .select('id, image_url, title, description, target_category_id, placement, display_category_id, cta_menu_item_id, cta_label')
+      .eq('restaurant_id', restaurant.id)
+      .eq('active', true)
+      .order('sort_order')
+      .then(({ data }) => {
+        if (data?.length) setAllBanners(data as MenuBanner[]);
+      });
   }, [restaurant?.id]);
+
+  const banners = useMemo(
+    () => allBanners.filter(b => (b.placement ?? 'home') === 'home' && !!b.image_url),
+    [allBanners]
+  );
+
+  const livePromotions = useLivePromotions(restaurant?.id);
+
+  const getItemPromoPricing = (item: MenuItem) => {
+    const listPrice = Number(item.price) || 0;
+    const promo = livePromotions.get(item.id) ?? null;
+    const price = promo && isPerUnitPromotion(promo) ? promoUnitPrice(promo, listPrice, listPrice) : listPrice;
+    return { promo, price, listPrice: price < listPrice ? listPrice : null, hint: promo ? promoHint(promo) : null };
+  };
 
   useEffect(() => {
     if (banners.length <= 1) return;
@@ -1049,6 +1089,21 @@ const MenuView: React.FC<MenuViewProps> = ({
     return items;
   }, [initialCategory, menuItems, supabaseCategories, selectedSubcategory]);
 
+  // Banners de la vista actual: los de la categoría padre solo en "Todos";
+  // al elegir una subcategoría se muestran únicamente los de esa subcategoría.
+  const categoryBanners = useMemo(() => {
+    if (initialCategory === 'Inicio') return [];
+    const parentCatObj = supabaseCategories.find(c => c.name === initialCategory && c.parent_id === null);
+    if (!parentCatObj) return [];
+    const activeCategoryId = selectedSubcategory ?? parentCatObj.id;
+    return allBanners
+      .filter(b => b.placement === 'category' && b.display_category_id === activeCategoryId)
+      .map(b => {
+        const ctaItem = b.cta_menu_item_id ? menuItems.find(m => m.id === b.cta_menu_item_id) : undefined;
+        return { banner: b, ctaItem: ctaItem && ctaItem.availability !== false ? ctaItem : undefined };
+      });
+  }, [allBanners, initialCategory, supabaseCategories, selectedSubcategory, menuItems]);
+
   // Carruseles para la pantalla Inicio
   const featuredItems = useMemo(() => menuItems.filter(item => item.is_featured), [menuItems]);
 
@@ -1187,6 +1242,11 @@ const MenuView: React.FC<MenuViewProps> = ({
     if (allPrices.length === 0) return null;
     return { min: Math.min(...allPrices), max: Math.max(...allPrices) };
   }, [variantReplaceGroups]);
+
+  const pdpPromo = showDetail ? livePromotions.get(showDetail.id) ?? null : null;
+  const pdpPerUnitPromo = pdpPromo && isPerUnitPromotion(pdpPromo) ? pdpPromo : null;
+  const applyPdpPromo = (list: number) =>
+    pdpPerUnitPromo ? promoUnitPrice(pdpPerUnitPromo, list, Number(showDetail?.price) || 0) : list;
 
   // Resetear variantes al cerrar PDP
   useEffect(() => {
@@ -1413,7 +1473,7 @@ const MenuView: React.FC<MenuViewProps> = ({
                     role={isLinked ? 'link' : undefined}
                     onClick={isLinked ? () => openBannerTarget(banner.target_category_id) : undefined}
                   >
-                    <img src={banner.image_url} alt="" className="w-full h-full object-cover" />
+                    <img src={banner.image_url ?? undefined} alt="" className="w-full h-full object-cover" />
                     {(banner.title || banner.description) && (
                       <>
                         <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent pointer-events-none" />
@@ -1463,6 +1523,7 @@ const MenuView: React.FC<MenuViewProps> = ({
                   const qty = getDishQuantityForGuest(item.id);
                   const simpleItem = getSimpleCartItemForGuest(item.id);
                   const catName = supabaseCategories.find(c => c.id === item.category_id)?.name;
+                  const promoPricing = getItemPromoPricing(item);
                   return (
                     <div
                       key={item.id}
@@ -1497,9 +1558,15 @@ const MenuView: React.FC<MenuViewProps> = ({
                             <span className="text-white text-[11px] font-semibold tabular-nums">{Number(item.average_rating).toFixed(1)}</span>
                           </div>
                         )}
+                        {promoPricing.promo && <PromoBadge promotion={promoPricing.promo} className="self-start" />}
                         {/* precio + CTA */}
                         <div className="flex items-center justify-between gap-2 pointer-events-auto" onClick={e => e.stopPropagation()}>
-                          <span className="text-white font-semibold text-[15px] price-amount">${formatPrice(Number(item.price))}</span>
+                          <div className="flex flex-col min-w-0 leading-tight">
+                            {promoPricing.listPrice != null && (
+                              <span className="text-white/50 text-[11px] line-through price-amount">${formatPrice(promoPricing.listPrice)}</span>
+                            )}
+                            <span className="text-white font-semibold text-[15px] price-amount">${formatPrice(promoPricing.price)}</span>
+                          </div>
                           {/* botón agregar / stepper */}
                           <div>
                         {item.availability === false ? null : addingItems.has(item.id) ? (
@@ -1540,6 +1607,41 @@ const MenuView: React.FC<MenuViewProps> = ({
       ) : (
       <main className="p-4 pb-32 flex-1">
         <div className="flex flex-col gap-6">
+          {categoryBanners.map(({ banner, ctaItem }) => {
+            const ctaQty = ctaItem ? getDishQuantityForGuest(ctaItem.id) : 0;
+            const ctaAdding = ctaItem ? addingItems.has(ctaItem.id) : false;
+            const ctaPromo = ctaItem ? livePromotions.get(ctaItem.id) : undefined;
+            return (
+              <div
+                key={banner.id}
+                className="relative overflow-hidden rounded-3xl border border-primary/25 bg-gradient-to-br from-primary/20 via-surface-dark to-surface-dark shadow-xl shadow-black/40"
+              >
+                {banner.image_url && (
+                  <>
+                    <img src={banner.image_url} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-gradient-to-r from-black/85 via-black/60 to-black/20 pointer-events-none" />
+                  </>
+                )}
+                <div className="relative flex flex-col gap-3 p-5">
+                  <span className="self-start rounded-full bg-rose-500 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-widest text-white">{ctaPromo ? promoBadgeLabel(ctaPromo) : 'Promo'}</span>
+                  {banner.title && <p className="text-white font-bold text-[18px] leading-snug">{banner.title}</p>}
+                  {banner.description && <p className="text-white/75 text-[13px] leading-snug">{banner.description}</p>}
+                  {ctaItem && (
+                    <button
+                      onClick={e => handleIncrement(e, ctaItem)}
+                      disabled={ctaAdding}
+                      className="mt-1 self-start h-11 px-5 rounded-2xl bg-primary text-black font-black text-sm flex items-center gap-2 shadow-lg shadow-primary/20 active:scale-[0.97] transition-all disabled:opacity-60"
+                    >
+                      <span className={`material-symbols-outlined text-[18px] ${ctaAdding ? 'animate-spin' : ''}`}>
+                        {ctaAdding ? 'sync' : ctaQty > 0 ? 'check' : 'add_shopping_cart'}
+                      </span>
+                      {ctaQty > 0 ? `Agregado (${ctaQty}) · sumar otro` : (banner.cta_label || 'Agregar al pedido')}
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
           {itemsGroupedBySectionHeader.map((group, groupIdx) => (
             <section key={group.sectionId ?? `ungrouped-${groupIdx}`} className="flex flex-col gap-3">
               {group.sectionTitle && (
@@ -1555,6 +1657,7 @@ const MenuView: React.FC<MenuViewProps> = ({
 
             // Encontrar todos los items de la mesa para este plato (para visibilidad global)
             const tableItemsForDish = cart.filter(i => i.itemId === item.id);
+            const promoPricing = getItemPromoPricing(item);
 
             return (
               <div
@@ -1578,6 +1681,7 @@ const MenuView: React.FC<MenuViewProps> = ({
                         Nuevo
                       </span>
                     )}
+                    {promoPricing.promo && <PromoBadge promotion={promoPricing.promo} />}
                   </div>
                   {item.dietary_tags && item.dietary_tags.length > 0 && (
                     <div className="flex flex-wrap gap-2 mb-2">
@@ -1600,8 +1704,16 @@ const MenuView: React.FC<MenuViewProps> = ({
                     </div>
                   )}
                   <p className="text-text-secondary text-xs line-clamp-2 mb-3">{item.description}</p>
+                  {promoPricing.hint && (
+                    <p className="text-rose-400 text-[11px] font-semibold leading-snug -mt-1.5 mb-2">{promoPricing.hint}</p>
+                  )}
                   <div className="flex items-center justify-between gap-3">
-                    <span className="text-white font-semibold text-[17px]">${formatPrice(Number(item.price))}</span>
+                    <div className="flex items-baseline gap-2 min-w-0 flex-wrap">
+                      <span className="text-white font-semibold text-[17px] price-amount">${formatPrice(promoPricing.price)}</span>
+                      {promoPricing.listPrice != null && (
+                        <span className="text-white/40 text-[13px] line-through price-amount">${formatPrice(promoPricing.listPrice)}</span>
+                      )}
+                    </div>
                     <div 
                       className="flex items-center z-10 shrink-0"
                       onClick={(e) => e.stopPropagation()}
@@ -1779,13 +1891,25 @@ const MenuView: React.FC<MenuViewProps> = ({
                     <h2 className="text-[22px] font-bold leading-tight">{showDetail.name}</h2>
                   </div>
                   {hasVariants && variantPriceRange && variantReplaceGroups.length > 0 && !selectedReplaceOptionId ? (
-                    <span className="text-[22px] font-semibold text-white/90">
-                      ${formatPrice(variantPriceRange.min)} – ${formatPrice(variantPriceRange.max)}
+                    <span className="text-[22px] font-semibold text-white/90 price-amount">
+                      ${formatPrice(applyPdpPromo(variantPriceRange.min))} – ${formatPrice(applyPdpPromo(variantPriceRange.max))}
                     </span>
                   ) : (
-                    <span className="text-[22px] font-semibold text-white/90">${formatPrice(variantUnitPrice)}</span>
+                    <div className="flex flex-col items-end shrink-0 leading-tight">
+                      <span className="text-[22px] font-semibold text-white/90 price-amount">${formatPrice(applyPdpPromo(variantUnitPrice))}</span>
+                      {applyPdpPromo(variantUnitPrice) < variantUnitPrice && (
+                        <span className="text-[14px] text-white/40 line-through price-amount">${formatPrice(variantUnitPrice)}</span>
+                      )}
+                    </div>
                   )}
                 </div>
+
+                {pdpPromo && (
+                  <div className="flex flex-wrap items-center gap-2 -mt-1 mb-4">
+                    <PromoBadge promotion={pdpPromo} size="md" />
+                    <span className="text-rose-400 text-[13px] font-semibold leading-snug">{promoHint(pdpPromo) ?? pdpPromo.name}</span>
+                  </div>
+                )}
 
                 <p className="text-text-secondary leading-relaxed mb-8">{showDetail.description}</p>
 
@@ -2242,7 +2366,7 @@ const MenuView: React.FC<MenuViewProps> = ({
       {waiter ? (
         <>
           {/* Globo de ayuda — solo la primera vez */}
-          {showWaiterTip && (
+          {showWaiterTip && waiterIntroDone && (
             <button
               onClick={() => {
                 localStorage.setItem('splitme_waiter_tip_seen', '1');
@@ -2269,21 +2393,14 @@ const MenuView: React.FC<MenuViewProps> = ({
             </button>
           )}
 
-          <button
+          <WaiterTabButton
+            waiter={waiter}
             onClick={() => {
               localStorage.setItem('splitme_waiter_tip_seen', '1');
               setShowWaiterTip(false);
               setIsWaiterModalOpen(true);
             }}
-            className="fixed bottom-28 right-4 z-[70] size-14 rounded-full shadow-xl shadow-black/40 flex items-center justify-center overflow-hidden border-2 border-primary/60 transition-all active:scale-95"
-            title="Solicitar al mesero"
-          >
-            <img
-              src={waiter?.profile_photo_url || 'https://lh3.googleusercontent.com/aida-public/AB6AXuDyiwOtsINFh8RspVDg_Wx4QKXthNxCS7ZJlDSZvL6ADwFD3WRUpKHGhrscxV9dcR7w7guM4E-iFCNXx-tDgHs1BrbfGjolJoASehM-SEc4Pe6bKEx7zjcF4WAcON7mbdWJCepEdMPkBZ36lB_4tPTsJeNzTNqRNGKgusVb3U_X0WGEAgij6Y48HIunhj_BC8lxMdsB5ublmAltnyYerUKa_NkT8aybLFkaaRkQGQ_irdtS2ZQwrNGNj6b1ZrWY1HRClBeExJL615bG'}
-              alt={waiter?.nickname || waiter?.full_name || 'Mesero'}
-              className="w-full h-full object-cover"
-            />
-          </button>
+          />
         </>
       ) : null}
 

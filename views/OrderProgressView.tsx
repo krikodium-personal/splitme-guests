@@ -5,6 +5,7 @@ import { OrderItem, OrderBatch, MenuItem } from '../types';
 import { formatPrice } from './MenuView';
 import { getGroupKeyForCategoryId, ORDER_GROUP_LABELS } from '../lib/orderGroups';
 import { getReplaceVariantInfo, getAddVariantLabels } from '../lib/variantDisplay';
+import { getDiscountedListUnitPrice } from '../lib/promotions';
 
 // Función helper para calcular tiempo transcurrido desde created_at
 const getTimeAgo = (createdAt: string | undefined): string => {
@@ -286,6 +287,7 @@ const OrderProgressView: React.FC<OrderProgressViewProps> = ({
                         const replaceInfo = getReplaceVariantInfo(dish, item);
                         const addLabels = getAddVariantLabels(dish, item);
                         const unitPrice = item.unitPrice ?? dish?.price ?? 0;
+                        const listUnitPrice = getDiscountedListUnitPrice(item);
                         const canRemove = batchStatus === 'ENVIADO' && onRemoveItemFromBatch;
                         return (
                           <div key={item.id} className="p-4 flex flex-col gap-2">
@@ -298,7 +300,12 @@ const OrderProgressView: React.FC<OrderProgressViewProps> = ({
                                 )}
                                 <p className="text-text-secondary text-[10px] font-medium">Cantidad: {item.quantity}</p>
                               </div>
-                              <span className="text-xs font-black price-amount text-white/40">${formatPrice(unitPrice * item.quantity)}</span>
+                              <div className="flex flex-col items-end shrink-0 leading-tight">
+                                <span className="text-xs font-black price-amount text-white/40">${formatPrice(unitPrice * item.quantity)}</span>
+                                {listUnitPrice != null && (
+                                  <span className="text-[10px] text-white/25 line-through price-amount">${formatPrice(listUnitPrice * item.quantity)}</span>
+                                )}
+                              </div>
                               {canRemove && (
                                 <button
                                   onClick={() => setItemToRemoveFromBatch(item)}

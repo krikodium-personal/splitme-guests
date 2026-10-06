@@ -3,8 +3,10 @@ import { Guest, OrderItem, MenuItem, OrderBatch, PaymentScope } from '../types';
 import { formatPrice } from './MenuView';
 import { getInitials, getGuestColor } from './GuestInfoView';
 import WaiterRequestModal from './WaiterRequestModal';
+import WaiterTabButton from '../components/WaiterTabButton';
 import { getGroupKeyForCategoryId, ORDER_GROUP_LABELS, type OrderGroupKey } from '../lib/orderGroups';
 import { getReplaceVariantInfo, getAddVariantLabels } from '../lib/variantDisplay';
+import { getDiscountedListUnitPrice, getGroupPromoNudge, promoBadgeLabel, usePromotionsByIds, type GroupPromoNudge, type Promotion } from '../lib/promotions';
 
 // Función helper para calcular tiempo transcurrido desde created_at
 const getTimeAgo = (createdAt: string | undefined): string => {
@@ -120,6 +122,32 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
     });
     return groups;
   }, [pendingItems, menuItems, categories]);
+
+  // Aviso "Sumá 1 más…" para promos grupales incompletas: se muestra una vez por producto, en la fila pendiente del comensal actual si tiene una
+  const cartPromotions = usePromotionsByIds(cart.map(i => i.promotionId).filter((id): id is string => !!id));
+  const promoNudgeByRowId = useMemo(() => {
+    const groups = new Map<string, { promo: Promotion; list: number; units: number; rows: OrderItem[] }>();
+    cart.forEach(item => {
+      const promo = item.promotionId ? cartPromotions.get(item.promotionId) : undefined;
+      if (!promo || item.listUnitPrice == null || item.quantity <= 0) return;
+      const key = `${item.itemId}|${promo.id}|${item.listUnitPrice}`;
+      const group = groups.get(key) ?? { promo, list: item.listUnitPrice, units: 0, rows: [] };
+      group.units += item.quantity;
+      group.rows.push(item);
+      groups.set(key, group);
+    });
+    const result = new Map<string, { promo: Promotion; nudge: GroupPromoNudge; canAdd: boolean }>();
+    groups.forEach(({ promo, list, units, rows }) => {
+      const nudge = getGroupPromoNudge(promo, units, list);
+      if (!nudge) return;
+      const pendingRows = rows.filter(r => pendingItems.some(p => p.id === r.id));
+      const ownRow = pendingRows.find(r => r.guestId === currentGuestId);
+      const target = ownRow ?? pendingRows[0];
+      if (target) result.set(target.id, { promo, nudge, canAdd: !!ownRow });
+    });
+    return result;
+  }, [cart, cartPromotions, pendingItems, currentGuestId]);
+
   const confirmedItems = cart.filter(i => i.status === 'pedido' || (!i.status && i.isConfirmed));
 
   // Total Acumulado: solo items en batches ya enviados (excluir CREADO y sin batch)
@@ -284,6 +312,8 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                         const guest = guests.find(g => g.id === item.guestId);
                         const replaceInfo = getReplaceVariantInfo(dish, item);
                         const addLabels = getAddVariantLabels(dish, item);
+                        const listUnitPrice = getDiscountedListUnitPrice(item);
+                        const promoNudge = promoNudgeByRowId.get(item.id);
                         return (
                           <div key={item.id} className="flex flex-col gap-2">
                             <div className="flex items-center gap-4">
@@ -297,7 +327,12 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                                 {replaceInfo && (
                                   <p className="text-[10px] uppercase"><span className="text-white/60">{replaceInfo.groupName}: </span><span className="font-bold text-white">{replaceInfo.optionNames.join(', ')}</span></p>
                                 )}
-                                <p className="text-primary text-[13px] font-semibold price-amount">${formatPrice(item.unitPrice ?? Number(dish?.price || 0))}</p>
+                                <p className="text-primary text-[13px] font-semibold">
+                                  <span className="price-amount">${formatPrice(item.unitPrice ?? Number(dish?.price || 0))}</span>
+                                  {listUnitPrice != null && (
+                                    <span className="ml-2 text-white/40 text-[11px] font-medium line-through price-amount">${formatPrice(listUnitPrice)}</span>
+                                  )}
+                                </p>
                               </div>
                               <div className="flex items-center gap-3 bg-background-dark/50 rounded-full px-2 py-1 shrink-0 border border-white/5">
                                 <button onClick={() => onUpdateQuantity(item.id, -1)} className="size-6 rounded-full hover:bg-white/10 flex items-center justify-center"><span className="material-symbols-outlined text-xs">remove</span></button>
@@ -305,6 +340,25 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                                 <button onClick={() => onUpdateQuantity(item.id, 1)} className="size-6 rounded-full bg-white/10 flex items-center justify-center"><span className="material-symbols-outlined text-xs">add</span></button>
                               </div>
                             </div>
+                            {promoNudge && (
+                              <div className="ml-9 flex items-center gap-3 rounded-2xl bg-rose-500/10 border border-rose-500/30 px-3 py-2">
+                                <span className="material-symbols-outlined text-rose-400 text-base shrink-0">sell</span>
+                                <p className="flex-1 min-w-0 text-[12px] leading-snug text-white/85">
+                                  <span className="font-black text-rose-400">{promoBadgeLabel(promoNudge.promo)}</span>{' · '}
+                                  {promoNudge.canAdd ? 'Sumá' : 'Si alguien suma'} {promoNudge.nudge.missing} más y {promoNudge.canAdd ? 'llevás' : 'llevan'} {promoNudge.nudge.totalUnits} por{' '}
+                                  <span className="font-bold text-white price-amount">${formatPrice(promoNudge.nudge.totalPrice)}</span>
+                                </p>
+                                {promoNudge.canAdd && (
+                                  <button
+                                    onClick={() => onUpdateQuantity(item.id, promoNudge.nudge.missing)}
+                                    className="shrink-0 h-8 px-3 rounded-full bg-rose-500 text-white text-[11px] font-black flex items-center gap-1 active:scale-95 transition-transform"
+                                  >
+                                    <span className="material-symbols-outlined text-sm">add</span>
+                                    Sumar {promoNudge.nudge.missing}
+                                  </button>
+                                )}
+                              </div>
+                            )}
                             {(item.extras?.length > 0 || item.removedIngredients?.length > 0 || addLabels.length > 0) && (
                               <div className="flex flex-wrap items-center gap-1.5 ml-16">
                                 {addLabels.map(label => (
@@ -364,6 +418,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                         const replaceInfo = getReplaceVariantInfo(dish, item);
                         const addLabels = getAddVariantLabels(dish, item);
                         const canRemove = (batch.status || '').toUpperCase() === 'ENVIADO' && onRemoveItemFromBatch;
+                        const listUnitPrice = getDiscountedListUnitPrice(item);
                         return (
                           <div key={item.id} className="p-4 flex flex-col gap-2">
                             <div className="flex items-center gap-4">
@@ -380,7 +435,12 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                               )}
                               <p className="text-white/30 text-[10px] font-black uppercase tracking-widest">Cantidad: {item.quantity}</p>
                             </div>
-                            <span className="text-[15px] font-semibold text-white/80 price-amount">${formatPrice((item.unitPrice ?? dish?.price ?? 0) * item.quantity)}</span>
+                            <div className="flex flex-col items-end shrink-0 leading-tight">
+                              <span className="text-[15px] font-semibold text-white/80 price-amount">${formatPrice((item.unitPrice ?? dish?.price ?? 0) * item.quantity)}</span>
+                              {listUnitPrice != null && (
+                                <span className="text-[11px] text-white/35 line-through price-amount">${formatPrice(listUnitPrice * item.quantity)}</span>
+                              )}
+                            </div>
                             {canRemove && (
                               <button
                                 onClick={() => setItemToRemoveFromBatch(item)}
@@ -455,6 +515,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                         const dish = menuItems.find(m => m.id === item.itemId);
                         const unitPrice = item.unitPrice ?? (dish?.price ?? 0);
                         const itemTotal = unitPrice * item.quantity;
+                        const listUnitPrice = getDiscountedListUnitPrice(item);
                         const replaceInfo = getReplaceVariantInfo(dish, item);
                         const addLabels = getAddVariantLabels(dish, item);
                         return (
@@ -474,6 +535,9 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                               </div>
                               <div className="text-right shrink-0">
                                 <p className="text-[15px] font-semibold price-amount">${formatPrice(itemTotal)}</p>
+                                {listUnitPrice != null && (
+                                  <p className="text-[11px] text-white/35 line-through price-amount">${formatPrice(listUnitPrice * item.quantity)}</p>
+                                )}
                               </div>
                             </div>
                             {/* Variantes add y personalizaciones */}
@@ -532,17 +596,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
 
       {/* Botón flotante para solicitar al mesero - arriba del footer, separado */}
       {waiter ? (
-        <button
-          onClick={() => setIsWaiterModalOpen(true)}
-          className="fixed bottom-28 right-4 z-[70] size-14 rounded-full shadow-xl shadow-black/40 flex items-center justify-center overflow-hidden border-2 border-primary/60 transition-all active:scale-95"
-          title="Solicitar al mesero"
-        >
-          <img
-            src={waiter?.profile_photo_url || 'https://lh3.googleusercontent.com/aida-public/AB6AXuDyiwOtsINFh8RspVDg_Wx4QKXthNxCS7ZJlDSZvL6ADwFD3WRUpKHGhrscxV9dcR7w7guM4E-iFCNXx-tDgHs1BrbfGjolJoASehM-SEc4Pe6bKEx7zjcF4WAcON7mbdWJCepEdMPkBZ36lB_4tPTsJeNzTNqRNGKgusVb3U_X0WGEAgij6Y48HIunhj_BC8lxMdsB5ublmAltnyYerUKa_NkT8aybLFkaaRkQGQ_irdtS2ZQwrNGNj6b1ZrWY1HRClBeExJL615bG'}
-            alt={waiter?.nickname || waiter?.full_name || 'Mesero'}
-            className="w-full h-full object-cover"
-          />
-        </button>
+        <WaiterTabButton waiter={waiter} onClick={() => setIsWaiterModalOpen(true)} />
       ) : null}
 
       {/* Modal: confirmar quitar producto del pedido (solo batches ENVIADO) */}

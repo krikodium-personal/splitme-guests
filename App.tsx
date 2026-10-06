@@ -409,6 +409,8 @@ const App: React.FC = () => {
           extras,
           removedIngredients,
           unitPrice: item.unit_price != null ? Number(item.unit_price) : undefined,
+          listUnitPrice: item.list_unit_price != null ? Number(item.list_unit_price) : undefined,
+          promotionId: item.promotion_id ?? null,
           selectedReplaceOptionId,
           selectedAddOptionIds,
           variant_selections: variantSelections.length > 0 ? variantSelections : undefined
@@ -2411,7 +2413,7 @@ const App: React.FC = () => {
 
       console.log("[DineSplit] ✅ Item insertado. ID:", newItem.id, "Menu Item ID:", item.id);
       
-      setCart(prev => [...prev, {
+      const newCartItem: OrderItem = {
         id: newItem.id,
         itemId: item.id,
         guestId: guestId,
@@ -2422,11 +2424,17 @@ const App: React.FC = () => {
         status: newItem.status || 'elegido',
         extras: finalExtras,
         removedIngredients,
-        unitPrice: variantOptions ? unitPrice : undefined,
+        unitPrice: newItem.unit_price != null ? Number(newItem.unit_price) : (variantOptions ? unitPrice : undefined),
+        listUnitPrice: newItem.list_unit_price != null ? Number(newItem.list_unit_price) : undefined,
+        promotionId: newItem.promotion_id ?? null,
         selectedReplaceOptionId: variantOptions?.selectedReplaceOptionId ?? undefined,
         selectedAddOptionIds: variantOnlyIds.filter(id => allOpts.some((o: any) => o.id === id && (o.price_type || '').toLowerCase() === 'add')),
         variant_selections: variantOnlyIds.length > 0 ? variantOnlyIds : undefined
-      }]);
+      };
+      // Con promo grupal (2x1, 2da unidad) la DB recalcula todas las filas del producto después del insert,
+      // así que el unit_price devuelto puede estar desactualizado: se recarga la orden completa.
+      if (newItem.promotion_id) await fetchOrderItemsFromDB(activeOrderId);
+      setCart(prev => prev.some(i => i.id === newCartItem.id) ? prev : [...prev, newCartItem]);
     } catch (err: any) {
       if (err?.message === 'PRODUCTO_NO_DISPONIBLE') {
         throw err; // MenuView muestra modal "Producto no disponible" y marca AGOTADO
@@ -2435,7 +2443,7 @@ const App: React.FC = () => {
       alert(`Error al agregar plato: ${err.message}`);
       throw err;
     }
-  }, [activeOrderId, supabase, menuItems]);
+  }, [activeOrderId, supabase, menuItems, fetchOrderItemsFromDB]);
 
   // Función para actualizar item en el carrito y en la BD
   const handleUpdateCartItem = useCallback(async (id: string, updates: Partial<OrderItem>) => {
@@ -2458,6 +2466,7 @@ const App: React.FC = () => {
         
         // Actualizar estado local
         setCart(prev => prev.filter(item => item.id !== id));
+        if (cartItem.promotionId && cartItem.order_id) await fetchOrderItemsFromDB(cartItem.order_id);
       } catch (err: any) {
         console.error("[DineSplit] Error al eliminar item:", err);
         alert(`Error al eliminar plato: ${err.message}`);
@@ -2474,20 +2483,33 @@ const App: React.FC = () => {
       if (updates.variant_selections !== undefined) updateData.variant_selections = updates.variant_selections.length > 0 ? updates.variant_selections : [];
       if (updates.unitPrice !== undefined) updateData.unit_price = updates.unitPrice;
 
-      const { error } = await supabase
+      const { data: updatedRow, error } = await supabase
         .from('order_items')
         .update(updateData)
-        .eq('id', id);
+        .eq('id', id)
+        .select('order_id, unit_price, list_unit_price, promotion_id')
+        .maybeSingle();
 
       if (error) throw error;
 
-      // Actualizar estado local
-      setCart(prev => prev.map(item => item.id === id ? { ...item, ...updates } : item));
+      // Actualizar estado local. El precio efectivo lo fija la DB; con promo grupal recalcula también
+      // las otras filas del producto después del update, así que se recarga la orden completa.
+      if (updatedRow?.promotion_id && updatedRow.order_id) {
+        setCart(prev => prev.map(item => item.id === id ? { ...item, ...updates, unitPrice: item.unitPrice } : item));
+        await fetchOrderItemsFromDB(updatedRow.order_id);
+      } else {
+        const dbPrices: Partial<OrderItem> = updatedRow ? {
+          unitPrice: updatedRow.unit_price != null ? Number(updatedRow.unit_price) : updates.unitPrice ?? cartItem.unitPrice,
+          listUnitPrice: updatedRow.list_unit_price != null ? Number(updatedRow.list_unit_price) : undefined,
+          promotionId: null,
+        } : {};
+        setCart(prev => prev.map(item => item.id === id ? { ...item, ...updates, ...dbPrices } : item));
+      }
     } catch (err: any) {
       console.error("[DineSplit] Error al actualizar item:", err);
       alert(`Error al actualizar plato: ${err.message}`);
     }
-  }, [cart, supabase]);
+  }, [cart, supabase, fetchOrderItemsFromDB]);
 
   const handleRemoveItemFromBatch = useCallback(async (cartItemId: string) => {
     if (!supabase || !activeOrderId) return;

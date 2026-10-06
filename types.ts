@@ -136,8 +136,12 @@ export interface OrderItem {
   batch_id?: string | null;
   isConfirmed?: boolean;
   status?: 'elegido' | 'pedido'; // Estado del item: elegido (sin enviar) o pedido (enviado a cocina)
-  /** Precio unitario cuando hay variantes (reemplaza menuItem.price) */
+  /** Precio unitario efectivo (con variantes y promo, lo fija la DB). Reemplaza menuItem.price */
   unitPrice?: number;
+  /** Precio unitario de lista (con variantes, sin promo) */
+  listUnitPrice?: number;
+  /** Promo asignada por la DB al agregar el ítem */
+  promotionId?: string | null;
   /** Opción replace seleccionada (id de variant_option) */
   selectedReplaceOptionId?: string | null;
   /** Opciones add seleccionadas (ids de variant_options) */

@@ -43,6 +43,8 @@
             'fade-in-up': 'fadeInUp 0.5s ease-out forwards',
             'pulse-ring': 'pulseRing 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
             'scan': 'scan 2.5s cubic-bezier(0.4, 0, 0.2, 1) infinite',
+            'waiter-tab-in': 'waiterTabIn 5.2s 0.4s both',
+            'waiter-tab-text': 'waiterTabText 5.2s 0.4s both',
           },
           keyframes: {
             fadeIn: {
@@ -63,6 +65,16 @@
               '10%': { opacity: '1' },
               '90%': { opacity: '1' },
               '100%': { top: '95%', opacity: '0' }
+            },
+            waiterTabIn: {
+              '0%': { transform: 'translateX(120%)', animationTimingFunction: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+              '15%': { transform: 'translateX(-24px)' },
+              '78%': { transform: 'translateX(-24px)', animationTimingFunction: 'cubic-bezier(0.65, 0, 0.35, 1)' },
+              '96%, 100%': { transform: 'translateX(0)' },
+            },
+            waiterTabText: {
+              '0%, 78%': { maxWidth: '12rem', opacity: '1', animationTimingFunction: 'cubic-bezier(0.65, 0, 0.35, 1)' },
+              '96%, 100%': { maxWidth: '0', opacity: '0' },
             }
           }
         },
