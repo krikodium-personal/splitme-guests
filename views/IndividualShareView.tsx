@@ -215,7 +215,7 @@ const IndividualShareView: React.FC<IndividualShareViewProps> = ({ onBack, onPay
             >
               <div className="flex items-center gap-4">
                 <div className="bg-white p-2 rounded-xl shrink-0">
-                   <img src="/mercadopago-icon.png" className="h-4 object-contain" alt="MP" />
+                   <img src={`${import.meta.env.BASE_URL}mercadopago-icon.png`} className="h-4 object-contain" alt="MP" />
               </div>
               <div className="text-left">
                 <p className="font-black text-sm leading-none mb-1 uppercase tracking-tight">Mercado Pago</p>

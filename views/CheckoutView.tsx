@@ -293,8 +293,8 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
       try {
         await navigator.share({
           title: 'SplitMe - Pagar mi parte',
+          // El link ya va dentro del texto: si se manda también como `url`, algunas apps lo pegan dos veces
           text: text,
-          url: shareUrlWithGuest,
         });
       } catch (err: any) {
         if (err.name !== 'AbortError') {

@@ -17,6 +17,7 @@ import CheckoutView from './views/CheckoutView';
 import ConfirmationView from './views/ConfirmationView';
 import FeedbackView from './views/FeedbackView';
 import TipView from './views/TipView';
+import PaymentSuccessView, { PaymentReceipt, RECEIPT_STORAGE_KEY } from './views/PaymentSuccessView';
 import MercadoPagoPaymentView from './views/MercadoPagoPaymentView';
 import JoinTableView from './views/JoinTableView';
 import BuildBadge from './BuildBadge';
@@ -174,7 +175,7 @@ const App: React.FC = () => {
     activeGuestIdRef.current = activeGuestId;
   }, [activeGuestId]);
   const [activeCategory, setActiveCategory] = useState<string>(() => {
-    const match = window.location.pathname.match(/^\/menu\/([^/]+)/);
+    const match = window.location.pathname.replace(/^\/guest(?=\/|$)/, '').match(/^\/menu\/([^/]+)/);
     const slug = match?.[1]?.toLowerCase();
     if (!slug || slug === 'inicio') return 'Inicio';
     if (slug === 'destacados') return 'Destacados';
@@ -228,6 +229,7 @@ const App: React.FC = () => {
 
   const batchChannelRef = useRef<any>(null);
   const cartChannelRef = useRef<any>(null);
+  const cartReloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const guestsChannelRef = useRef<any>(null);
   const activeGuestIdRef = useRef<string>('1');
   const prevPathRef = useRef<string | null>(null);
@@ -530,16 +532,24 @@ const App: React.FC = () => {
       .channel(`cart-sync-${activeOrderId}`)
       .on('postgres_changes', 
         { event: '*', schema: 'public', table: 'order_items', filter: `order_id=eq.${activeOrderId}` }, 
-        async (payload) => {
-          console.log('[App] Cambio detectado en order_items:', payload.eventType, payload.new);
-          // Recargar todos los items desde la BD cuando hay cambios
-          await fetchOrderItemsFromDB(activeOrderId);
+        () => {
+          // Recargar todos los items desde la BD cuando hay cambios. Varias filas pueden cambiar de golpe (p. ej. al
+          // calificar los platos se actualizan una por una): se agrupan para hacer una sola recarga, no una por fila.
+          if (cartReloadTimerRef.current) clearTimeout(cartReloadTimerRef.current);
+          cartReloadTimerRef.current = setTimeout(() => {
+            cartReloadTimerRef.current = null;
+            void fetchOrderItemsFromDB(activeOrderId);
+          }, 400);
         }
       )
       .subscribe();
 
     cartChannelRef.current = channel;
     return () => { 
+      if (cartReloadTimerRef.current) {
+        clearTimeout(cartReloadTimerRef.current);
+        cartReloadTimerRef.current = null;
+      }
       if (cartChannelRef.current) {
         supabase.removeChannel(cartChannelRef.current);
       }
@@ -1113,7 +1123,7 @@ const App: React.FC = () => {
           await fetchOrderGuests(activeOrderId);
           // Si el host definió la división (individual_amount), redirigir a no-host a su pantalla individual
           if (payload?.new?.individual_amount != null) {
-            const path = window.location.pathname;
+            const path = window.location.pathname.replace(/^\/guest(?=\/|$)/, '') || '/';
             const preSplitPaths = path === '/order-summary' || path === '/progress' || path.startsWith('/menu');
             if (!preSplitPaths) return;
             const currentId = getActiveGuestId();
@@ -1405,7 +1415,7 @@ const App: React.FC = () => {
   }, [supabase, activeOrderId, currentTable, guests.length]);
 
   useEffect(() => {
-  const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/split-status', '/checkout', '/individual-share', '/mp-payment', '/transfer-payment', '/cash-payment', '/tip', '/feedback', '/confirmation', '/guest-selection', '/join-table'];
+  const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/split-status', '/checkout', '/individual-share', '/mp-payment', '/transfer-payment', '/cash-payment', '/payment-success', '/tip', '/feedback', '/confirmation', '/guest-selection', '/join-table'];
     let cancelled = false;
     
     const initApp = async () => {
@@ -1565,7 +1575,7 @@ const App: React.FC = () => {
           await fetchOrderItemsFromDB(orderIdForLoad);
           
           const currentPath = location.pathname;
-          const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/split-status', '/checkout', '/individual-share', '/mp-payment', '/transfer-payment', '/cash-payment', '/tip', '/feedback', '/confirmation', '/guest-selection'];
+          const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/split-status', '/checkout', '/individual-share', '/mp-payment', '/transfer-payment', '/cash-payment', '/payment-success', '/tip', '/feedback', '/confirmation', '/guest-selection'];
           
           if (!routesRequiringSession.includes(currentPath) && !isGuestEntryPath(currentPath)) {
             const preserveQuery = location.search || '';
@@ -1801,6 +1811,36 @@ const App: React.FC = () => {
     }
 
     try {
+      // Mercado Pago: el comensal (anónimo) no puede escribir en `payments`. Lo registra el servidor:
+      // el webhook de MP (pagos reales) o mercadopago-confirm-payment (pagos simulados de sandbox).
+      if (paymentMethod === 'mercadopago' && mpTransactionId) {
+        let confirmed = false;
+        for (let intento = 0; intento < 10 && !confirmed; intento++) {
+          const { data, error } = await supabase.functions.invoke('mercadopago-confirm-payment', {
+            body: {
+              order_id: activeOrderId,
+              guest_id: guestId,
+              charge_id: chargeId || undefined,
+              amount: paymentAmount,
+              mp_transaction_id: mpTransactionId,
+            },
+          });
+          if (error || data?.error) {
+            console.error("[DineSplit] Error al confirmar el pago en el servidor:", error || data?.error);
+            break;
+          }
+          if (data?.ok) {
+            confirmed = true;
+            break;
+          }
+          // Todavía no llegó la notificación de Mercado Pago: se reintenta unos segundos
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+        await fetchOrderGuests(activeOrderId);
+        await fetchOrderGuestCharges(activeOrderId);
+        return confirmed;
+      }
+
       if (mpTransactionId) {
         const { data: existingPayment } = await supabase
           .from('payments')
@@ -2120,6 +2160,24 @@ const App: React.FC = () => {
           throw new Error('Mercado Pago del restaurante requiere reconexión. Pedile al local que vuelva a autorizar en Admin → Settings.');
         }
 
+        // Nunca dejar pagar dos veces la misma división: se consulta el estado actual antes de abrir el pago
+        // (el servidor lo vuelve a verificar al cobrar, en mercadopago-pay).
+        let yaPagada = false;
+        if (paymentData.chargeId) {
+          const { data: cargo } = await supabase.from('order_guest_charges').select('status').eq('id', paymentData.chargeId).maybeSingle();
+          yaPagada = cargo?.status === 'paid';
+        } else {
+          const { data: comensal } = await supabase.from('order_guests').select('paid').eq('id', guestId).maybeSingle();
+          yaPagada = comensal?.paid === true;
+        }
+        if (yaPagada) {
+          await fetchOrderGuests(activeOrderId);
+          await fetchOrderGuestCharges(activeOrderId);
+          alert('Esta división ya está pagada. No se puede pagar dos veces.');
+          navigate('/split-status');
+          return;
+        }
+
         setPaymentAmount(amount);
         setPaymentChargeId(paymentData.chargeId || null);
         try {
@@ -2242,6 +2300,7 @@ const App: React.FC = () => {
       '/mp-payment': 'MP_PAYMENT',
       '/transfer-payment': 'TRANSFER_PAYMENT',
       '/cash-payment': 'CASH_PAYMENT',
+      '/payment-success': 'PAYMENT_SUCCESS',
       '/tip': 'TIP',
       '/feedback': 'FEEDBACK',
       '/confirmation': 'CONFIRMATION'
@@ -2269,6 +2328,7 @@ const App: React.FC = () => {
       'MP_PAYMENT': '/mp-payment',
       'TRANSFER_PAYMENT': '/transfer-payment',
       'CASH_PAYMENT': '/cash-payment',
+      'PAYMENT_SUCCESS': '/payment-success',
       'TIP': '/tip',
       'FEEDBACK': '/feedback',
       'CONFIRMATION': '/confirmation'
@@ -2850,9 +2910,28 @@ const App: React.FC = () => {
               const gid = guestIdParam || activeGuestId;
               const amountToRegister = mpPaymentAmount > 0 ? mpPaymentAmount : paymentAmount;
               if (gid && amountToRegister) {
-                await handlePaymentSuccess(gid, amountToRegister, 'mercadopago', String(paymentId), mpPaymentChargeId);
+                const registrado = await handlePaymentSuccess(gid, amountToRegister, 'mercadopago', String(paymentId), mpPaymentChargeId);
                 setPaymentChargeId(null);
                 try { sessionStorage.removeItem('splitme_payment_charge_id'); } catch (e) {}
+                // Monto realmente cobrado (con descuentos de la cuenta): la pantalla de propina lo necesita porque,
+                // una vez pagado, el comensal ya no figura en la división y se recalcularía sin descuentos.
+                if (registrado) {
+                  try { sessionStorage.setItem(`splitme_paid_amount_${gid}`, String(amountToRegister)); } catch (e) {}
+                }
+                // Comprobante: se muestra en la pantalla de pago exitoso (/payment-success)
+                const receipt: PaymentReceipt = {
+                  ok: Boolean(registrado),
+                  amount: amountToRegister,
+                  method: 'mercadopago',
+                  reference: String(paymentId),
+                  guestName: guests.find(g => g.id === gid)?.name ?? null,
+                  restaurantName: restaurant?.name ?? null,
+                  tableNumber: currentTable?.table_number ?? null,
+                  paidAt: new Date().toISOString(),
+                };
+                try { sessionStorage.setItem(RECEIPT_STORAGE_KEY, JSON.stringify(receipt)); } catch (e) {}
+                navigate('/payment-success');
+                return;
               }
               navigate('/tip');
             }}
@@ -2913,6 +2992,13 @@ const App: React.FC = () => {
             restaurant={restaurant}
           />
         } />
+        <Route path="/payment-success" element={(() => {
+          let receipt: PaymentReceipt | null = null;
+          try { receipt = JSON.parse(sessionStorage.getItem(RECEIPT_STORAGE_KEY) || 'null'); } catch (e) { receipt = null; }
+          return receipt
+            ? <PaymentSuccessView receipt={receipt} onContinue={() => navigate('/tip')} />
+            : <Navigate to="/tip" replace />;
+        })()} />
         <Route path="/tip" element={
           <TipView
             onNext={() => navigate('/feedback')}
@@ -2921,6 +3007,10 @@ const App: React.FC = () => {
             menuItems={menuItems}
             guestPaidAmount={(() => {
               const targetGuestId = guestIdParam || getActiveGuestId() || activeGuestId;
+              try {
+                const stored = Number(sessionStorage.getItem(`splitme_paid_amount_${targetGuestId}`));
+                if (Number.isFinite(stored) && stored > 0) return stored;
+              } catch (e) { /* sin sessionStorage */ }
               const targetGuest = guests.find(g => g.id === targetGuestId);
               if (targetGuest?.individualAmount != null) return targetGuest.individualAmount;
               const guestShare = activeSplitData?.find(s => s.id === targetGuestId);

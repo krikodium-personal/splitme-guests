@@ -11,7 +11,7 @@ export default defineConfig(({ mode }) => {
     const deploymentId = process.env.VERCEL_DEPLOYMENT_ID || env.VITE_DEPLOYMENT_ID || '';
     const vercelEnv = process.env.VERCEL_ENV || env.VITE_VERCEL_ENV || '';
     return {
-      base: '/',
+      base: '/guest/',
       server: {
         port: 3001,
         host: '127.0.0.1',

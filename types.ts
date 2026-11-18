@@ -14,6 +14,7 @@ export type AppView =
   | 'TRANSFER_PAYMENT'
   | 'CASH_PAYMENT'
   | 'CHECKOUT'
+  | 'PAYMENT_SUCCESS'
   | 'TIP'
   | 'FEEDBACK'
   | 'CONFIRMATION';

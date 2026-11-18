@@ -21,6 +21,20 @@ type MercadoPagoPaymentBrickProps = {
 
 const mpInitRef = { publicKey: '' as string };
 
+// Una sola consulta de configuración en vuelo por pago. Si el componente pide la configuración dos veces casi a la vez,
+// el servidor refresca el token OAuth de MP en paralelo y una de las llamadas falla con 500 (el refresh rota el token).
+const brickConfigInflight = new Map<string, Promise<{ data: any; error: any }>>();
+function fetchBrickConfig(key: string, body: Record<string, unknown>) {
+  let pending = brickConfigInflight.get(key);
+  if (!pending) {
+    pending = Promise.resolve(supabase.functions.invoke('mercadopago-create-brick-config', { body })).finally(() => {
+      setTimeout(() => brickConfigInflight.delete(key), 3000);
+    });
+    brickConfigInflight.set(key, pending);
+  }
+  return pending;
+}
+
 /** @see @mercadopago/sdk-react README — initMercadoPago('YOUR_PUBLIC_KEY') antes del Brick */
 function ensureMpInit(publicKey: string) {
   if (mpInitRef.publicKey === publicKey) return;
@@ -54,6 +68,12 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
   const configSessionRef = useRef<string | null>(null);
 
   onErrorRef.current = onError;
+  // Los callbacks del padre cambian de identidad en cada render (p. ej. por eventos en tiempo real). Si llegaran al
+  // <Payment> como props nuevas, el formulario de Mercado Pago se reiniciaría solo mientras el comensal lo completa.
+  const onApprovedRef = useRef(onApproved);
+  const onPendingRef = useRef(onPending);
+  onApprovedRef.current = onApproved;
+  onPendingRef.current = onPending;
 
   useEffect(() => {
     const sessionKey = `${restaurantId}|${orderId}|${guestId}|${chargeId || ''}|${amount}`;
@@ -70,15 +90,13 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
 
     (async () => {
       try {
-        const { data, error } = await supabase.functions.invoke('mercadopago-create-brick-config', {
-          body: {
-            restaurant_id: restaurantId,
-            order_id: orderId,
-            guest_id: guestId,
-            charge_id: chargeId,
-            amount,
-            description,
-          },
+        const { data, error } = await fetchBrickConfig(sessionKey, {
+          restaurant_id: restaurantId,
+          order_id: orderId,
+          guest_id: guestId,
+          charge_id: chargeId,
+          amount,
+          description,
         });
 
         if (cancelled) return;
@@ -142,7 +160,7 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
 
   const onSubmit = useCallback(async ({ formData }: { formData: Record<string, unknown> }) => {
     try {
-      const { data, error } = await supabase.functions.invoke('mercadopago-create-payment', {
+      const { data, error } = await supabase.functions.invoke('mercadopago-pay', {
         body: {
           restaurant_id: restaurantId,
           order_id: orderId,
@@ -161,11 +179,11 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
       }
 
       if (data.status === 'approved') {
-        onApproved(data.id);
+        onApprovedRef.current(data.id);
         return;
       }
       if (data.status === 'in_process' || data.status === 'pending') {
-        onPending?.();
+        onPendingRef.current?.();
         return;
       }
 
@@ -175,7 +193,12 @@ const MercadoPagoPaymentBrick: React.FC<MercadoPagoPaymentBrickProps> = ({
       onErrorRef.current(message);
       throw err;
     }
-  }, [restaurantId, orderId, guestId, chargeId, amount, preferenceId, onApproved, onPending]);
+  }, [restaurantId, orderId, guestId, chargeId, amount, preferenceId]);
+
+  const handleReady = useCallback(() => {}, []);
+  const handleError = useCallback((err: { message?: string } | undefined) => {
+    onErrorRef.current(err?.message || 'Error en el formulario de pago');
+  }, []);
 
 async function resolveMpInvokeError(
   error: unknown,
@@ -234,8 +257,8 @@ async function resolveMpInvokeError(
         initialization={initialization}
         customization={customization}
         onSubmit={onSubmit}
-        onReady={() => {}}
-        onError={(err) => onErrorRef.current(err?.message || 'Error en el formulario de pago')}
+        onReady={handleReady}
+        onError={handleError}
       />
       {sandboxMode && <TestCardPanel />}
     </div>
