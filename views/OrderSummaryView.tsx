@@ -234,7 +234,9 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
   const servedRemaining = Math.max(0, withBillDiscount(servedTotal) - alreadyPaidTotal);
   const allRemaining = Math.max(0, payableGrandTotal - alreadyPaidTotal);
   // Todo servido, nada enviado en curso y lo acumulado ya está pagado: no queda nada por cobrar
-  const allServedAndPaid = confirmedItems.length > 0 && unservedItems.length === 0 && alreadyPaidTotal > 0 && allRemaining <= 0.01;
+  // Lo acumulado ya está pagado en su totalidad (aunque haya platos sin servir): no queda nada por cobrar ni dividir
+  const allPaid = confirmedItems.length > 0 && alreadyPaidTotal > 0 && allRemaining <= 0.01;
+  const allServedAndPaid = allPaid && unservedItems.length === 0;
   const pendingTotal = pendingItems.reduce((sum, item) => {
     const menuItem = menuItems.find(m => m.id === item.itemId);
     return sum + (item.unitPrice ?? menuItem?.price ?? 0) * item.quantity;
@@ -611,9 +613,9 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
         </div>
         {(unservedItems.length > 0 || alreadyPaidTotal > 0) && (
           <p className="px-2 -mt-1 text-xs text-text-secondary leading-snug">
-            {alreadyPaidTotal > 0 && <>Ya pagado: <span className="font-bold text-white price-amount">${formatPrice(alreadyPaidTotal)}</span>{unservedItems.length > 0 ? ' · ' : ''}</>}
-            {unservedItems.length > 0 && <>Servido: <span className="font-bold text-white price-amount">${formatPrice(withBillDiscount(servedTotal))}</span></>}
-            {unservedItems.length > 0 && <>{' · '}Falta servir: <span className="font-bold text-white price-amount">${formatPrice(Math.max(0, payableGrandTotal - withBillDiscount(servedTotal)))}</span> (se paga cuando llegue a la mesa)</>}
+            {alreadyPaidTotal > 0 && <>Ya pagado: <span className="font-bold text-white price-amount">${formatPrice(alreadyPaidTotal)}</span>{unservedItems.length > 0 && !allPaid ? ' · ' : ''}</>}
+            {unservedItems.length > 0 && !allPaid && <>Servido: <span className="font-bold text-white price-amount">${formatPrice(withBillDiscount(servedTotal))}</span></>}
+            {unservedItems.length > 0 && !allPaid && <>{' · '}Falta servir: <span className="font-bold text-white price-amount">${formatPrice(Math.max(0, payableGrandTotal - withBillDiscount(servedTotal)))}</span> (se paga cuando llegue a la mesa)</>}
           </p>
         )}
         {billNudge && (
@@ -638,7 +640,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                 <span>Cerrar la mesa</span>
               </button>
             </>
-          ) : confirmedItems.length > 0 && (isCurrentUserHost ? (
+          ) : allPaid ? null : confirmedItems.length > 0 && (isCurrentUserHost ? (
             <button onClick={() => {
               setKeepOrderingIntent(false);
               if (pendingItems.length > 0) setShowUnsentProductsModal(true);
