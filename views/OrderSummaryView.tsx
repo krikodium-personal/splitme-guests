@@ -85,6 +85,8 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
   const [showUnsentProductsModal, setShowUnsentProductsModal] = useState(false);
   const [discardingUnsent, setDiscardingUnsent] = useState(false);
   const [showUnservedModal, setShowUnservedModal] = useState(false);
+  // El comensal ya eligió «seguir pidiendo» en el modal anterior: el siguiente modal no le ofrece cerrar la mesa
+  const [keepOrderingIntent, setKeepOrderingIntent] = useState(false);
   const [itemToRemoveFromBatch, setItemToRemoveFromBatch] = useState<OrderItem | null>(null);
 
   // Debug: Log waiter data
@@ -638,6 +640,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
             </>
           ) : confirmedItems.length > 0 && (isCurrentUserHost ? (
             <button onClick={() => {
+              setKeepOrderingIntent(false);
               if (pendingItems.length > 0) setShowUnsentProductsModal(true);
               else proceedToPay();
             }} className="w-full h-14 rounded-2xl font-black flex items-center justify-center gap-2 transition-all bg-primary hover:bg-primary-dark active:scale-[0.98] text-black shadow-xl shadow-primary/20">
@@ -702,6 +705,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                   disabled={discardingUnsent}
                   onClick={() => {
                     try { sessionStorage.setItem('splitme_keep_ordering', '1'); } catch (e) {}
+                    setKeepOrderingIntent(true);
                     setShowUnsentProductsModal(false);
                     proceedToPay();
                   }}
@@ -778,6 +782,24 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                     : 'Ya pagaste todo lo servido. No hay nada para pagar ahora.'}
                 </p>
               </div>
+              {keepOrderingIntent ? (
+                <div className="flex flex-col gap-2">
+                  <button
+                    disabled={allRemaining <= 0.01}
+                    onClick={() => {
+                      try { sessionStorage.setItem('splitme_keep_ordering', '1'); } catch (e) {}
+                      setShowUnservedModal(false);
+                      onPay?.('all');
+                    }}
+                    className="w-full min-h-14 px-4 py-3 bg-primary/10 text-primary border border-primary/40 rounded-2xl font-black text-base active:scale-[0.98] transition-all disabled:opacity-40 disabled:active:scale-100"
+                  >
+                    Pagar todo lo encargado y seguir pidiendo
+                  </button>
+                  <p className="px-1 text-xs text-text-secondary leading-snug">
+                    Pagás ahora todo lo encargado (<span className="price-amount">${formatPrice(allRemaining)}</span>), incluso lo que todavía no llegó, y la mesa sigue abierta para pedir más.
+                  </p>
+                </div>
+              ) : (
               <div className="flex flex-col gap-2">
                 <button
                   onClick={() => {
@@ -793,6 +815,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                   Pagás todo lo encargado que falta (<span className="price-amount">${formatPrice(allRemaining)}</span>), incluso lo que todavía no llegó a la mesa.
                 </p>
               </div>
+              )}
               <button
                 onClick={() => setShowUnservedModal(false)}
                 className="w-full h-14 bg-white/5 border border-white/10 text-white rounded-2xl font-bold active:scale-[0.98] transition-all"
