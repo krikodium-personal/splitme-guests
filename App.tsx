@@ -13,6 +13,7 @@ import GuestSelectionView from './views/GuestSelectionView';
 import IndividualShareView from './views/IndividualShareView';
 import TransferPaymentView from './views/TransferPaymentView';
 import CashPaymentView from './views/CashPaymentView';
+import ThanksView from './views/ThanksView';
 import CheckoutView from './views/CheckoutView';
 import ConfirmationView from './views/ConfirmationView';
 import FeedbackView from './views/FeedbackView';
@@ -158,6 +159,9 @@ async function enrichMenuItemsWithVariants(menuItemsData: any[], supabaseClient:
     return menuItemsData;
   }
 }
+
+/** El comensal eligió «Cerrar la mesa»: después de propina y calificación se muestra el agradecimiento final. */
+const isClosingTable = () => { try { return sessionStorage.getItem('splitme_closing_table') === '1'; } catch (e) { return false; } };
 
 const App: React.FC = () => {
   const navigate = useNavigate();
@@ -1457,7 +1461,7 @@ const App: React.FC = () => {
   }, [supabase, activeOrderId, currentTable, guests.length]);
 
   useEffect(() => {
-  const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/split-status', '/checkout', '/individual-share', '/mp-payment', '/transfer-payment', '/cash-payment', '/payment-success', '/tip', '/feedback', '/confirmation', '/guest-selection', '/join-table'];
+  const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/split-status', '/checkout', '/individual-share', '/mp-payment', '/transfer-payment', '/cash-payment', '/payment-success', '/tip', '/feedback', '/confirmation', '/thanks', '/guest-selection', '/join-table'];
     let cancelled = false;
     
     const initApp = async () => {
@@ -1617,7 +1621,7 @@ const App: React.FC = () => {
           await fetchOrderItemsFromDB(orderIdForLoad);
           
           const currentPath = location.pathname;
-          const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/split-status', '/checkout', '/individual-share', '/mp-payment', '/transfer-payment', '/cash-payment', '/payment-success', '/tip', '/feedback', '/confirmation', '/guest-selection'];
+          const routesRequiringSession = ['/menu', '/order-summary', '/progress', '/split-bill', '/split-status', '/checkout', '/individual-share', '/mp-payment', '/transfer-payment', '/cash-payment', '/payment-success', '/tip', '/feedback', '/confirmation', '/thanks', '/guest-selection'];
           
           if (!routesRequiringSession.includes(currentPath) && !isGuestEntryPath(currentPath)) {
             const preserveQuery = location.search || '';
@@ -2345,7 +2349,8 @@ const App: React.FC = () => {
       '/payment-success': 'PAYMENT_SUCCESS',
       '/tip': 'TIP',
       '/feedback': 'FEEDBACK',
-      '/confirmation': 'CONFIRMATION'
+      '/confirmation': 'CONFIRMATION',
+      '/thanks': 'THANKS'
     };
     
     const view = viewMap[path] || (path.startsWith('/menu') ? 'MENU' : 'SCAN');
@@ -2373,7 +2378,8 @@ const App: React.FC = () => {
       'PAYMENT_SUCCESS': '/payment-success',
       'TIP': '/tip',
       'FEEDBACK': '/feedback',
-      'CONFIRMATION': '/confirmation'
+      'CONFIRMATION': '/confirmation',
+      'THANKS': '/thanks'
     };
     
     const route = routeMap[view] || '/scan';
@@ -2836,6 +2842,20 @@ const App: React.FC = () => {
             onRemoveItemFromBatch={handleRemoveItemFromBatch}
             onDiscardUnsent={handleDiscardUnsentItems}
             alreadyPaidTotal={paidChargesTotal}
+            onGoToMenu={() => navigateToView('MENU')}
+            onCloseTable={async () => {
+              try { sessionStorage.setItem('splitme_closing_table', '1'); } catch (e) {}
+              // Cierra la orden también en el admin (y libera la mesa). Si falla, el flujo sigue y el mesero puede cerrarla.
+              if (supabase && activeOrderId && restaurant?.id) {
+                try {
+                  const { data, error } = await supabase.rpc('close_order_as_cerrado', { order_id: activeOrderId, restaurant_id_param: restaurant.id });
+                  if (error || (data && (data as any).error)) console.warn('[DineSplit] No se pudo cerrar la orden:', error || (data as any).error);
+                } catch (e) {
+                  console.warn('[DineSplit] Error al cerrar la orden:', e);
+                }
+              }
+              navigate('/tip');
+            }}
             menuItems={menuItems} 
             categories={categories} 
             tableNumber={currentTable?.table_number} 
@@ -3117,12 +3137,28 @@ const App: React.FC = () => {
         } />
         <Route path="/feedback" element={
           <FeedbackView
-            onNext={() => navigate('/confirmation')}
-            onSkip={() => navigate('/confirmation')}
+            onNext={() => navigate(isClosingTable() ? '/thanks' : '/confirmation')}
+            onSkip={() => navigate(isClosingTable() ? '/thanks' : '/confirmation')}
             cart={cartForSplit}
             menuItems={menuItems}
             waiter={currentWaiter}
             restaurant={restaurant}
+          />
+        } />
+        <Route path="/thanks" element={
+          <ThanksView
+            restaurant={restaurant}
+            onBackToMenu={() => {
+              try { sessionStorage.removeItem('splitme_closing_table'); } catch (e) {}
+              // La mesa ya se cerró: se empieza una sesión nueva en la misma mesa (sin el comensal anterior).
+              const accessCode = restaurant?.access_code || restaurant?.id;
+              const tableNumber = currentTable?.table_number;
+              clearSession();
+              const base = import.meta.env.BASE_URL || '/';
+              window.location.href = accessCode && tableNumber
+                ? `${base}?res=${encodeURIComponent(accessCode)}&table=${encodeURIComponent(String(tableNumber))}`
+                : `${base}scan`;
+            }}
           />
         } />
         <Route path="/confirmation" element={

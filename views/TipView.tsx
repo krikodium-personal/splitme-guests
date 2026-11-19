@@ -15,7 +15,7 @@ interface TipViewProps {
   restaurant?: any;
 }
 
-const TipView: React.FC<TipViewProps> = ({ onNext, onSkip, cart, menuItems, guestPaidAmount, currentGuestId, waiter }) => {
+const TipView: React.FC<TipViewProps> = ({ onNext, onSkip, cart, menuItems, guestPaidAmount, currentGuestId, waiter, restaurant }) => {
   const [tipPercentage, setTipPercentage] = useState<number>(10);
 
   const orderTotal = useMemo(() => {
@@ -51,8 +51,11 @@ const TipView: React.FC<TipViewProps> = ({ onNext, onSkip, cart, menuItems, gues
     }
   };
 
-  const waiterAlias = waiter?.alias_tip || waiter?.alias || '';
-  const waiterCbu = waiter?.cbu_tip || waiter?.cbu || '';
+  // Con alias unificado, la propina va a la cuenta del restaurante y se reparte entre el equipo
+  const isPooled = restaurant?.tip_mode === 'pooled' && !!restaurant?.tip_pool_alias;
+  const poolAlias = isPooled ? String(restaurant.tip_pool_alias) : '';
+  const waiterAlias = isPooled ? poolAlias : (waiter?.alias_tip || waiter?.alias || '');
+  const waiterCbu = isPooled ? '' : (waiter?.cbu_tip || waiter?.cbu || '');
 
   return (
     <div className="flex flex-col flex-1 h-screen bg-background-dark text-white overflow-y-auto no-scrollbar">
@@ -123,12 +126,12 @@ const TipView: React.FC<TipViewProps> = ({ onNext, onSkip, cart, menuItems, gues
         </div>
 
         {/* Datos del mesero para transferencia o efectivo */}
-        {waiter && tipPercentage > 0 && (
+        {(waiter || isPooled) && tipPercentage > 0 && (
           <div className="mb-8 animate-fade-in-up" style={{ animationDelay: '0.2s' }}>
             <div className="flex items-center gap-2 mb-4 px-1">
               <span className="material-symbols-outlined text-primary">person</span>
               <h3 className="text-xs font-black uppercase tracking-[0.2em] text-text-secondary">
-                Datos de {waiter?.nickname || waiter?.full_name || 'tu mesero'}
+                {isPooled ? `Propinas del equipo de ${restaurant?.name || 'el restaurante'}` : `Datos de ${waiter?.nickname || waiter?.full_name || 'tu mesero'}`}
               </h3>
             </div>
             <div className="bg-surface-dark rounded-[2rem] p-6 border border-white/5 flex flex-col items-center gap-5 shadow-lg">
@@ -136,7 +139,7 @@ const TipView: React.FC<TipViewProps> = ({ onNext, onSkip, cart, menuItems, gues
                 <img
                   alt={waiter?.nickname || 'Mesero'}
                   className="size-20 rounded-full object-cover border-4 border-primary/30 relative z-10"
-                  src={waiter?.profile_photo_url || 'https://lh3.googleusercontent.com/aida-public/AB6AXuDyiwOtsINFh8RspVDg_Wx4QKXthNxCS7ZJlDSZvL6ADwFD3WRUpKHGhrscxV9dcR7w7guM4E-iFCNXx-tDgHs1BrbfGjolJoASehM-SEc4Pe6bKEx7zjcF4WAcON7mbdWJCepEdMPkBZ36lB_4tPTsJeNzTNqRNGKgusVb3U_X0WGEAgij6Y48HIunhj_BC8lxMdsB5ublmAltnyYerUKa_NkT8aybLFkaaRkQGQ_irdtS2ZQwrNGNj6b1ZrWY1HRClBeExJL615bG'}
+                  src={(isPooled && restaurant?.logo_url) ? restaurant.logo_url : (waiter?.profile_photo_url || 'https://lh3.googleusercontent.com/aida-public/AB6AXuDyiwOtsINFh8RspVDg_Wx4QKXthNxCS7ZJlDSZvL6ADwFD3WRUpKHGhrscxV9dcR7w7guM4E-iFCNXx-tDgHs1BrbfGjolJoASehM-SEc4Pe6bKEx7zjcF4WAcON7mbdWJCepEdMPkBZ36lB_4tPTsJeNzTNqRNGKgusVb3U_X0WGEAgij6Y48HIunhj_BC8lxMdsB5ublmAltnyYerUKa_NkT8aybLFkaaRkQGQ_irdtS2ZQwrNGNj6b1ZrWY1HRClBeExJL615bG')}
                 />
               </div>
               <div className="w-full space-y-3">
@@ -152,6 +155,7 @@ const TipView: React.FC<TipViewProps> = ({ onNext, onSkip, cart, menuItems, gues
                       </button>
                     </div>
                     <p className="text-lg font-black break-all">{waiterAlias}</p>
+                    {isPooled && <p className="text-text-secondary text-xs mt-2">Las propinas se reparten entre todo el equipo.</p>}
                   </div>
                 )}
                 {waiterCbu && !waiterAlias && (

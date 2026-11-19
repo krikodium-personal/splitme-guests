@@ -17,7 +17,8 @@ export type AppView =
   | 'PAYMENT_SUCCESS'
   | 'TIP'
   | 'FEEDBACK'
-  | 'CONFIRMATION';
+  | 'CONFIRMATION'
+  | 'THANKS';
 
 export interface Guest {
   id: string;

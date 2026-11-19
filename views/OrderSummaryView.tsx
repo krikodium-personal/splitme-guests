@@ -56,6 +56,10 @@ interface OrderSummaryViewProps {
   onEditItem: (cartItem: OrderItem) => void;
   onSendGroup: (groupKey: OrderGroupKey) => void;
   onPay?: (scope: PaymentScope) => void;
+  /** Volver al menú de la misma mesa (cuando no queda nada por pagar). */
+  onGoToMenu?: () => void;
+  /** Terminar la visita (propina y cierre) cuando todo está servido y pagado. */
+  onCloseTable?: () => void;
   sendingGroup?: OrderGroupKey | null;
   onUpdateQuantity: (id: string, delta: number) => void;
   onRemoveItemFromBatch?: (cartItemId: string) => Promise<void>;
@@ -74,7 +78,7 @@ interface OrderSummaryViewProps {
 }
 
 const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({ 
-  guests, cart, batches, onBack, onSendGroup, onPay, sendingGroup = null, onUpdateQuantity, onRemoveItemFromBatch, onDiscardUnsent, alreadyPaidTotal = 0, menuItems, categories, currentGuestId, waiter, tableNumber, activeOrderId, restaurant, billDiscount
+  guests, cart, batches, onBack, onSendGroup, onPay, sendingGroup = null, onUpdateQuantity, onRemoveItemFromBatch, onDiscardUnsent, onGoToMenu, onCloseTable, alreadyPaidTotal = 0, menuItems, categories, currentGuestId, waiter, tableNumber, activeOrderId, restaurant, billDiscount
 }) => {
   const getItemImageUrl = (imageUrl?: string | null) => (imageUrl || '').trim() || restaurant?.logo_url || '';
   const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
@@ -227,6 +231,8 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
   // Lo que realmente falta cobrar en cada alcance, descontando lo ya pagado en rondas anteriores
   const servedRemaining = Math.max(0, withBillDiscount(servedTotal) - alreadyPaidTotal);
   const allRemaining = Math.max(0, payableGrandTotal - alreadyPaidTotal);
+  // Todo servido, nada enviado en curso y lo acumulado ya está pagado: no queda nada por cobrar
+  const allServedAndPaid = confirmedItems.length > 0 && unservedItems.length === 0 && alreadyPaidTotal > 0 && allRemaining <= 0.01;
   const pendingTotal = pendingItems.reduce((sum, item) => {
     const menuItem = menuItems.find(m => m.id === item.itemId);
     return sum + (item.unitPrice ?? menuItem?.price ?? 0) * item.quantity;
@@ -542,20 +548,19 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                         return (
                           <div key={item.id} className="flex flex-col gap-2">
                             <div className="flex items-start gap-4">
-                              <div className="size-14 rounded-xl bg-cover bg-center shrink-0 border border-white/5 bg-white/5" style={{ backgroundImage: getItemImageUrl(dish?.image_url) ? `url("${getItemImageUrl(dish?.image_url).replace(/"/g, '\\"')}")` : undefined }}></div>
+                              <div className="relative shrink-0">
+                                <div className="size-14 rounded-xl bg-cover bg-center border border-white/5 bg-white/5" style={{ backgroundImage: getItemImageUrl(dish?.image_url) ? `url("${getItemImageUrl(dish?.image_url).replace(/"/g, '\\"')}")` : undefined }}></div>
+                                <span className="absolute -top-1.5 -right-1.5 min-w-5 h-5 px-1 rounded-full bg-primary text-black text-[11px] font-black flex items-center justify-center border-2 border-surface-dark shadow">{item.quantity}</span>
+                              </div>
                               <div className="flex-1 min-w-0">
                                 <p className="text-sm font-bold mb-1">{dish?.name}</p>
                                 {replaceInfo && (
                                   <p className="text-[10px] uppercase mb-1"><span className="text-white/60">{replaceInfo.groupName}: </span><span className="font-bold text-white">{replaceInfo.optionNames.join(', ')}</span></p>
                                 )}
-                                <div className="flex items-center gap-3 text-xs text-white/60">
-                                  <span className="font-medium">Cantidad: {item.quantity}</span>
-                                  <span className="text-white/40">×</span>
-                                  <span className="font-black price-amount">${formatPrice(unitPrice)}</span>
-                                </div>
                               </div>
                               <div className="text-right shrink-0">
                                 <p className="text-[15px] font-semibold price-amount">${formatPrice(itemTotal)}</p>
+                                <p className="text-[11px] text-white/50 price-amount">${formatPrice(unitPrice)} c/u</p>
                                 {listUnitPrice != null && (
                                   <p className="text-[11px] text-white/35 line-through price-amount">${formatPrice(listUnitPrice * item.quantity)}</p>
                                 )}
@@ -620,7 +625,18 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
         )}
         
         <div className="flex flex-col gap-3">
-          {confirmedItems.length > 0 && (isCurrentUserHost ? (
+          {confirmedItems.length > 0 && isCurrentUserHost && allServedAndPaid ? (
+            <>
+              <button onClick={() => onGoToMenu?.()} className="w-full h-14 rounded-2xl font-black flex items-center justify-center gap-2 transition-all bg-primary hover:bg-primary-dark active:scale-[0.98] text-black shadow-xl shadow-primary/20">
+                <span className="material-symbols-outlined font-black">restaurant_menu</span>
+                <span>Volver al menú</span>
+              </button>
+              <button onClick={() => onCloseTable?.()} className="w-full h-12 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all bg-white/5 border border-white/10 text-white active:scale-[0.98]">
+                <span className="material-symbols-outlined">door_front</span>
+                <span>Cerrar la mesa</span>
+              </button>
+            </>
+          ) : confirmedItems.length > 0 && (isCurrentUserHost ? (
             <button onClick={() => {
               if (pendingItems.length > 0) setShowUnsentProductsModal(true);
               else proceedToPay();
