@@ -707,14 +707,15 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                     try { sessionStorage.setItem('splitme_keep_ordering', '1'); } catch (e) {}
                     setKeepOrderingIntent(true);
                     setShowUnsentProductsModal(false);
-                    proceedToPay();
+                    // Ya eligió pagar y seguir: se paga todo lo enviado (aunque no haya llegado) sin preguntar de nuevo
+                    onPay?.('all');
                   }}
                   className="w-full min-h-14 px-4 py-3 bg-primary text-black rounded-2xl font-black text-base shadow-xl shadow-primary/20 active:scale-[0.98] transition-all disabled:opacity-60"
                 >
                   Pagar esta parte y seguir pidiendo
                 </button>
                 <p className="px-1 text-xs text-text-secondary leading-snug">
-                  Pagás lo que se consumió hasta ahora. Tus productos sin enviar se conservan: podés enviarlos después y pagarlos al final. Del total se va restando lo pagado y sumando lo que pidas.
+                  Pagás todo lo que ya enviaste a cocina. Tus productos sin enviar se conservan: podés enviarlos después y pagarlos al final. Del total se va restando lo pagado y sumando lo que pidas.
                 </p>
               </div>
               <div className="flex flex-col gap-2">
@@ -728,7 +729,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                       if (ok) {
                         try { sessionStorage.removeItem('splitme_keep_ordering'); } catch (e) {}
                         setShowUnsentProductsModal(false);
-                        proceedToPay();
+                        onPay?.('all');
                       }
                     } finally {
                       setDiscardingUnsent(false);
