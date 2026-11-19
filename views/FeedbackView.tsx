@@ -26,6 +26,8 @@ const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuI
   const [comment, setComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  // La calificación nunca es obligatoria: "Enviar" solo se habilita si puso al menos una estrella; si no, avanza con "Omitir"
+  const hasAnyRating = restaurantRating > 0 || waiterRating > 0 || Object.values(itemRatings).some(v => v > 0);
 
   // Agrupar items únicos para la interfaz
   const uniqueItems = Array.from(new Set(cart.map(i => i.itemId)))
@@ -141,10 +143,7 @@ const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuI
   };
 
   const handleSendFeedback = async () => {
-    if (showGeneral && restaurantRating === 0) {
-      alert("Por favor, califica al menos la experiencia general.");
-      return;
-    }
+    if (!hasAnyRating) return;
 
     setIsSubmitting(true);
     try {
@@ -153,14 +152,14 @@ const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuI
       const orderId = orderIdProp || (cart[0] as any)?.order_id || null;
 
       // 2. INSERCIÓN EN 'reviews' (solo cuando se califica la experiencia: al cerrar la mesa)
-      if (showGeneral) {
+      if (showGeneral && (restaurantRating > 0 || waiterRating > 0 || comment.trim())) {
         const { error: reviewError } = await supabase
           .from('reviews')
           .insert({
             restaurant_id: restaurant?.id,
             order_id: orderId,
             waiter_id: waiterId,
-            restaurant_rating: restaurantRating,
+            restaurant_rating: restaurantRating > 0 ? restaurantRating : null,
             waiter_rating: waiterRating > 0 ? waiterRating : null,
             comment: comment.trim() || null
           });
@@ -337,9 +336,9 @@ const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuI
       <div className="fixed bottom-0 left-0 w-full p-4 bg-gradient-to-t from-background-dark via-background-dark to-transparent pt-12 pb-8 z-20">
         <button 
           onClick={handleSendFeedback} 
-          disabled={isSubmitting || (showGeneral && restaurantRating === 0)}
+          disabled={isSubmitting || !hasAnyRating}
           className={`w-full h-16 rounded-2xl font-black text-lg flex items-center justify-center gap-3 transition-all shadow-2xl ${
-            (isSubmitting || (showGeneral && restaurantRating === 0)) ? 'bg-white/5 text-white/20 cursor-not-allowed' : 'bg-primary text-black shadow-primary/20 hover:scale-[1.02] active:scale-[0.98]'
+            (isSubmitting || !hasAnyRating) ? 'bg-white/5 text-white/20 cursor-not-allowed' : 'bg-primary text-black shadow-primary/20 hover:scale-[1.02] active:scale-[0.98]'
           }`}
         >
           {isSubmitting ? (
