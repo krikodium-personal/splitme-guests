@@ -160,6 +160,9 @@ async function enrichMenuItemsWithVariants(menuItemsData: any[], supabaseClient:
   }
 }
 
+/** El comensal eligió pagar su parte y seguir pidiendo: la sesión de la mesa no se borra al pagar. */
+const isKeepOrdering = () => { try { return sessionStorage.getItem('splitme_keep_ordering') === '1'; } catch (e) { return false; } };
+
 /** El comensal eligió «Cerrar la mesa»: después de propina y calificación se muestra el agradecimiento final. */
 const isClosingTable = () => { try { return sessionStorage.getItem('splitme_closing_table') === '1'; } catch (e) { return false; } };
 
@@ -2075,7 +2078,8 @@ const App: React.FC = () => {
           clearMpReturn();
           try { sessionStorage.removeItem('splitme_payment_charge_id'); } catch (e) {}
           if (success) {
-            clearSession();
+            // Si eligió seguir pidiendo, la sesión de la mesa se conserva
+            if (!isKeepOrdering()) clearSession();
             navigate('/tip');
           } else {
             alert("Hubo un error al registrar el pago. Por favor, contacta al restaurante.");
@@ -2083,7 +2087,8 @@ const App: React.FC = () => {
         });
       } else {
         clearMpReturn();
-        clearSession();
+        // Si eligió seguir pidiendo, la sesión de la mesa se conserva
+        if (!isKeepOrdering()) clearSession();
         navigate('/tip');
       }
       return;
@@ -2253,7 +2258,8 @@ const App: React.FC = () => {
       if (guestId) {
         await handlePaymentSuccess(guestId, paymentData.amount, paymentData.method, undefined, paymentData.chargeId || null);
       }
-      clearSession();
+      // Si eligió seguir pidiendo, la sesión de la mesa se conserva
+      if (!isKeepOrdering()) clearSession();
       navigateToView('CONFIRMATION'); 
     }
   };
