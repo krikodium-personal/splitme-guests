@@ -3015,7 +3015,9 @@ const App: React.FC = () => {
             guestId={guestIdParam || activeGuestId}
             orderId={activeOrderId || ''}
             chargeId={paymentChargeId || activeSplitData?.find(s => s.id === (guestIdParam || activeGuestId))?.charge_id || null}
-            externalPaid={guests.find(g => g.id === (guestIdParam || activeGuestId))?.paid || false}
+            externalPaid={(paymentChargeId || activeSplitData?.find(s => s.id === (guestIdParam || activeGuestId))?.charge_id)
+              ? false
+              : (guests.find(g => g.id === (guestIdParam || activeGuestId))?.paid || false)}
           />
         } />
         <Route path="/cash-payment" element={
@@ -3120,9 +3122,18 @@ const App: React.FC = () => {
               }
             }}
             onBackToStart={() => {
+              let keepOrdering = false;
+              try { keepOrdering = sessionStorage.getItem('splitme_keep_ordering') === '1'; } catch (e) {}
+              if (keepOrdering) {
+                // Pagó su parte pero la mesa sigue abierta: vuelve al menú de la misma mesa
+                try { sessionStorage.removeItem('splitme_keep_ordering'); } catch (e) {}
+                navigateToView('MENU');
+                return;
+              }
               clearSession();
               navigate('/scan');
             }}
+            keepOrdering={(() => { try { return sessionStorage.getItem('splitme_keep_ordering') === '1'; } catch (e) { return false; } })()}
             guests={guests} 
             splitData={confirmationSplitData}
             tableNumber={currentTable?.table_number}

@@ -17,12 +17,13 @@ interface ConfirmationViewProps {
  waiter?: any;
 }
 
-const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackToStart, guests = [], splitData, tableNumber, activeOrderId, currentGuestId, waiter }) => {
+const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackToStart, keepOrdering, guests = [], splitData, tableNumber, activeOrderId, currentGuestId, waiter }) => {
  const [loadedGuests, setLoadedGuests] = useState<Guest[]>(guests);
  const [isLoading, setIsLoading] = useState(false);
  const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
  const [waiterData, setWaiterData] = useState<any>(waiter);
  const [totalAmount, setTotalAmount] = useState<number>(0);
+ const [unservedAmount, setUnservedAmount] = useState<number>(0);
  const [localSplitData, setLocalSplitData] = useState<any[] | null>(splitData || null);
 
  // Debug: Log waiter data
@@ -40,10 +41,22 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
  try {
  const { data: orderRow } = await supabase
  .from('orders')
- .select('total_amount')
+ .select('total_amount, discount_percent')
  .eq('id', activeOrderId)
  .maybeSingle();
- setTotalAmount(Number(orderRow?.total_amount || 0));
+ const orderTotal = Number(orderRow?.total_amount || 0);
+ // Lo enviado que todavía no se sirvió no se cobra hasta que llegue a la mesa
+ const { data: batchRows } = await supabase
+ .from('order_batches')
+ .select('status, order_items(unit_price, quantity)')
+ .eq('order_id', activeOrderId);
+ const servedGross = (batchRows || [])
+ .filter((b: any) => (b.status || '').trim().toUpperCase() === 'SERVIDO')
+ .flatMap((b: any) => b.order_items || [])
+ .reduce((sum: number, it: any) => sum + (Number(it.unit_price) || 0) * (Number(it.quantity) || 1), 0);
+ const servedPayable = Math.min(orderTotal, Math.round(servedGross * (1 - (Number(orderRow?.discount_percent) || 0) / 100)));
+ setTotalAmount(servedPayable);
+ setUnservedAmount(Math.max(0, orderTotal - servedPayable));
  } catch (error) {
  console.error('[ConfirmationView] Error al cargar total_amount:', error);
  }
@@ -375,7 +388,7 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
  {allGuestsPaid ? (
  <>
  <div className="size-16 rounded-full bg-primary/20 flex items-center justify-center mb-4 ring-1 ring-primary/50 shadow-lg shadow-primary/20"><span className="material-symbols-outlined text-primary text-4xl filled" style={{ fontVariationSettings: "'wght' 600" }}>check</span></div>
- <h2 className="text-white tracking-tight text-[28px] font-bold leading-tight px-4 text-center">¡Cuenta Saldada!</h2>
+ <h2 className="text-white tracking-tight text-[28px] font-bold leading-tight px-4 text-center">{unservedAmount > 0 ? '¡Pago registrado!' : '¡Cuenta Saldada!'}</h2>
  </>
  ) : (
  <>
@@ -389,7 +402,8 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
  <div className="flex flex-wrap gap-3 px-4 py-3">
  <div className="flex min-w-[111px] flex-1 basis-[fit-content] flex-col gap-1 rounded-2xl bg-surface-dark border border-border-dark p-4 items-center text-center shadow-sm">
  <p className="text-white tracking-tight text-2xl font-bold leading-tight">${formatPrice(totalAmount)}</p>
- <div className="flex items-center gap-1.5"><span className="material-symbols-outlined text-text-secondary text-sm">receipt_long</span><p className="text-text-secondary text-text-secondary text-sm font-medium">Total Cuenta</p></div>
+ <div className="flex items-center gap-1.5"><span className="material-symbols-outlined text-text-secondary text-sm">receipt_long</span><p className="text-text-secondary text-text-secondary text-sm font-medium">{unservedAmount > 0 ? 'Total servido' : 'Total Cuenta'}</p></div>
+ {unservedAmount > 0 && <p className="text-text-secondary text-xs mt-1">Falta servir ${formatPrice(unservedAmount)}: se paga cuando llegue a la mesa</p>}
  </div>
  </div>
 
@@ -475,7 +489,7 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
  })} 
  className="w-full bg-primary hover:bg-primary-dark text-black font-bold text-lg h-14 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-primary/20 group"
  >
- <span>Ir al inicio</span>
+ <span>{keepOrdering ? 'Volver al menú' : 'Ir al inicio'}</span>
  <span className="material-symbols-outlined group-hover:translate-x-1 transition-transform">arrow_forward</span>
  </button>
  ) : (

@@ -22,65 +22,78 @@ const CashPaymentView: React.FC<CashPaymentViewProps> = ({
   const [isPaid, setIsPaid] = useState(false);
   const channelRef = useRef<any>(null);
 
-  // Suscripción Realtime para escuchar cambios en order_guests.paid
+  // El comensal queda marcado como pagado desde la primera ronda, así que el estado de pago
+  // se toma del cargo de la ronda actual (order_guest_charges). Solo si no hay cargo se usa order_guests (legado).
   useEffect(() => {
     if (!supabase || !guestId || !orderId) return;
 
     const PAID_SOUND_URL = 'https://hqaiuywzklrwywdhmqxw.supabase.co/storage/v1/object/public/sounds/pagado.wav';
+    let cancelled = false;
 
-    // Verificar estado inicial
-    const checkInitialPaidStatus = async () => {
-      const { data } = await supabase
-        .from('order_guests')
-        .select('paid, payment_method')
-        .eq('id', guestId)
-        .single();
-      
-      if (data?.paid) {
-        setIsPaid(true);
+    const confirmPaid = (paymentMethod?: string | null) => {
+      setIsPaid(true);
+      if (paymentMethod === 'efectivo' || paymentMethod === 'cash') {
+        try {
+          new Audio(PAID_SOUND_URL).play().catch(err => console.warn('[CashPaymentView] Error al reproducir sonido:', err));
+        } catch (error) {
+          console.warn('[CashPaymentView] Error al crear Audio:', error);
+        }
       }
     };
 
-    checkInitialPaidStatus();
+    const init = async () => {
+      const { data: charge } = await supabase
+        .from('order_guest_charges')
+        .select('id, status')
+        .eq('order_id', orderId)
+        .eq('guest_id', guestId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (cancelled) return;
 
-    // Suscripción Realtime
-    const channel = supabase
-      .channel(`cash-payment-${guestId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'order_guests',
-          filter: `id=eq.${guestId}`
-        },
-        (payload) => {
-          console.log('[CashPaymentView] Cambio detectado en order_guests:', payload);
-          if (payload.new.paid === true) {
-            setIsPaid(true);
-            
-            // Reproducir sonido cuando el pago es confirmado para pagos en efectivo
-            const paymentMethod = payload.new.payment_method;
-            if (paymentMethod === 'efectivo' || paymentMethod === 'cash') {
-              try {
-                const audio = new Audio(PAID_SOUND_URL);
-                audio.play().catch(err => {
-                  console.warn('[CashPaymentView] Error al reproducir sonido:', err);
-                });
-              } catch (error) {
-                console.warn('[CashPaymentView] Error al crear Audio:', error);
-              }
+      let channel;
+      if (charge?.id) {
+        if (charge.status === 'paid') setIsPaid(true);
+        channel = supabase
+          .channel(`cash-payment-charge-${charge.id}`)
+          .on(
+            'postgres_changes',
+            { event: 'UPDATE', schema: 'public', table: 'order_guest_charges', filter: `id=eq.${charge.id}` },
+            (payload) => {
+              if (payload.new.status === 'paid') confirmPaid(payload.new.payment_method);
             }
-          }
-        }
-      )
-      .subscribe();
+          )
+          .subscribe();
+      } else {
+        const { data } = await supabase
+          .from('order_guests')
+          .select('paid, payment_method')
+          .eq('id', guestId)
+          .single();
+        if (cancelled) return;
+        if (data?.paid) setIsPaid(true);
+        channel = supabase
+          .channel(`cash-payment-${guestId}`)
+          .on(
+            'postgres_changes',
+            { event: 'UPDATE', schema: 'public', table: 'order_guests', filter: `id=eq.${guestId}` },
+            (payload) => {
+              if (payload.new.paid === true) confirmPaid(payload.new.payment_method);
+            }
+          )
+          .subscribe();
+      }
+      channelRef.current = channel;
+    };
 
-    channelRef.current = channel;
+    init();
 
     return () => {
+      cancelled = true;
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
       }
     };
   }, [guestId, orderId]);

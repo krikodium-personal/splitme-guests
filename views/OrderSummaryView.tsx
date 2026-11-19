@@ -597,6 +597,12 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
            </span>
            <span className="text-[28px] font-black price-amount">${formatPrice(payableGrandTotal)}</span>
         </div>
+        {unservedItems.length > 0 && (
+          <p className="px-2 -mt-1 text-xs text-text-secondary leading-snug">
+            Servido: <span className="font-bold text-white price-amount">${formatPrice(withBillDiscount(servedTotal))}</span>
+            {' · '}Falta servir: <span className="font-bold text-white price-amount">${formatPrice(Math.max(0, payableGrandTotal - withBillDiscount(servedTotal)))}</span> (se paga cuando llegue a la mesa)
+          </p>
+        )}
         {billNudge && (
           <div className="mx-2 flex items-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-3 py-2">
             <span className="material-symbols-outlined text-primary text-lg shrink-0">local_offer</span>

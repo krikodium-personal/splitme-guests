@@ -58,7 +58,7 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
 
   // Reacciona al pago confirmado desde el estado global del App (vía Realtime del App)
   useEffect(() => {
-    if (externalPaid && !isPaid) {
+    if (externalPaid && !isPaid && !resolvedChargeId) {
       setIsPaid(true);
       setIsWaitingConfirmation(false);
       setIsTransferConfirmed(true);
@@ -66,7 +66,7 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
       audio.play().catch(() => {});
       if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
     }
-  }, [externalPaid]);
+  }, [externalPaid, resolvedChargeId]);
 
   useEffect(() => {
     const findPendingCharge = async () => {
@@ -125,6 +125,9 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
         }
       }
 
+      // Con cargo de la ronda actual, el estado del comensal (pagado en rondas anteriores) no cuenta.
+      if (resolvedChargeId) return;
+
       const { data } = await supabase
         .from('order_guests')
         .select('paid, payment_method')
@@ -182,8 +185,8 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
       );
     }
 
-    channel
-      .on(
+    if (!resolvedChargeId) {
+      channel.on(
         'postgres_changes',
         {
           event: 'UPDATE',
@@ -198,8 +201,9 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
             handleConfirmedPayment(paymentMethod);
           }
         }
-      )
-      .subscribe();
+      );
+    }
+    channel.subscribe();
 
     channelRef.current = channel;
 
