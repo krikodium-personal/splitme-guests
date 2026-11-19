@@ -49,7 +49,7 @@ export const UpsellSheet: React.FC<Props & {
         aria-label="Cerrar sugerencias"
         onClick={onDismiss}
       />
-      <div className="relative bg-surface-dark border-t border-white/10 rounded-t-3xl px-5 pt-5 pb-[calc(env(safe-area-inset-bottom)+6.5rem)]">
+      <div className="relative bg-surface-dark border-t border-white/10 rounded-t-3xl px-5 pt-5 pb-[calc(env(safe-area-inset-bottom)+1.25rem)]">
         <div className="w-10 h-1 rounded-full bg-white/15 mx-auto mb-4" />
         <p className="text-[11px] font-semibold uppercase tracking-wider text-primary mb-1">Para esta mesa</p>
         <h3 className="text-white font-bold text-[17px] leading-tight mb-4">
