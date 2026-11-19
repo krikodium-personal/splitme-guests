@@ -328,11 +328,12 @@ const App: React.FC = () => {
   // Platos ya cubiertos por alguna ronda de pago (pendiente o pagada). Si alguna ronda es vieja y no los registró, se avisa.
   const coveredItemIds = React.useMemo(() => {
     const ids = new Set<string>();
-    orderGuestCharges.filter(c => c.status !== 'cancelled').forEach(c => (c.covered_item_ids || []).forEach(id => ids.add(id)));
+    // Solo cuentan las rondas ya pagadas: una división pendiente se puede rehacer y reemplaza a la anterior
+    orderGuestCharges.filter(c => c.status === 'paid').forEach(c => (c.covered_item_ids || []).forEach(id => ids.add(id)));
     return Array.from(ids);
   }, [orderGuestCharges]);
   const hasChargesWithoutCoverage = React.useMemo(
-    () => orderGuestCharges.some(c => c.status !== 'cancelled' && (Number(c.amount) || 0) > 0 && !(c.covered_item_ids && c.covered_item_ids.length > 0)),
+    () => orderGuestCharges.some(c => c.status === 'paid' && (Number(c.amount) || 0) > 0 && !(c.covered_item_ids && c.covered_item_ids.length > 0)),
     [orderGuestCharges]
   );
   // Total ya cobrado en todas las rondas de pago de la mesa
@@ -1235,6 +1236,16 @@ const App: React.FC = () => {
       console.log("[DineSplit] ========================================");
       console.log("[DineSplit] Creando cargos individuales para", shares.length, "guests");
       console.log("[DineSplit] Montos a guardar:", shares.map(s => ({ id: s.id, name: s.name, total: s.total })));
+
+      // Una división nueva reemplaza a la pendiente anterior (las rondas ya pagadas no se tocan)
+      const { error: clearPendingError } = await supabase
+        .from('order_guest_charges')
+        .delete()
+        .eq('order_id', activeOrderId)
+        .eq('status', 'pending');
+      if (clearPendingError) {
+        console.warn("[DineSplit] No se pudo limpiar la división pendiente anterior:", clearPendingError);
+      }
 
       const splitRoundId = crypto.randomUUID();
       const payableShares = shares
