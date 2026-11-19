@@ -9,6 +9,8 @@ import { supabase } from '../lib/supabase';
 interface CheckoutViewProps {
   onBack: () => void;
   onConfirm: (guestId?: string) => void;
+  /** Paga todo lo que falta de la cuenta en un solo pago (reasigna el saldo pendiente de los demás al comensal actual). */
+  onPayAll?: (guestId: string) => void | Promise<void>;
   onNavigateToTip?: () => void;
   cart: OrderItem[];
   guests?: Guest[];
@@ -23,7 +25,7 @@ interface CheckoutViewProps {
   alreadyPaidTotal?: number;
 }
 
-const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNavigateToTip, cart, guests = [], menuItems, tableNumber, splitData, activeOrderId, currentGuestId, billDiscountPercent = 0, alreadyPaidTotal = 0 }) => {
+const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onPayAll, onNavigateToTip, cart, guests = [], menuItems, tableNumber, splitData, activeOrderId, currentGuestId, billDiscountPercent = 0, alreadyPaidTotal = 0 }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const [showQr, setShowQr] = useState(false);
@@ -507,7 +509,7 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
                 <button 
                   onClick={() => {
                     if (currentUserId) {
-                      onConfirm(currentUserId);
+                      if (onPayAll) onPayAll(currentUserId); else onConfirm(currentUserId);
                     } else {
                       console.error('[CheckoutView] No se puede pagar: currentUserId no está definido');
                     }

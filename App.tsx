@@ -2316,6 +2316,49 @@ const App: React.FC = () => {
     navigate('/tip');
   };
 
+  // «Pagar la cuenta completa»: el comensal paga en un solo pago todo lo pendiente. Los saldos pendientes de los demás
+  // pasan a su cargo (los de ellos se cancelan) y se sigue con el pago normal de ese cargo.
+  const handlePayFullAccount = async (guestId: string) => {
+    if (!supabase || !activeOrderId) return;
+    const pending = orderGuestCharges.filter(c => c.status === 'pending' && (Number(c.amount) || 0) > 0);
+    if (pending.length === 0) { navigate(`/individual-share?orderId=${activeOrderId}&guestId=${guestId}`); return; }
+    const total = pending.reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
+    const coveredIds = Array.from(new Set(pending.flatMap(c => c.covered_item_ids || [])));
+    const mine = pending.find(c => c.guest_id === guestId);
+    try {
+      if (mine) {
+        const { error } = await supabase
+          .from('order_guest_charges')
+          .update({ amount: total, covered_item_ids: coveredIds.length > 0 ? coveredIds : null })
+          .eq('id', mine.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('order_guest_charges')
+          .insert({
+            order_id: activeOrderId,
+            guest_id: guestId,
+            amount: total,
+            status: 'pending',
+            split_round_id: pending[0].split_round_id || crypto.randomUUID(),
+            covered_item_ids: coveredIds.length > 0 ? coveredIds : null,
+          });
+        if (error) throw error;
+      }
+      const othersIds = pending.filter(c => c.id !== mine?.id).map(c => c.id);
+      if (othersIds.length > 0) {
+        const { error } = await supabase.from('order_guest_charges').update({ status: 'cancelled' }).in('id', othersIds);
+        if (error) throw error;
+      }
+      setSplitData(null);
+      await fetchOrderGuestCharges(activeOrderId);
+      navigate(`/individual-share?orderId=${activeOrderId}&guestId=${guestId}`);
+    } catch (e) {
+      console.error('[DineSplit] No se pudo preparar el pago de la cuenta completa:', e);
+      alert('No se pudo preparar el pago de la cuenta completa. Intentá nuevamente.');
+    }
+  };
+
   // Al terminar la calificación: seguir pidiendo → menú; cerrar la mesa → agradecimiento; pago final → estado de cuenta
   const finishFeedback = () => {
     const mode = feedbackModeNow();
@@ -3027,6 +3070,7 @@ const App: React.FC = () => {
                 navigateToView('INDIVIDUAL_SHARE');
               }
             }}
+            onPayAll={handlePayFullAccount}
             onNavigateToTip={() => navigate(isKeepOrdering() ? '/feedback' : '/tip')}
             cart={cartForSplit} 
             guests={guests} 
