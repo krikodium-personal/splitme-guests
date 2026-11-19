@@ -16,6 +16,8 @@ const socialLink = (value: string | null | undefined, base: string): string | nu
 const ThanksView: React.FC<ThanksViewProps> = ({ restaurant, onBackToMenu }) => {
   const instagram = socialLink(restaurant?.instagram_url, 'https://www.instagram.com/');
   const tiktok = socialLink(restaurant?.tiktok_url, 'https://www.tiktok.com/@');
+  const facebook = socialLink(restaurant?.facebook_url, 'https://www.facebook.com/');
+  const youtube = socialLink(restaurant?.youtube_url, 'https://www.youtube.com/@');
   const name = restaurant?.name || 'el restaurante';
 
   return (
@@ -40,7 +42,7 @@ const ThanksView: React.FC<ThanksViewProps> = ({ restaurant, onBackToMenu }) => 
         <span>Volver al menú</span>
       </button>
 
-      {(instagram || tiktok) && (
+      {(instagram || tiktok || facebook || youtube) && (
         <div className="mt-10 w-full max-w-xs">
           <p className="text-text-secondary text-xs font-black uppercase tracking-[0.2em] mb-4">Seguinos en redes</p>
           <div className="flex flex-col gap-3">
@@ -48,6 +50,18 @@ const ThanksView: React.FC<ThanksViewProps> = ({ restaurant, onBackToMenu }) => 
               <a href={instagram} target="_blank" rel="noopener noreferrer" className="h-14 rounded-2xl bg-surface-dark border border-white/10 flex items-center justify-center gap-3 font-bold hover:border-primary/40 transition-colors">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5" /><circle cx="12" cy="12" r="4" /><circle cx="17.5" cy="6.5" r="1" fill="currentColor" /></svg>
                 <span>Instagram</span>
+              </a>
+            )}
+            {facebook && (
+              <a href={facebook} target="_blank" rel="noopener noreferrer" className="h-14 rounded-2xl bg-surface-dark border border-white/10 flex items-center justify-center gap-3 font-bold hover:border-primary/40 transition-colors">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.5 21v-7.5h2.6l.4-3h-3V8.6c0-.9.3-1.5 1.5-1.5h1.6V4.4c-.3 0-1.2-.1-2.3-.1-2.3 0-3.8 1.4-3.8 3.9v2.3H7.9v3h2.6V21h3z" /></svg>
+                <span>Facebook</span>
+              </a>
+            )}
+            {youtube && (
+              <a href={youtube} target="_blank" rel="noopener noreferrer" className="h-14 rounded-2xl bg-surface-dark border border-white/10 flex items-center justify-center gap-3 font-bold hover:border-primary/40 transition-colors">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21.6 7.2a2.5 2.5 0 0 0-1.8-1.8C18.2 5 12 5 12 5s-6.2 0-7.8.4A2.5 2.5 0 0 0 2.4 7.2C2 8.8 2 12 2 12s0 3.2.4 4.8a2.5 2.5 0 0 0 1.8 1.8C5.8 19 12 19 12 19s6.2 0 7.8-.4a2.5 2.5 0 0 0 1.8-1.8c.4-1.6.4-4.8.4-4.8s0-3.2-.4-4.8zM10 15V9l5.2 3L10 15z" /></svg>
+                <span>YouTube</span>
               </a>
             )}
             {tiktok && (
