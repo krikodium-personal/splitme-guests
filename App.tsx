@@ -52,6 +52,28 @@ async function mapOrderGuestsWithPayments(supabaseClient: any, orderGuests: any[
     }
   }
 
+  // El comensal (anónimo) no puede leer `payments`: el registro de lo cobrado se toma de los cargos pagados
+  // (order_guest_charges), que sí son legibles. Alimenta cuánto pagó cada uno y cuándo, y de ahí qué se pidió después.
+  if (orderId) {
+    const { data: paidCharges } = await supabaseClient
+      .from('order_guest_charges')
+      .select('guest_id, amount, paid_at, created_at')
+      .eq('order_id', orderId)
+      .eq('status', 'paid');
+    (paidCharges || []).forEach((charge: any) => {
+      if (!charge.guest_id) return;
+      paymentTotalByGuestId[charge.guest_id] =
+        (paymentTotalByGuestId[charge.guest_id] || 0) + (Number(charge.amount) || 0);
+      // Se usa cuándo se armó la división (no cuándo se confirmó el pago): lo pedido después no estaba incluido en ese cargo
+      const when = charge.created_at || charge.paid_at || null;
+      if (!when) return;
+      const current = latestPaymentCreatedAtByGuestId[charge.guest_id];
+      if (!current || new Date(when).getTime() > new Date(current).getTime()) {
+        latestPaymentCreatedAtByGuestId[charge.guest_id] = when;
+      }
+    });
+  }
+
   if (orderId) {
     const { data, error } = await supabaseClient
       .from('payments')
@@ -64,6 +86,7 @@ async function mapOrderGuestsWithPayments(supabaseClient: any, orderGuests: any[
     } else {
       (data || []).forEach((payment: any) => {
         if (!payment.guest_id) return;
+        if (paymentTotalByGuestId[payment.guest_id] != null) return; // ya calculado desde los cargos
         paymentTotalByGuestId[payment.guest_id] =
           (paymentTotalByGuestId[payment.guest_id] || 0) + (Number(payment.amount) || 0);
 
@@ -298,8 +321,15 @@ const App: React.FC = () => {
     });
   }, [orderGuestCharges, guests]);
 
-  const activeSplitData = splitData || pendingChargeSplitData;
-  const existingSplitStatusData = splitData || latestChargeSplitData;
+  // Total ya cobrado en todas las rondas de pago de la mesa
+  const paidChargesTotal = React.useMemo(
+    () => orderGuestCharges.filter(c => c.status === 'paid').reduce((sum, c) => sum + (Number(c.amount) || 0), 0),
+    [orderGuestCharges]
+  );
+  // Los cargos de la base son la fuente de verdad. El splitData local (se arma al confirmar la división) queda viejo
+  // apenas alguien paga, así que solo se usa mientras todavía no hay cargos cargados.
+  const activeSplitData = pendingChargeSplitData || splitData;
+  const existingSplitStatusData = latestChargeSplitData || splitData;
   const confirmationSplitData = latestChargeSplitData || activeSplitData;
   const mpPaymentChargeId = React.useMemo(() => {
     if (paymentChargeId) return paymentChargeId;
@@ -2573,6 +2603,22 @@ const App: React.FC = () => {
     }
   }, [cart, supabase, fetchOrderItemsFromDB]);
 
+  // Borra los productos sin enviar ("Pagar y cerramos la mesa"): no se piden ni se cobran
+  const handleDiscardUnsentItems = useCallback(async (itemIds: string[]): Promise<boolean> => {
+    if (!supabase || !activeOrderId) return false;
+    if (itemIds.length === 0) return true;
+    try {
+      const { error } = await supabase.from('order_items').delete().in('id', itemIds);
+      if (error) throw error;
+      await fetchOrderItemsFromDB(activeOrderId);
+      return true;
+    } catch (err: any) {
+      console.error('[DineSplit] Error al quitar los productos sin enviar:', err);
+      alert(`No se pudieron quitar los productos sin enviar: ${err.message || 'error desconocido'}`);
+      return false;
+    }
+  }, [supabase, activeOrderId, fetchOrderItemsFromDB]);
+
   const handleRemoveItemFromBatch = useCallback(async (cartItemId: string) => {
     if (!supabase || !activeOrderId) return;
     const item = cart.find(i => i.id === cartItemId);
@@ -2744,6 +2790,27 @@ const App: React.FC = () => {
             onPay={(scope) => {
               setPaymentScope(scope);
               if (activeOrderId) sessionStorage.setItem(`splitme_pay_scope_${activeOrderId}`, scope);
+              // Total enviado a cocina (con el descuento por monto de cuenta), sin contar productos sin enviar
+              const sentSubtotal = cart.reduce((sum, item) => {
+                if (!item.batch_id) return sum;
+                const batch = batches.find(b => b.id === item.batch_id);
+                if ((batch?.status || '').trim().toUpperCase() === 'CREADO') return sum;
+                const menuItem = menuItems.find(m => m.id === item.itemId);
+                return sum + (item.unitPrice ?? menuItem?.price ?? 0) * item.quantity;
+              }, 0);
+              const payableSent = Math.round(sentSubtotal * (1 - billDiscount.percent / 100) * 100) / 100;
+              const hasPendingCharges = orderGuestCharges.some(c => c.status === 'pending' && (Number(c.amount) || 0) > 0);
+              if (hasPendingCharges) {
+                // Hay una división a medio pagar: se sigue con esa
+                navigateToView('SPLIT_STATUS');
+                return;
+              }
+              if (paidChargesTotal > 0 && payableSent - paidChargesTotal > 0.01) {
+                // Lo pagado ya no cubre todo lo pedido: nueva ronda con el saldo pendiente
+                setSplitData(null);
+                navigateToView('SPLIT_BILL');
+                return;
+              }
               if (existingSplitStatusData && existingSplitStatusData.length > 0) {
                 navigateToView('SPLIT_STATUS');
                 return;
@@ -2753,6 +2820,7 @@ const App: React.FC = () => {
             sendingGroup={sendingGroup} 
             onUpdateQuantity={(id, d) => handleUpdateCartItem(id, { quantity: Math.max(0, (cart.find(it => it.id === id)?.quantity || 1) + d) })} 
             onRemoveItemFromBatch={handleRemoveItemFromBatch}
+            onDiscardUnsent={handleDiscardUnsentItems}
             menuItems={menuItems} 
             categories={categories} 
             tableNumber={currentTable?.table_number} 
@@ -2859,6 +2927,7 @@ const App: React.FC = () => {
             activeOrderId={activeOrderId}
             currentGuestId={guestIdParam || activeGuestId}
             billDiscountPercent={billDiscount.percent}
+            alreadyPaidTotal={paidChargesTotal}
           />
         } />
         <Route path="/individual-share" element={
@@ -2996,7 +3065,13 @@ const App: React.FC = () => {
           let receipt: PaymentReceipt | null = null;
           try { receipt = JSON.parse(sessionStorage.getItem(RECEIPT_STORAGE_KEY) || 'null'); } catch (e) { receipt = null; }
           return receipt
-            ? <PaymentSuccessView receipt={receipt} onContinue={() => navigate('/tip')} />
+            ? <PaymentSuccessView
+                receipt={receipt}
+                onContinue={() => navigate('/tip')}
+                onKeepOrdering={(() => { try { return sessionStorage.getItem('splitme_keep_ordering') === '1'; } catch (e) { return false; } })()
+                  ? () => { try { sessionStorage.removeItem('splitme_keep_ordering'); } catch (e) {} navigateToView('MENU'); }
+                  : undefined}
+              />
             : <Navigate to="/tip" replace />;
         })()} />
         <Route path="/tip" element={

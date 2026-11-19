@@ -59,6 +59,8 @@ interface OrderSummaryViewProps {
   sendingGroup?: OrderGroupKey | null;
   onUpdateQuantity: (id: string, delta: number) => void;
   onRemoveItemFromBatch?: (cartItemId: string) => Promise<void>;
+  /** Borra los productos sin enviar indicados. Devuelve true si se borraron. */
+  onDiscardUnsent?: (itemIds: string[]) => Promise<boolean>;
   menuItems: MenuItem[];
   categories: any[];
   tableNumber?: number;
@@ -70,11 +72,12 @@ interface OrderSummaryViewProps {
 }
 
 const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({ 
-  guests, cart, batches, onBack, onSendGroup, onPay, sendingGroup = null, onUpdateQuantity, onRemoveItemFromBatch, menuItems, categories, currentGuestId, waiter, tableNumber, activeOrderId, restaurant, billDiscount
+  guests, cart, batches, onBack, onSendGroup, onPay, sendingGroup = null, onUpdateQuantity, onRemoveItemFromBatch, onDiscardUnsent, menuItems, categories, currentGuestId, waiter, tableNumber, activeOrderId, restaurant, billDiscount
 }) => {
   const getItemImageUrl = (imageUrl?: string | null) => (imageUrl || '').trim() || restaurant?.logo_url || '';
   const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
   const [showUnsentProductsModal, setShowUnsentProductsModal] = useState(false);
+  const [discardingUnsent, setDiscardingUnsent] = useState(false);
   const [showUnservedModal, setShowUnservedModal] = useState(false);
   const [itemToRemoveFromBatch, setItemToRemoveFromBatch] = useState<OrderItem | null>(null);
 
@@ -661,17 +664,56 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowUnsentProductsModal(false)} />
           <div className="relative z-10 bg-surface-dark rounded-3xl p-8 mx-4 max-w-sm w-full border border-white/10 shadow-2xl flex flex-col gap-6">
             <h3 className="text-xl font-black text-white">Tenés productos sin enviar</h3>
-            <p className="text-text-secondary text-sm leading-relaxed">¿Estás seguro que querés pagar o preferís mandarlos?</p>
-            <div className="flex flex-col gap-3">
+            <p className="text-text-secondary text-sm leading-relaxed">
+              Hay {pendingItems.reduce((n, i) => n + i.quantity, 0)} {pendingItems.reduce((n, i) => n + i.quantity, 0) === 1 ? 'producto' : 'productos'} sin enviar
+              {' '}(<span className="price-amount">${formatPrice(pendingTotal)}</span>). ¿Cómo querés seguir?
+            </p>
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-2">
+                <button
+                  disabled={discardingUnsent}
+                  onClick={() => {
+                    try { sessionStorage.setItem('splitme_keep_ordering', '1'); } catch (e) {}
+                    setShowUnsentProductsModal(false);
+                    proceedToPay();
+                  }}
+                  className="w-full min-h-14 px-4 py-3 bg-primary text-black rounded-2xl font-black text-base shadow-xl shadow-primary/20 active:scale-[0.98] transition-all disabled:opacity-60"
+                >
+                  Pagar esta parte y seguir pidiendo
+                </button>
+                <p className="px-1 text-xs text-text-secondary leading-snug">
+                  Pagás lo que se consumió hasta ahora. Tus productos sin enviar se conservan: podés enviarlos después y pagarlos al final. Del total se va restando lo pagado y sumando lo que pidas.
+                </p>
+              </div>
+              <div className="flex flex-col gap-2">
+                <button
+                  disabled={discardingUnsent}
+                  onClick={async () => {
+                    if (discardingUnsent) return;
+                    setDiscardingUnsent(true);
+                    try {
+                      const ok = onDiscardUnsent ? await onDiscardUnsent(pendingItems.map(i => i.id)) : false;
+                      if (ok) {
+                        try { sessionStorage.removeItem('splitme_keep_ordering'); } catch (e) {}
+                        setShowUnsentProductsModal(false);
+                        proceedToPay();
+                      }
+                    } finally {
+                      setDiscardingUnsent(false);
+                    }
+                  }}
+                  className="w-full min-h-14 px-4 py-3 bg-red-500/15 text-red-300 border border-red-500/40 rounded-2xl font-black text-base active:scale-[0.98] transition-all disabled:opacity-60"
+                >
+                  {discardingUnsent ? 'Quitando productos…' : 'Pagar y cerramos la mesa'}
+                </button>
+                <p className="px-1 text-xs text-red-300/80 leading-snug">
+                  Los productos sin enviar se van a borrar y se ignoran: no se piden ni se cobran. No se puede deshacer.
+                </p>
+              </div>
               <button
-                onClick={() => { setShowUnsentProductsModal(false); proceedToPay(); }}
-                className="w-full h-14 bg-primary text-black rounded-2xl font-black text-lg shadow-xl shadow-primary/20 active:scale-[0.98] transition-all"
-              >
-                Prefiero pagar
-              </button>
-              <button
+                disabled={discardingUnsent}
                 onClick={() => setShowUnsentProductsModal(false)}
-                className="w-full h-14 bg-white/5 border border-white/10 text-white rounded-2xl font-bold active:scale-[0.98] transition-all"
+                className="w-full h-14 bg-white/5 border border-white/10 text-white rounded-2xl font-bold active:scale-[0.98] transition-all disabled:opacity-60"
               >
                 Cancelar
               </button>
@@ -684,41 +726,45 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
       {showUnservedModal && (
         <div className="fixed inset-0 z-[120] flex flex-col items-center justify-center animate-fade-in">
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowUnservedModal(false)} />
-          <div className="relative z-10 bg-surface-dark rounded-3xl p-8 mx-4 max-w-sm w-full max-h-[90vh] overflow-y-auto border border-white/10 shadow-2xl flex flex-col gap-6">
-            <div className="flex flex-col gap-2">
-              <h3 className="text-xl font-black text-white">Hay platos que todavía no recibiste</h3>
-              <p className="text-text-secondary text-sm leading-relaxed">Si avanzás ahora vas a pagar productos que todavía no llegaron a la mesa.</p>
-            </div>
-            <ul className="flex flex-col gap-2 max-h-40 overflow-y-auto no-scrollbar">
-              {unservedItems.map(item => {
-                const dish = menuItems.find(m => m.id === item.itemId);
-                const batchStatus = batches.find(b => b.id === item.batch_id)?.status || '';
-                return (
-                  <li key={item.id} className="flex items-center justify-between gap-3 text-sm">
-                    <span className="truncate text-white/90">{item.quantity}× {dish?.name || 'Producto'}</span>
-                    <span className="shrink-0 text-[10px] font-black uppercase tracking-widest text-white/50">{getStatusConfig(batchStatus).label}</span>
-                  </li>
-                );
-              })}
-            </ul>
-            <div className="flex flex-col gap-3">
-              <button
-                onClick={() => { setShowUnservedModal(false); onPay?.('all'); }}
-                className="w-full min-h-14 py-3 px-4 bg-primary text-black rounded-2xl font-black shadow-xl shadow-primary/20 active:scale-[0.98] transition-all flex flex-col items-center justify-center"
-              >
-                <span>Avanzar y pagar todo lo encargado</span>
-                <span className="text-xs font-bold opacity-70 price-amount">${formatPrice(payableGrandTotal)}</span>
-              </button>
-              <button
-                onClick={() => { setShowUnservedModal(false); onPay?.('served'); }}
-                disabled={servedTotal <= 0}
-                className="w-full min-h-14 py-3 px-4 bg-primary/10 border border-primary/40 text-primary rounded-2xl font-black active:scale-[0.98] transition-all flex flex-col items-center justify-center disabled:opacity-40 disabled:active:scale-100"
-              >
-                <span>Avanzar y pagar solo lo servido</span>
-                <span className="text-xs font-bold opacity-70 price-amount">
-                  {servedTotal > 0 ? `$${formatPrice(withBillDiscount(servedTotal))}` : 'Todavía no hay platos servidos'}
-                </span>
-              </button>
+          <div className="relative z-10 bg-surface-dark rounded-3xl p-8 mx-4 max-w-sm w-full border border-white/10 shadow-2xl flex flex-col gap-6">
+            <h3 className="text-xl font-black text-white">Hay platos que todavía no recibiste</h3>
+            <p className="text-text-secondary text-sm leading-relaxed">
+              Hay {unservedItems.reduce((n, i) => n + i.quantity, 0)} {unservedItems.reduce((n, i) => n + i.quantity, 0) === 1 ? 'producto' : 'productos'} enviados que todavía no llegaron a la mesa. ¿Cómo querés seguir?
+            </p>
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-2">
+                <button
+                  disabled={servedTotal <= 0}
+                  onClick={() => {
+                    try { sessionStorage.setItem('splitme_keep_ordering', '1'); } catch (e) {}
+                    setShowUnservedModal(false);
+                    onPay?.('served');
+                  }}
+                  className="w-full min-h-14 px-4 py-3 bg-primary text-black rounded-2xl font-black text-base shadow-xl shadow-primary/20 active:scale-[0.98] transition-all disabled:opacity-40 disabled:active:scale-100"
+                >
+                  Pagar solo lo servido y seguir esperando
+                </button>
+                <p className="px-1 text-xs text-text-secondary leading-snug">
+                  {servedTotal > 0
+                    ? <>Pagás lo que ya recibiste (<span className="price-amount">${formatPrice(withBillDiscount(servedTotal))}</span>). Lo que todavía no llegó queda pendiente y lo pagás al final.</>
+                    : 'Todavía no hay platos servidos para pagar.'}
+                </p>
+              </div>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => {
+                    try { sessionStorage.removeItem('splitme_keep_ordering'); } catch (e) {}
+                    setShowUnservedModal(false);
+                    onPay?.('all');
+                  }}
+                  className="w-full min-h-14 px-4 py-3 bg-red-500/15 text-red-300 border border-red-500/40 rounded-2xl font-black text-base active:scale-[0.98] transition-all"
+                >
+                  Pagar todo y cerramos la mesa
+                </button>
+                <p className="px-1 text-xs text-red-300/80 leading-snug">
+                  Pagás todo lo encargado (<span className="price-amount">${formatPrice(payableGrandTotal)}</span>), incluso lo que todavía no llegó a la mesa.
+                </p>
+              </div>
               <button
                 onClick={() => setShowUnservedModal(false)}
                 className="w-full h-14 bg-white/5 border border-white/10 text-white rounded-2xl font-bold active:scale-[0.98] transition-all"

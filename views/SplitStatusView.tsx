@@ -113,11 +113,11 @@ const SplitStatusView: React.FC<SplitStatusViewProps> = ({
 
         <section className="grid grid-cols-2 gap-3 mb-6">
           <div className="rounded-2xl bg-surface-dark border border-white/5 p-4">
-            <p className="text-[10px] font-black uppercase tracking-widest text-text-secondary mb-2">Dividido</p>
+            <p className="text-[10px] font-black uppercase tracking-widest text-text-secondary mb-2">Esta división</p>
             <p className="text-xl font-black price-amount">${formatPrice(totalAssigned)}</p>
           </div>
           <div className="rounded-2xl bg-surface-dark border border-white/5 p-4">
-            <p className="text-[10px] font-black uppercase tracking-widest text-text-secondary mb-2">Pagado</p>
+            <p className="text-[10px] font-black uppercase tracking-widest text-text-secondary mb-2">Pagado hasta ahora</p>
             <p className="text-xl font-black text-primary price-amount">${formatPrice(totalPaid)}</p>
           </div>
         </section>

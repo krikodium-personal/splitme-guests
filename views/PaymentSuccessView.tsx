@@ -28,6 +28,8 @@ const METHOD_LABELS: Record<string, string> = {
 interface Props {
   receipt: PaymentReceipt;
   onContinue: () => void;
+  /** Si viene, el pago fue de una parte y el comensal pidió seguir pidiendo: se ofrece volver al menú. */
+  onKeepOrdering?: () => void;
 }
 
 const Row: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value }) => (
@@ -37,7 +39,7 @@ const Row: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value
   </div>
 );
 
-const PaymentSuccessView: React.FC<Props> = ({ receipt, onContinue }) => {
+const PaymentSuccessView: React.FC<Props> = ({ receipt, onContinue, onKeepOrdering }) => {
   const when = useMemo(() => {
     const d = new Date(receipt.paidAt);
     return Number.isNaN(d.getTime()) ? '' : d.toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
@@ -80,14 +82,35 @@ const PaymentSuccessView: React.FC<Props> = ({ receipt, onContinue }) => {
         </div>
 
         <div className="mt-auto pt-8">
-          <button
-            onClick={onContinue}
-            className="w-full h-14 rounded-full bg-white text-emerald-800 font-black text-lg shadow-2xl flex items-center justify-center gap-2 active:scale-[0.98] transition"
-          >
-            Continuar
-            <span className="material-symbols-outlined">arrow_forward</span>
-          </button>
-          <p className="mt-3 text-center text-xs text-white/70">Después podés dejar propina y calificar tu experiencia.</p>
+          {onKeepOrdering ? (
+            <>
+              <button
+                onClick={onKeepOrdering}
+                className="w-full h-14 rounded-full bg-white text-emerald-800 font-black text-lg shadow-2xl flex items-center justify-center gap-2 active:scale-[0.98] transition"
+              >
+                Seguir pidiendo
+                <span className="material-symbols-outlined">restaurant_menu</span>
+              </button>
+              <button
+                onClick={onContinue}
+                className="mt-3 w-full h-12 rounded-full bg-white/15 border border-white/30 text-white font-bold active:scale-[0.98] transition"
+              >
+                Dejar propina ahora
+              </button>
+              <p className="mt-3 text-center text-xs text-white/70">Pagaste lo consumido hasta ahora. Tus productos sin enviar siguen en tu pedido.</p>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={onContinue}
+                className="w-full h-14 rounded-full bg-white text-emerald-800 font-black text-lg shadow-2xl flex items-center justify-center gap-2 active:scale-[0.98] transition"
+              >
+                Continuar
+                <span className="material-symbols-outlined">arrow_forward</span>
+              </button>
+              <p className="mt-3 text-center text-xs text-white/70">Después podés dejar propina y calificar tu experiencia.</p>
+            </>
+          )}
         </div>
       </div>
     </div>

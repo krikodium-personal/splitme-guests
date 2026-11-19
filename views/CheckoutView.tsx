@@ -19,9 +19,11 @@ interface CheckoutViewProps {
   currentGuestId?: string | null;
   /** % de descuento por monto de cuenta que aplica a toda la mesa. */
   billDiscountPercent?: number;
+  /** Total ya cobrado en rondas anteriores de la mesa. */
+  alreadyPaidTotal?: number;
 }
 
-const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNavigateToTip, cart, guests = [], menuItems, tableNumber, splitData, activeOrderId, currentGuestId, billDiscountPercent = 0 }) => {
+const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNavigateToTip, cart, guests = [], menuItems, tableNumber, splitData, activeOrderId, currentGuestId, billDiscountPercent = 0, alreadyPaidTotal = 0 }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const [showQr, setShowQr] = useState(false);
@@ -331,6 +333,12 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
             <span className="material-symbols-outlined text-sm">receipt_long</span>
             <p className="text-sm font-bold uppercase tracking-widest">Total de la Mesa</p>
           </div>
+          {alreadyPaidTotal > 0 && (
+            <p className="mt-2 text-xs font-bold text-text-secondary">
+              Ya pagado <span className="text-green-400 price-amount">${formatPrice(alreadyPaidTotal)}</span>
+              {' · '}Saldo <span className="text-primary price-amount">${formatPrice(Math.max(0, grandTotal - alreadyPaidTotal))}</span>
+            </p>
+          )}
         </div>
       </div>
 
@@ -471,7 +479,7 @@ const CheckoutView: React.FC<CheckoutViewProps> = ({ onBack, onConfirm, onNaviga
             >
               <div className="flex flex-col items-start leading-none">
                 <span className="text-[10px] uppercase font-black tracking-widest opacity-60">Pagar cuenta</span>
-                <span className="text-xl price-amount">${formatPrice(grandTotal)}</span>
+                <span className="text-xl price-amount">${formatPrice(Number(dinerShares[0]?.amount) || grandTotal)}</span>
               </div>
               <span className="material-symbols-outlined font-black group-hover:translate-x-1 transition-transform">arrow_forward</span>
             </button>
