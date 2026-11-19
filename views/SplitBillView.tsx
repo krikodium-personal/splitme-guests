@@ -17,6 +17,8 @@ interface SplitBillViewProps {
   billDiscountPercent?: number;
   /** Por qué aplica el descuento (promo y rango alcanzado). */
   billDiscountReason?: string;
+  /** Ids de platos ya cubiertos por rondas de pago anteriores. null = hay rondas viejas sin ese dato. */
+  coveredItemIds?: string[] | null;
 }
 
 interface BillItemAssignment {
@@ -75,7 +77,7 @@ const buildAssignments = (
   return units;
 };
 
-const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, onBack, onGoToMenu, onConfirm, menuItems, billDiscountPercent = 0, billDiscountReason = '' }) => {
+const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, onBack, onGoToMenu, onConfirm, menuItems, billDiscountPercent = 0, billDiscountReason = '', coveredItemIds = null }) => {
   const discountFactor = 1 - Math.min(Math.max(billDiscountPercent, 0), 100) / 100;
   const hasBillDiscount = discountFactor < 1;
   /** Importe con el descuento de la cuenta aplicado (lo que efectivamente se cobra). */
@@ -175,6 +177,11 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
   }, [paidGuestDetails]);
 
   const postPaymentCart = useMemo(() => {
+    // Con registro de platos cubiertos: lo que falta es lo que ninguna ronda cubrió todavía
+    if (coveredItemIds && coveredItemIds.length > 0) {
+      const covered = new Set(coveredItemIds);
+      return cart.filter(item => !covered.has(item.id));
+    }
     if (!latestPaymentTime) return [];
     const postPaymentBatchIds = new Set(
       batches
@@ -187,7 +194,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
     );
 
     return cart.filter(item => item.batch_id && postPaymentBatchIds.has(item.batch_id));
-  }, [batches, cart, latestPaymentTime]);
+  }, [batches, cart, latestPaymentTime, coveredItemIds]);
 
   const postPaymentTotal = useMemo(() => {
     return postPaymentCart.reduce((sum, item) => {
@@ -198,8 +205,9 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
   }, [postPaymentCart, menuItems]);
 
   const hasPostPaymentBalance = postPaymentTotal > 0.01;
-  const splitCart = hasPostPaymentBalance ? postPaymentCart : cart;
-  const splitTotal = hasPostPaymentBalance ? postPaymentTotal : grandTotal;
+  const usesCoverage = !!coveredItemIds && coveredItemIds.length > 0;
+  const splitCart = (hasPostPaymentBalance || usesCoverage) ? postPaymentCart : cart;
+  const splitTotal = (hasPostPaymentBalance || usesCoverage) ? postPaymentTotal : grandTotal;
   const payableSplitTotal = payable(splitTotal);
   const payableGrandTotal = payable(grandTotal);
 
@@ -278,6 +286,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
         total: guestTotal,
         items,
         isAdditionalChargeSplit: hasPostPaymentBalance,
+        covered_item_ids: splitCart.map(i => i.id),
       };
     });
   }, [method, selectedForEqual, assignments, customAmounts, splitCart, guests, menuItems, splitTotal, hasPostPaymentBalance, removedGuestIds, resolveOwner, payable]);

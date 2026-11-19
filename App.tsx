@@ -321,6 +321,16 @@ const App: React.FC = () => {
     });
   }, [orderGuestCharges, guests]);
 
+  // Platos ya cubiertos por alguna ronda de pago (pendiente o pagada). Si alguna ronda es vieja y no los registró, se avisa.
+  const coveredItemIds = React.useMemo(() => {
+    const ids = new Set<string>();
+    orderGuestCharges.filter(c => c.status !== 'cancelled').forEach(c => (c.covered_item_ids || []).forEach(id => ids.add(id)));
+    return Array.from(ids);
+  }, [orderGuestCharges]);
+  const hasChargesWithoutCoverage = React.useMemo(
+    () => orderGuestCharges.some(c => c.status !== 'cancelled' && (Number(c.amount) || 0) > 0 && !(c.covered_item_ids && c.covered_item_ids.length > 0)),
+    [orderGuestCharges]
+  );
   // Total ya cobrado en todas las rondas de pago de la mesa
   const paidChargesTotal = React.useMemo(
     () => orderGuestCharges.filter(c => c.status === 'paid').reduce((sum, c) => sum + (Number(c.amount) || 0), 0),
@@ -890,6 +900,7 @@ const App: React.FC = () => {
       split_round_id: charge.split_round_id || null,
       created_at: charge.created_at,
       paid_at: charge.paid_at || null,
+      covered_item_ids: Array.isArray(charge.covered_item_ids) ? charge.covered_item_ids : null,
     }));
     setOrderGuestCharges(charges);
   }, []);
@@ -1238,6 +1249,7 @@ const App: React.FC = () => {
           amount: share.total,
           status: 'pending',
           split_round_id: splitRoundId,
+          covered_item_ids: Array.isArray(share.covered_item_ids) && share.covered_item_ids.length > 0 ? share.covered_item_ids : null,
         })))
         .select('*');
 
@@ -2794,7 +2806,9 @@ const App: React.FC = () => {
               const sentSubtotal = cart.reduce((sum, item) => {
                 if (!item.batch_id) return sum;
                 const batch = batches.find(b => b.id === item.batch_id);
-                if ((batch?.status || '').trim().toUpperCase() === 'CREADO') return sum;
+                const batchStatus = (batch?.status || '').trim().toUpperCase();
+                if (batchStatus === 'CREADO') return sum;
+                if (scope === 'served' && batchStatus !== 'SERVIDO') return sum;
                 const menuItem = menuItems.find(m => m.id === item.itemId);
                 return sum + (item.unitPrice ?? menuItem?.price ?? 0) * item.quantity;
               }, 0);
@@ -2821,6 +2835,7 @@ const App: React.FC = () => {
             onUpdateQuantity={(id, d) => handleUpdateCartItem(id, { quantity: Math.max(0, (cart.find(it => it.id === id)?.quantity || 1) + d) })} 
             onRemoveItemFromBatch={handleRemoveItemFromBatch}
             onDiscardUnsent={handleDiscardUnsentItems}
+            alreadyPaidTotal={paidChargesTotal}
             menuItems={menuItems} 
             categories={categories} 
             tableNumber={currentTable?.table_number} 
@@ -2862,6 +2877,7 @@ const App: React.FC = () => {
         } />
         <Route path="/split-bill" element={
           <SplitBillView 
+            coveredItemIds={hasChargesWithoutCoverage ? null : coveredItemIds}
             guests={guests} 
             cart={cartForSplit} 
             batches={batches}

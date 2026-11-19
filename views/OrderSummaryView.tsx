@@ -61,6 +61,8 @@ interface OrderSummaryViewProps {
   onRemoveItemFromBatch?: (cartItemId: string) => Promise<void>;
   /** Borra los productos sin enviar indicados. Devuelve true si se borraron. */
   onDiscardUnsent?: (itemIds: string[]) => Promise<boolean>;
+  /** Total ya cobrado en rondas anteriores (con descuento aplicado). */
+  alreadyPaidTotal?: number;
   menuItems: MenuItem[];
   categories: any[];
   tableNumber?: number;
@@ -72,7 +74,7 @@ interface OrderSummaryViewProps {
 }
 
 const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({ 
-  guests, cart, batches, onBack, onSendGroup, onPay, sendingGroup = null, onUpdateQuantity, onRemoveItemFromBatch, onDiscardUnsent, menuItems, categories, currentGuestId, waiter, tableNumber, activeOrderId, restaurant, billDiscount
+  guests, cart, batches, onBack, onSendGroup, onPay, sendingGroup = null, onUpdateQuantity, onRemoveItemFromBatch, onDiscardUnsent, alreadyPaidTotal = 0, menuItems, categories, currentGuestId, waiter, tableNumber, activeOrderId, restaurant, billDiscount
 }) => {
   const getItemImageUrl = (imageUrl?: string | null) => (imageUrl || '').trim() || restaurant?.logo_url || '';
   const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
@@ -222,6 +224,9 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
   const billPercent = billDiscount?.percent ?? 0;
   const withBillDiscount = (amount: number) => Math.round(amount * (1 - billPercent / 100) * 100) / 100;
   const payableGrandTotal = withBillDiscount(grandTotal);
+  // Lo que realmente falta cobrar en cada alcance, descontando lo ya pagado en rondas anteriores
+  const servedRemaining = Math.max(0, withBillDiscount(servedTotal) - alreadyPaidTotal);
+  const allRemaining = Math.max(0, payableGrandTotal - alreadyPaidTotal);
   const pendingTotal = pendingItems.reduce((sum, item) => {
     const menuItem = menuItems.find(m => m.id === item.itemId);
     return sum + (item.unitPrice ?? menuItem?.price ?? 0) * item.quantity;
@@ -588,19 +593,20 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
       </div>
 
       <div className="fixed bottom-0 left-0 w-full p-4 bg-background-dark border-t border-white/5 z-20 space-y-3 shadow-2xl">
-        <div className="flex justify-between items-center px-2">
-           <span className="flex flex-col">
+        <div className="flex flex-col items-start px-2">
+           <span className="flex items-center gap-2">
              <span className="text-text-secondary font-medium">Total Acumulado</span>
              {billPercent > 0 && grandTotal > 0 && (
                <span className="text-xs font-bold text-primary">{formatBillPercent(billPercent)}% off</span>
              )}
            </span>
-           <span className="text-[28px] font-black price-amount">${formatPrice(payableGrandTotal)}</span>
+           <span className="text-[28px] font-black price-amount leading-tight">${formatPrice(payableGrandTotal)}</span>
         </div>
-        {unservedItems.length > 0 && (
+        {(unservedItems.length > 0 || alreadyPaidTotal > 0) && (
           <p className="px-2 -mt-1 text-xs text-text-secondary leading-snug">
-            Servido: <span className="font-bold text-white price-amount">${formatPrice(withBillDiscount(servedTotal))}</span>
-            {' · '}Falta servir: <span className="font-bold text-white price-amount">${formatPrice(Math.max(0, payableGrandTotal - withBillDiscount(servedTotal)))}</span> (se paga cuando llegue a la mesa)
+            {alreadyPaidTotal > 0 && <>Ya pagado: <span className="font-bold text-white price-amount">${formatPrice(alreadyPaidTotal)}</span>{unservedItems.length > 0 ? ' · ' : ''}</>}
+            {unservedItems.length > 0 && <>Servido: <span className="font-bold text-white price-amount">${formatPrice(withBillDiscount(servedTotal))}</span></>}
+            {unservedItems.length > 0 && <>{' · '}Falta servir: <span className="font-bold text-white price-amount">${formatPrice(Math.max(0, payableGrandTotal - withBillDiscount(servedTotal)))}</span> (se paga cuando llegue a la mesa)</>}
           </p>
         )}
         {billNudge && (
@@ -740,7 +746,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
             <div className="flex flex-col gap-4">
               <div className="flex flex-col gap-2">
                 <button
-                  disabled={servedTotal <= 0}
+                  disabled={servedRemaining <= 0.01}
                   onClick={() => {
                     try { sessionStorage.setItem('splitme_keep_ordering', '1'); } catch (e) {}
                     setShowUnservedModal(false);
@@ -751,9 +757,9 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                   Pagar solo lo servido y seguir esperando
                 </button>
                 <p className="px-1 text-xs text-text-secondary leading-snug">
-                  {servedTotal > 0
-                    ? <>Pagás lo que ya recibiste (<span className="price-amount">${formatPrice(withBillDiscount(servedTotal))}</span>). Lo que todavía no llegó queda pendiente y lo pagás al final.</>
-                    : 'Todavía no hay platos servidos para pagar.'}
+                  {servedRemaining > 0.01
+                    ? <>Pagás lo que ya recibiste y todavía no pagaste (<span className="price-amount">${formatPrice(servedRemaining)}</span>). Lo que todavía no llegó queda pendiente y lo pagás al final.</>
+                    : 'Ya pagaste todo lo servido. No hay nada para pagar ahora.'}
                 </p>
               </div>
               <div className="flex flex-col gap-2">
@@ -768,7 +774,7 @@ const OrderSummaryView: React.FC<OrderSummaryViewProps> = ({
                   Pagar todo y cerramos la mesa
                 </button>
                 <p className="px-1 text-xs text-red-300/80 leading-snug">
-                  Pagás todo lo encargado (<span className="price-amount">${formatPrice(payableGrandTotal)}</span>), incluso lo que todavía no llegó a la mesa.
+                  Pagás todo lo encargado que falta (<span className="price-amount">${formatPrice(allRemaining)}</span>), incluso lo que todavía no llegó a la mesa.
                 </p>
               </div>
               <button

@@ -35,6 +35,8 @@ export interface Guest {
 }
 
 export interface OrderGuestCharge {
+  /** Ids de order_items que cubre la ronda de pago (null en rondas viejas). */
+  covered_item_ids?: string[] | null;
   id: string;
   order_id: string;
   guest_id: string;
