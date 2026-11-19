@@ -18,6 +18,9 @@ const ThanksView: React.FC<ThanksViewProps> = ({ restaurant, onBackToMenu }) => 
   const tiktok = socialLink(restaurant?.tiktok_url, 'https://www.tiktok.com/@');
   const facebook = socialLink(restaurant?.facebook_url, 'https://www.facebook.com/');
   const youtube = socialLink(restaurant?.youtube_url, 'https://www.youtube.com/@');
+  const websiteRaw = (restaurant?.website_url || '').trim();
+  const website = websiteRaw ? (/^https?:\/\//i.test(websiteRaw) ? websiteRaw : `https://${websiteRaw}`) : null;
+  const contactEmail = (restaurant?.contact_email || '').trim() || null;
   const name = restaurant?.name || 'el restaurante';
 
   return (
@@ -42,10 +45,22 @@ const ThanksView: React.FC<ThanksViewProps> = ({ restaurant, onBackToMenu }) => 
         <span>Volver al menú</span>
       </button>
 
-      {(instagram || tiktok || facebook || youtube) && (
+      {(instagram || tiktok || facebook || youtube || website || contactEmail) && (
         <div className="mt-10 w-full max-w-xs">
-          <p className="text-text-secondary text-xs font-black uppercase tracking-[0.2em] mb-4">Seguinos en redes</p>
+          <p className="text-text-secondary text-xs font-black uppercase tracking-[0.2em] mb-4">Seguinos y contactanos</p>
           <div className="flex flex-col gap-3">
+            {website && (
+              <a href={website} target="_blank" rel="noopener noreferrer" className="h-14 rounded-2xl bg-surface-dark border border-white/10 flex items-center justify-center gap-3 font-bold hover:border-primary/40 transition-colors">
+                <span className="material-symbols-outlined text-xl">language</span>
+                <span>Página web</span>
+              </a>
+            )}
+            {contactEmail && (
+              <a href={`mailto:${contactEmail}`} className="h-14 rounded-2xl bg-surface-dark border border-white/10 flex items-center justify-center gap-3 font-bold hover:border-primary/40 transition-colors">
+                <span className="material-symbols-outlined text-xl">mail</span>
+                <span>Escribinos</span>
+              </a>
+            )}
             {instagram && (
               <a href={instagram} target="_blank" rel="noopener noreferrer" className="h-14 rounded-2xl bg-surface-dark border border-white/10 flex items-center justify-center gap-3 font-bold hover:border-primary/40 transition-colors">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5" /><circle cx="12" cy="12" r="4" /><circle cx="17.5" cy="6.5" r="1" fill="currentColor" /></svg>
