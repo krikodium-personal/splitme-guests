@@ -38,7 +38,9 @@ export const UpsellStrip: React.FC<Props> = ({ items, addingIds, getItemImageUrl
 export const UpsellSheet: React.FC<Props & {
   anchorName: string;
   onDismiss: () => void;
-}> = ({ items, anchorName, addingIds, getItemImageUrl, onAdd, onOpen, onDismiss }) => {
+  /** Si viene, se muestra «No volver a mostrar» al final del sheet. */
+  onNeverShow?: () => void;
+}> = ({ items, anchorName, addingIds, getItemImageUrl, onAdd, onOpen, onDismiss, onNeverShow }) => {
   if (items.length === 0) return null;
 
   return (
@@ -74,6 +76,15 @@ export const UpsellSheet: React.FC<Props & {
         >
           Ahora no
         </button>
+        {onNeverShow && (
+          <button
+            type="button"
+            onClick={onNeverShow}
+            className="w-full mt-1 h-10 text-white/40 text-xs font-medium underline-offset-2 hover:text-white/60"
+          >
+            No volver a mostrar
+          </button>
+        )}
       </div>
     </div>
   );

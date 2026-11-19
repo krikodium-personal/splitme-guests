@@ -397,7 +397,11 @@ const MenuView: React.FC<MenuViewProps> = ({
     });
   }, [showDetail, menuItems, cart, supabaseCategories, selectedGuestId]);
 
+  const UPSELL_SHEET_OFF_KEY = 'splitme_upsell_sheet_off';
+  const isUpsellSheetOff = () => { try { return localStorage.getItem(UPSELL_SHEET_OFF_KEY) === '1'; } catch (e) { return false; } };
+
   const offerUpsell = (item: MenuItem) => {
+    if (isUpsellSheetOff()) return;
     if (dismissedUpsellRef.current.has(item.id)) return;
     const suggestions = getUpsellSuggestions({
       source: item,
@@ -2361,6 +2365,10 @@ const MenuView: React.FC<MenuViewProps> = ({
           onAdd={handleUpsellAdd}
           onOpen={(item) => { setUpsell(null); handleOpenPdp(item); }}
           onDismiss={() => setUpsell(null)}
+          onNeverShow={() => {
+            try { localStorage.setItem(UPSELL_SHEET_OFF_KEY, '1'); } catch (e) { /* sin localStorage: solo se cierra */ }
+            setUpsell(null);
+          }}
         />
       )}
       {waiter ? (
