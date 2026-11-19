@@ -1564,7 +1564,7 @@ const App: React.FC = () => {
           const tableStatusFromOrder = (finalTableData?.status || '').toString().toUpperCase().trim();
 
           // Si la orden está cerrada o la mesa está Libre, redirigir a scan para iniciar sesión nueva
-          if (orderStatus === 'PAGADO' || orderStatus === 'CANCELADO' || tableStatusFromOrder === 'LIBRE') {
+          if (!isClosingTable() && (orderStatus === 'PAGADO' || orderStatus === 'CANCELADO' || tableStatusFromOrder === 'LIBRE')) {
             console.log("[DineSplit] Orden cerrada o mesa Libre (order:", orderStatus, ", table:", tableStatusFromOrder, "). Redirigiendo a nueva sesión.");
             clearSession();
             setRestaurant(null);
@@ -1686,7 +1686,7 @@ const App: React.FC = () => {
 
             // Si la orden está PAGADA/CERRADA pero volvemos de MP con success/approved, no redirigir a /scan:
             // cargar el estado y dejar que el efecto de paymentStatus lleve a /confirmation
-            if (orderCheck && (orderCheck.status === 'PAGADO' || orderCheck.status === 'CANCELADO') && !isPaymentReturn) {
+            if (orderCheck && (orderCheck.status === 'PAGADO' || orderCheck.status === 'CANCELADO') && !isPaymentReturn && !isClosingTable()) {
               clearSession();
               setRestaurant(null);
               setCurrentTable(null);
@@ -1717,7 +1717,7 @@ const App: React.FC = () => {
             const tableStatusFromCookie = (finalTableData?.status || '').toString().toUpperCase().trim();
 
             // Si la mesa está Libre (cerrada en admin), limpiar y redirigir a scan
-            if (tableStatusFromCookie === 'LIBRE') {
+            if (tableStatusFromCookie === 'LIBRE' && !isClosingTable()) {
               console.log("[DineSplit] Mesa Libre al restaurar desde cookie. Redirigiendo a scan.");
               clearSession();
               setRestaurant(null);
