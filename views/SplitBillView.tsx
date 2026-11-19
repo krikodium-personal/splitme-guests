@@ -85,6 +85,8 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
   /** Importe con el descuento de la cuenta aplicado (lo que efectivamente se cobra). */
   const payable = useCallback((amount: number) => Math.round(amount * discountFactor * 100) / 100, [discountFactor]);
   const [method, setMethod] = useState<'equal' | 'item' | 'guest' | 'custom'>('item');
+  // «Pagos registrados» arranca colapsado
+  const [paymentsOpen, setPaymentsOpen] = useState(false);
   const [selectedForEqual, setSelectedForEqual] = useState<string[]>([]);
 
   // Comensales quitados de esta división (solo UI; no se borran de order_guests)
@@ -527,13 +529,19 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
                 </div>
               )}
               <div className={shouldShowSplitLockedAlert ? 'mt-4 pt-4 border-t border-amber-500/20' : ''}>
-                <div className="flex items-center justify-between gap-3 mb-3">
+                <button
+                  type="button"
+                  onClick={() => setPaymentsOpen(open => !open)}
+                  aria-expanded={paymentsOpen}
+                  className={`w-full flex items-center justify-between gap-3 ${paymentsOpen ? 'mb-3' : ''}`}
+                >
                   <p className="text-[10px] font-black uppercase tracking-widest text-amber-400">Pagos registrados</p>
-                  <span className="text-[10px] font-black text-amber-400/80 tabular-nums">
+                  <span className="flex items-center gap-1 text-[10px] font-black text-amber-400/80 tabular-nums">
                     {paymentRows.length} {paymentRows.length === 1 ? 'pago' : 'pagos'}
+                    <span className={`material-symbols-outlined text-base transition-transform ${paymentsOpen ? 'rotate-180' : ''}`}>expand_more</span>
                   </span>
-                </div>
-                <div className="space-y-2">
+                </button>
+                {paymentsOpen && (<div className="space-y-2">
                   {paymentRows.map(guest => (
                     <div key={guest.key} className="rounded-xl bg-black/20 border border-amber-500/10 p-3">
                       <div className="flex items-center gap-3">
@@ -558,7 +566,7 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
                       </div>
                     </div>
                   ))}
-                </div>
+                </div>)}
               </div>
             </div>
           )}
