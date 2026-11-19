@@ -2282,6 +2282,10 @@ const App: React.FC = () => {
     return paidChargesTotal > 0 && !hasPending && payableSent - paidChargesTotal <= 0.01;
   })();
 
+  // Destino tras confirmarse un pago: si la mesa quedó saldada, el estado de cuenta (donde elige volver al menú o cerrar);
+  // si no, califica lo pagado (sigue pidiendo) o pasa por propina (cierra)
+  const afterPaymentPath = () => (tableFullyPaid ? '/confirmation' : (isKeepOrdering() ? '/feedback' : '/tip'));
+
   // Última ronda de pago: id de la ronda y platos que cubrió
   const latestPaidRound = (() => {
     const paid = orderGuestCharges.filter(c => c.status === 'paid');
@@ -3120,10 +3124,7 @@ const App: React.FC = () => {
             guestId={guestIdParam || activeGuestId}
             orderId={activeOrderId || ''}
             chargeId={paymentChargeId || activeSplitData?.find(s => s.id === (guestIdParam || activeGuestId))?.charge_id || null}
-            onFinish={() => navigate(isKeepOrdering() ? '/feedback' : '/tip')}
-            tableFullyPaid={tableFullyPaid}
-            onBackToMenu={backToMenuAfterPayment}
-            onCloseTable={closeTableAndGoToTip}
+            onFinish={() => navigate(afterPaymentPath())}
             externalPaid={(paymentChargeId || activeSplitData?.find(s => s.id === (guestIdParam || activeGuestId))?.charge_id)
               ? false
               : (guests.find(g => g.id === (guestIdParam || activeGuestId))?.paid || false)}
@@ -3132,10 +3133,7 @@ const App: React.FC = () => {
         <Route path="/cash-payment" element={
           <CashPaymentView 
             onBack={() => navigateToView('INDIVIDUAL_SHARE')}
-            onNext={() => navigate(isKeepOrdering() ? '/feedback' : '/tip')}
-            tableFullyPaid={tableFullyPaid}
-            onBackToMenu={backToMenuAfterPayment}
-            onCloseTable={closeTableAndGoToTip}
+            onNext={() => navigate(afterPaymentPath())}
             amount={(() => {
               // Calcular el amount basándose en el guestId de la URL o activeGuestId
               const targetGuestId = guestIdParam || activeGuestId;
@@ -3181,12 +3179,9 @@ const App: React.FC = () => {
           return receipt
             ? <PaymentSuccessView
                 receipt={receipt}
-                tableFullyPaid={tableFullyPaid}
-                onBackToMenu={backToMenuAfterPayment}
-                onCloseTable={closeTableAndGoToTip}
-                onContinue={() => navigate(isKeepOrdering() ? '/feedback' : '/tip')}
+                onContinue={() => navigate(afterPaymentPath())}
                 onKeepOrdering={(() => { try { return sessionStorage.getItem('splitme_keep_ordering') === '1'; } catch (e) { return false; } })()
-                  ? () => navigate('/feedback')
+                  ? () => navigate(afterPaymentPath())
                   : undefined}
               />
             : <Navigate to={isKeepOrdering() ? '/feedback' : '/tip'} replace />;
@@ -3279,6 +3274,9 @@ const App: React.FC = () => {
               navigate('/scan');
             }}
             keepOrdering={(() => { try { return sessionStorage.getItem('splitme_keep_ordering') === '1'; } catch (e) { return false; } })()}
+            offerCloseChoice={tableFullyPaid && latestPaidRound.key !== (() => { try { return sessionStorage.getItem('splitme_feedback_round_done'); } catch (e) { return null; } })()}
+            onBackToMenu={backToMenuAfterPayment}
+            onCloseTable={closeTableAndGoToTip}
             guests={guests} 
             splitData={confirmationSplitData}
             tableNumber={currentTable?.table_number}

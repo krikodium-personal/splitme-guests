@@ -17,7 +17,7 @@ interface ConfirmationViewProps {
  waiter?: any;
 }
 
-const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackToStart, keepOrdering, guests = [], splitData, tableNumber, activeOrderId, currentGuestId, waiter }) => {
+const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackToStart, keepOrdering, offerCloseChoice, onBackToMenu, onCloseTable, guests = [], splitData, tableNumber, activeOrderId, currentGuestId, waiter }) => {
  const [loadedGuests, setLoadedGuests] = useState<Guest[]>(guests);
  const [isLoading, setIsLoading] = useState(false);
  const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
@@ -481,7 +481,18 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
  />
 
  <div className="fixed bottom-0 left-0 w-full bg-background-dark border-t border-border-dark p-4 shadow-2xl z-50">
- {!shouldShowPayCta ? (
+ {offerCloseChoice && onBackToMenu && onCloseTable ? (
+ <div className="flex flex-col gap-3">
+ <button onClick={onBackToMenu} className="w-full bg-primary hover:bg-primary-dark text-black font-bold text-lg h-14 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-primary/20">
+ <span className="material-symbols-outlined">restaurant_menu</span>
+ <span>Volver al menú</span>
+ </button>
+ <button onClick={onCloseTable} className="w-full bg-white/5 border border-white/10 text-white font-bold h-12 rounded-xl flex items-center justify-center gap-2">
+ <span className="material-symbols-outlined">door_front</span>
+ <span>Cerrar la mesa e irme</span>
+ </button>
+ </div>
+ ) : !shouldShowPayCta ? (
  <button 
  onClick={onBackToStart || (() => {
  clearSession();
