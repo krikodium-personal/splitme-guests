@@ -2932,6 +2932,7 @@ const App: React.FC = () => {
         <Route path="/split-bill" element={
           <SplitBillView 
             coveredItemIds={hasChargesWithoutCoverage ? null : coveredItemIds}
+            paidCharges={orderGuestCharges.filter(c => c.status === 'paid')}
             guests={guests} 
             cart={cartForSplit} 
             batches={batches}

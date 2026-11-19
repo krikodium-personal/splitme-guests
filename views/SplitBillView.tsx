@@ -19,6 +19,8 @@ interface SplitBillViewProps {
   billDiscountReason?: string;
   /** Ids de platos ya cubiertos por rondas de pago anteriores. null = hay rondas viejas sin ese dato. */
   coveredItemIds?: string[] | null;
+  /** Cargos ya pagados (uno por pago): se listan individualmente en «Pagos registrados». */
+  paidCharges?: { id: string; guest_id: string; amount: number; payment_method?: string | null; payment_id?: string | null; paid_at?: string | null }[];
 }
 
 interface BillItemAssignment {
@@ -77,7 +79,7 @@ const buildAssignments = (
   return units;
 };
 
-const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, onBack, onGoToMenu, onConfirm, menuItems, billDiscountPercent = 0, billDiscountReason = '', coveredItemIds = null }) => {
+const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, onBack, onGoToMenu, onConfirm, menuItems, billDiscountPercent = 0, billDiscountReason = '', coveredItemIds = null, paidCharges = [] }) => {
   const discountFactor = 1 - Math.min(Math.max(billDiscountPercent, 0), 100) / 100;
   const hasBillDiscount = discountFactor < 1;
   /** Importe con el descuento de la cuenta aplicado (lo que efectivamente se cobra). */
@@ -164,6 +166,24 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
         };
       });
   }, [guests]);
+
+  // Un renglón por pago (un comensal puede haber pagado varias veces en distintas rondas)
+  const paymentRows = useMemo(() => {
+    if (paidCharges.length === 0) return paidGuestDetails.map(g => ({ key: g.id, guestId: g.id, name: g.name, amount: g.amount, methodLabel: g.methodLabel, paymentReference: g.paymentReference }));
+    return [...paidCharges]
+      .sort((a, b) => String(a.paid_at || '').localeCompare(String(b.paid_at || '')))
+      .map(c => {
+        const guest = guests.find(g => g.id === c.guest_id);
+        return {
+          key: c.id,
+          guestId: c.guest_id,
+          name: guest?.name || 'Comensal',
+          amount: Number(c.amount) || 0,
+          methodLabel: getPaymentMethodLabel(c.payment_method),
+          paymentReference: formatPaymentReference(c.payment_id),
+        };
+      });
+  }, [paidCharges, paidGuestDetails, guests]);
 
   const paidRegisteredTotal = useMemo(() => {
     return paidGuestDetails.reduce((sum, guest) => sum + (Number(guest.amount) || 0), 0);
@@ -510,14 +530,14 @@ const SplitBillView: React.FC<SplitBillViewProps> = ({ guests, cart, batches, on
                 <div className="flex items-center justify-between gap-3 mb-3">
                   <p className="text-[10px] font-black uppercase tracking-widest text-amber-400">Pagos registrados</p>
                   <span className="text-[10px] font-black text-amber-400/80 tabular-nums">
-                    {paidGuestDetails.length} {paidGuestDetails.length === 1 ? 'pago' : 'pagos'}
+                    {paymentRows.length} {paymentRows.length === 1 ? 'pago' : 'pagos'}
                   </span>
                 </div>
                 <div className="space-y-2">
-                  {paidGuestDetails.map(guest => (
-                    <div key={guest.id} className="rounded-xl bg-black/20 border border-amber-500/10 p-3">
+                  {paymentRows.map(guest => (
+                    <div key={guest.key} className="rounded-xl bg-black/20 border border-amber-500/10 p-3">
                       <div className="flex items-center gap-3">
-                        <div className={`size-9 rounded-full flex items-center justify-center font-black text-[10px] shrink-0 ${getGuestColor(guest.id)}`}>
+                        <div className={`size-9 rounded-full flex items-center justify-center font-black text-[10px] shrink-0 ${getGuestColor(guest.guestId)}`}>
                           {getInitials(guest.name)}
                         </div>
                         <div className="min-w-0 flex-1">
