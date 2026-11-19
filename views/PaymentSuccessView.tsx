@@ -88,16 +88,10 @@ const PaymentSuccessView: React.FC<Props> = ({ receipt, onContinue, onKeepOrderi
                 onClick={onKeepOrdering}
                 className="w-full h-14 rounded-full bg-white text-emerald-800 font-black text-lg shadow-2xl flex items-center justify-center gap-2 active:scale-[0.98] transition"
               >
-                Seguir pidiendo
-                <span className="material-symbols-outlined">restaurant_menu</span>
+                Continuar
+                <span className="material-symbols-outlined">arrow_forward</span>
               </button>
-              <button
-                onClick={onContinue}
-                className="mt-3 w-full h-12 rounded-full bg-white/15 border border-white/30 text-white font-bold active:scale-[0.98] transition"
-              >
-                Dejar propina ahora
-              </button>
-              <p className="mt-3 text-center text-xs text-white/70">Pagaste lo consumido hasta ahora. Tus productos sin enviar siguen en tu pedido.</p>
+              <p className="mt-3 text-center text-xs text-white/70">Pagaste lo enviado hasta ahora. Ahora podés calificar esos platos y seguir pidiendo; tus productos sin enviar siguen en tu pedido.</p>
             </>
           ) : (
             <>

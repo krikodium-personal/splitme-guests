@@ -161,7 +161,11 @@ async function enrichMenuItemsWithVariants(menuItemsData: any[], supabaseClient:
 }
 
 /** El comensal eligió pagar su parte y seguir pidiendo: la sesión de la mesa no se borra al pagar. */
+const isClosingTableFlag = () => { try { return sessionStorage.getItem('splitme_closing_table') === '1'; } catch (e) { return false; } };
 const isKeepOrdering = () => { try { return sessionStorage.getItem('splitme_keep_ordering') === '1'; } catch (e) { return false; } };
+
+/** Después de un pago: si va a seguir pidiendo solo califica lo pagado; si cierra la mesa pasa por propina primero. */
+const feedbackModeNow = (): 'dishes' | 'final' | 'closeonly' => (isClosingTableFlag() ? 'closeonly' : isKeepOrdering() ? 'dishes' : 'final');
 
 /** El comensal eligió «Cerrar la mesa»: después de propina y calificación se muestra el agradecimiento final. */
 const isClosingTable = () => { try { return sessionStorage.getItem('splitme_closing_table') === '1'; } catch (e) { return false; } };
@@ -2080,7 +2084,7 @@ const App: React.FC = () => {
           if (success) {
             // Si eligió seguir pidiendo, la sesión de la mesa se conserva
             if (!isKeepOrdering()) clearSession();
-            navigate('/tip');
+            navigate(isKeepOrdering() ? '/feedback' : '/tip');
           } else {
             alert("Hubo un error al registrar el pago. Por favor, contacta al restaurante.");
           }
@@ -2089,7 +2093,7 @@ const App: React.FC = () => {
         clearMpReturn();
         // Si eligió seguir pidiendo, la sesión de la mesa se conserva
         if (!isKeepOrdering()) clearSession();
-        navigate('/tip');
+        navigate(isKeepOrdering() ? '/feedback' : '/tip');
       }
       return;
     }
@@ -2261,6 +2265,19 @@ const App: React.FC = () => {
       // Si eligió seguir pidiendo, la sesión de la mesa se conserva
       if (!isKeepOrdering()) clearSession();
       navigateToView('CONFIRMATION'); 
+    }
+  };
+
+  // Al terminar la calificación: seguir pidiendo → menú; cerrar la mesa → agradecimiento; pago final → estado de cuenta
+  const finishFeedback = () => {
+    const mode = feedbackModeNow();
+    if (mode === 'dishes') {
+      try { sessionStorage.removeItem('splitme_keep_ordering'); } catch (e) {}
+      navigateToView('MENU');
+    } else if (mode === 'closeonly') {
+      navigate('/thanks');
+    } else {
+      navigate('/confirmation');
     }
   };
 
@@ -2441,7 +2458,7 @@ const App: React.FC = () => {
     const g = guests.find(x => x.id === pm.waitingGuestId);
     if (g?.paid) {
       setPaymentReturnMessage(null);
-      navigate('/tip');
+      navigate(isKeepOrdering() ? '/feedback' : '/tip');
     }
   }, [guests, paymentReturnMessage, navigate]);
 
@@ -2971,7 +2988,7 @@ const App: React.FC = () => {
                 navigateToView('INDIVIDUAL_SHARE');
               }
             }}
-            onNavigateToTip={() => navigate('/tip')}
+            onNavigateToTip={() => navigate(isKeepOrdering() ? '/feedback' : '/tip')}
             cart={cartForSplit} 
             guests={guests} 
             menuItems={menuItems} 
@@ -3055,7 +3072,7 @@ const App: React.FC = () => {
                 navigate('/payment-success');
                 return;
               }
-              navigate('/tip');
+              navigate(isKeepOrdering() ? '/feedback' : '/tip');
             }}
             onError={(message) => alert(message)}
           />
@@ -3076,7 +3093,7 @@ const App: React.FC = () => {
         <Route path="/cash-payment" element={
           <CashPaymentView 
             onBack={() => navigateToView('INDIVIDUAL_SHARE')}
-            onNext={() => navigate('/tip')}
+            onNext={() => navigate(isKeepOrdering() ? '/feedback' : '/tip')}
             amount={(() => {
               // Calcular el amount basándose en el guestId de la URL o activeGuestId
               const targetGuestId = guestIdParam || activeGuestId;
@@ -3122,12 +3139,12 @@ const App: React.FC = () => {
           return receipt
             ? <PaymentSuccessView
                 receipt={receipt}
-                onContinue={() => navigate('/tip')}
+                onContinue={() => navigate(isKeepOrdering() ? '/feedback' : '/tip')}
                 onKeepOrdering={(() => { try { return sessionStorage.getItem('splitme_keep_ordering') === '1'; } catch (e) { return false; } })()
-                  ? () => { try { sessionStorage.removeItem('splitme_keep_ordering'); } catch (e) {} navigateToView('MENU'); }
+                  ? () => navigate('/feedback')
                   : undefined}
               />
-            : <Navigate to="/tip" replace />;
+            : <Navigate to={isKeepOrdering() ? '/feedback' : '/tip'} replace />;
         })()} />
         <Route path="/tip" element={
           <TipView
@@ -3137,6 +3154,12 @@ const App: React.FC = () => {
             menuItems={menuItems}
             guestPaidAmount={(() => {
               const targetGuestId = guestIdParam || getActiveGuestId() || activeGuestId;
+              // La propina se calcula sobre todo lo consumido en la mesa: lo que el comensal pagó en todas las rondas
+              const ownPaid = orderGuestCharges
+                .filter(c => c.status === 'paid' && c.guest_id === targetGuestId)
+                .reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
+              if (ownPaid > 0) return ownPaid;
+              if (paidChargesTotal > 0) return paidChargesTotal;
               try {
                 const stored = Number(sessionStorage.getItem(`splitme_paid_amount_${targetGuestId}`));
                 if (Number.isFinite(stored) && stored > 0) return stored;
@@ -3154,9 +3177,21 @@ const App: React.FC = () => {
         } />
         <Route path="/feedback" element={
           <FeedbackView
-            onNext={() => navigate(isClosingTable() ? '/thanks' : '/confirmation')}
-            onSkip={() => navigate(isClosingTable() ? '/thanks' : '/confirmation')}
-            cart={cartForSplit}
+            mode={feedbackModeNow()}
+            orderId={activeOrderId}
+            onNext={() => finishFeedback()}
+            onSkip={() => finishFeedback()}
+            cart={(() => {
+              if (feedbackModeNow() === 'closeonly') return [];
+              // Solo los platos de la última ronda pagada (los anteriores ya se calificaron en su momento)
+              const paid = orderGuestCharges.filter(c => c.status === 'paid');
+              const latest = [...paid].sort((a, b) => String(b.paid_at || '').localeCompare(String(a.paid_at || '')))[0];
+              if (!latest) return cartForSplit;
+              const roundCharges = paid.filter(c => (c.split_round_id || c.id) === (latest.split_round_id || latest.id));
+              const ids = new Set<string>();
+              roundCharges.forEach(c => (c.covered_item_ids || []).forEach(id => ids.add(id)));
+              return ids.size > 0 ? cart.filter(i => ids.has(i.id)) : cartForSplit;
+            })()}
             menuItems={menuItems}
             waiter={currentWaiter}
             restaurant={restaurant}

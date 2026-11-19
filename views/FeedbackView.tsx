@@ -11,9 +11,14 @@ interface FeedbackViewProps {
   menuItems: MenuItem[];
   waiter?: any;
   restaurant?: any;
+  /** dishes: solo califica los platos pagados (sigue en la mesa) · final: platos de la última ronda + mesero + experiencia · closeonly: mesero + experiencia. */
+  mode?: 'dishes' | 'final' | 'closeonly';
+  orderId?: string | null;
 }
 
-const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuItems, waiter, restaurant }) => {
+const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuItems, waiter, restaurant, mode = 'final', orderId: orderIdProp }) => {
+  const showGeneral = mode !== 'dishes';
+  const showDishes = mode !== 'closeonly';
   const getItemImageUrl = (imageUrl?: string | null) => (imageUrl || '').trim() || restaurant?.logo_url || '';
   const [restaurantRating, setRestaurantRating] = useState(0);
   const [waiterRating, setWaiterRating] = useState(0);
@@ -136,7 +141,7 @@ const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuI
   };
 
   const handleSendFeedback = async () => {
-    if (restaurantRating === 0) {
+    if (showGeneral && restaurantRating === 0) {
       alert("Por favor, califica al menos la experiencia general.");
       return;
     }
@@ -145,21 +150,23 @@ const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuI
     try {
       // 1. VALIDACIÓN DE IDs
       const waiterId = (waiter && typeof waiter.id === 'string' && waiter.id.length > 10) ? waiter.id : null;
-      const orderId = (cart[0] as any)?.order_id || null;
+      const orderId = orderIdProp || (cart[0] as any)?.order_id || null;
 
-      // 2. INSERCIÓN EN 'reviews'
-      const { error: reviewError } = await supabase
-        .from('reviews')
-        .insert({
-          restaurant_id: restaurant?.id,
-          order_id: orderId,
-          waiter_id: waiterId,
-          restaurant_rating: restaurantRating,
-          waiter_rating: waiterRating > 0 ? waiterRating : null,
-          comment: comment.trim() || null
-        });
+      // 2. INSERCIÓN EN 'reviews' (solo cuando se califica la experiencia: al cerrar la mesa)
+      if (showGeneral) {
+        const { error: reviewError } = await supabase
+          .from('reviews')
+          .insert({
+            restaurant_id: restaurant?.id,
+            order_id: orderId,
+            waiter_id: waiterId,
+            restaurant_rating: restaurantRating,
+            waiter_rating: waiterRating > 0 ? waiterRating : null,
+            comment: comment.trim() || null
+          });
 
-      if (reviewError) throw reviewError;
+        if (reviewError) throw reviewError;
+      }
 
       // 3. ACTUALIZACIÓN MASIVA DE PLATOS ('order_items')
       // Usamos el ID real de la base de datos que ya viene en el carrito tras handleSendOrder
@@ -179,7 +186,7 @@ const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuI
       await Promise.all(Array.from(ratedMenuItemIds).map(syncMenuItemStats));
 
       // 4. ACTUALIZAR ESTADÍSTICAS DEL MESERO
-      if (waiterId && waiterRating > 0) {
+      if (showGeneral && waiterId && waiterRating > 0) {
         await syncWaiterStats(waiterId);
       }
 
@@ -221,7 +228,7 @@ const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuI
         <h2 className="text-3xl font-black mb-3 tracking-tight">¡Gracias por tu opinión!</h2>
         <p className="text-text-secondary text-lg leading-relaxed">
           Tu feedback ya está en nuestro sistema.<br/>
-          Cerrando sesión de la mesa...
+          {mode === 'dishes' ? 'Volviendo al menú...' : 'Un momento...'}
         </p>
       </div>
     );
@@ -239,11 +246,12 @@ const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuI
 
       <main className="flex-1 px-5 pb-32">
         <div className="py-8 text-center animate-fade-in-up">
-          <h2 className="text-2xl font-black leading-tight mb-2 tracking-tight">¡Esperamos verte pronto!</h2>
-          <p className="text-text-secondary text-sm">Tu opinión alimenta nuestro crecimiento.</p>
+          <h2 className="text-2xl font-black leading-tight mb-2 tracking-tight">{mode === 'dishes' ? '¿Qué tal estuvo lo que pagaste?' : '¡Esperamos verte pronto!'}</h2>
+          <p className="text-text-secondary text-sm">{mode === 'dishes' ? 'Calificá los platos de esta parte de la cuenta.' : 'Tu opinión alimenta nuestro crecimiento.'}</p>
         </div>
 
         {/* DIMENSIÓN 1: Experiencia General y Muro de Voces */}
+        {showGeneral && (<>
         <div className="mb-8 animate-fade-in-up" style={{ animationDelay: '0.1s' }}>
           <div className="flex items-center gap-2 mb-4 px-1">
             <span className="material-symbols-outlined text-primary">storefront</span>
@@ -295,8 +303,10 @@ const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuI
           </div>
         </div>
 
+        </>)}
+
         {/* DIMENSIÓN 3: Tus Platillos (Favoritos del Público) */}
-        {uniqueItems.length > 0 && (
+        {showDishes && uniqueItems.length > 0 && (
           <div className="mb-8 animate-fade-in-up" style={{ animationDelay: '0.3s' }}>
             <div className="flex items-center gap-2 mb-4 px-1">
               <span className="material-symbols-outlined text-primary">restaurant</span>
@@ -327,9 +337,9 @@ const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuI
       <div className="fixed bottom-0 left-0 w-full p-4 bg-gradient-to-t from-background-dark via-background-dark to-transparent pt-12 pb-8 z-20">
         <button 
           onClick={handleSendFeedback} 
-          disabled={isSubmitting || restaurantRating === 0}
+          disabled={isSubmitting || (showGeneral && restaurantRating === 0)}
           className={`w-full h-16 rounded-2xl font-black text-lg flex items-center justify-center gap-3 transition-all shadow-2xl ${
-            (isSubmitting || restaurantRating === 0) ? 'bg-white/5 text-white/20 cursor-not-allowed' : 'bg-primary text-black shadow-primary/20 hover:scale-[1.02] active:scale-[0.98]'
+            (isSubmitting || (showGeneral && restaurantRating === 0)) ? 'bg-white/5 text-white/20 cursor-not-allowed' : 'bg-primary text-black shadow-primary/20 hover:scale-[1.02] active:scale-[0.98]'
           }`}
         >
           {isSubmitting ? (
@@ -339,7 +349,7 @@ const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuI
             </>
           ) : (
             <>
-              <span>Enviar Opinión</span>
+              <span>{mode === 'dishes' ? 'Enviar calificación' : 'Enviar Opinión'}</span>
               <span className="material-symbols-outlined font-black">send</span>
             </>
           )}
