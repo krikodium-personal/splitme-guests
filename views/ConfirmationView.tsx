@@ -4,7 +4,6 @@ import { getInitials, getGuestColor } from './GuestInfoView';
 import { formatPrice } from './MenuView';
 import { supabase } from '../lib/supabase';
 import { clearSession } from '../lib/sessionCookies';
-import WaiterRequestModal from './WaiterRequestModal';
 
 interface ConfirmationViewProps {
  onRestart: () => void;
@@ -20,7 +19,6 @@ interface ConfirmationViewProps {
 const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackToStart, keepOrdering, offerCloseChoice, onBackToMenu, onCloseTable, guests = [], splitData, tableNumber, activeOrderId, currentGuestId, waiter }) => {
  const [loadedGuests, setLoadedGuests] = useState<Guest[]>(guests);
  const [isLoading, setIsLoading] = useState(false);
- const [isWaiterModalOpen, setIsWaiterModalOpen] = useState(false);
  const [waiterData, setWaiterData] = useState<any>(waiter);
  const [totalAmount, setTotalAmount] = useState<number>(0);
  const [unservedAmount, setUnservedAmount] = useState<number>(0);
@@ -459,26 +457,6 @@ const ConfirmationView: React.FC<ConfirmationViewProps> = ({ onRestart, onBackTo
  })
  )}
  </div>
-
- {/* Botón flotante para solicitar al mesero - arriba del footer, separado */}
- {waiterData && (
- <button
- onClick={() => setIsWaiterModalOpen(true)}
- className="fixed bottom-28 right-4 z-[70] size-14 bg-primary hover:bg-primary-dark text-black rounded-full shadow-lg shadow-primary/30 flex items-center justify-center transition-all active:scale-95"
- title="Solicitar al mesero"
- >
- <span className="material-symbols-outlined text-2xl">notifications</span>
- </button>
- )}
-
- {/* Modal de solicitud al mesero */}
- <WaiterRequestModal
- isOpen={isWaiterModalOpen}
- onClose={() => setIsWaiterModalOpen(false)}
- waiter={waiterData}
- tableNumber={tableNumber}
- orderId={activeOrderId}
- />
 
  <div className="fixed bottom-0 left-0 w-full bg-background-dark border-t border-border-dark p-4 shadow-2xl z-50">
  {offerCloseChoice && onBackToMenu && onCloseTable ? (
