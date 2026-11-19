@@ -4,6 +4,18 @@ const DEFAULT_WAITER_PHOTO = 'https://lh3.googleusercontent.com/aida-public/AB6A
 
 export const WAITER_TAB_INTRO_MS = 5800;
 
+// La animación de entrada (la pestaña se expande con el saludo) solo corre la primera vez que se ve en la sesión.
+const INTRO_KEY = 'splitme_waiter_tab_intro_done';
+let introShownInMemory = false;
+const hasIntroPlayed = () => {
+  if (introShownInMemory) return true;
+  try { return sessionStorage.getItem(INTRO_KEY) === '1'; } catch (e) { return false; }
+};
+const markIntroPlayed = () => {
+  introShownInMemory = true;
+  try { sessionStorage.setItem(INTRO_KEY, '1'); } catch (e) { /* sin sessionStorage */ }
+};
+
 const TAB_HEIGHT = 56; // h-14
 const EDGE_MARGIN = 8;
 const POSITION_KEY = 'splitme_waiter_tab_y';
@@ -29,6 +41,12 @@ const WaiterTabButton: React.FC<WaiterTabButtonProps> = ({ waiter, onClick }) =>
   });
   const drag = useRef<{ startPointerY: number; startY: number; moved: boolean } | null>(null);
   const justDragged = useRef(false);
+  // Se decide una sola vez al montar: si ya se animó antes en esta sesión, entra sin expandirse
+  const [playIntro] = useState(() => !hasIntroPlayed());
+  useEffect(() => {
+    // Se marca al montar: si cambia de pantalla antes de que termine, no se vuelve a expandir
+    if (playIntro) markIntroPlayed();
+  }, [playIntro]);
 
   useEffect(() => {
     const onResize = () => setY(prev => clampY(prev));
@@ -78,7 +96,7 @@ const WaiterTabButton: React.FC<WaiterTabButtonProps> = ({ waiter, onClick }) =>
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
         style={{ top: y, touchAction: 'none' }}
-        className="group pointer-events-auto absolute -right-8 h-14 cursor-grab active:cursor-grabbing select-none pr-12 flex items-center rounded-l-full bg-primary shadow-xl shadow-black/40 motion-safe:animate-waiter-tab-in"
+        className={`group pointer-events-auto absolute -right-8 h-14 cursor-grab active:cursor-grabbing select-none pr-12 flex items-center rounded-l-full bg-primary shadow-xl shadow-black/40 ${playIntro ? 'motion-safe:animate-waiter-tab-in' : ''}`}
         title="Solicitar al mesero"
       >
         <span className="size-14 shrink-0 rounded-full overflow-hidden border-[3px] border-primary bg-surface-dark transition-transform group-active:scale-95">
@@ -88,7 +106,7 @@ const WaiterTabButton: React.FC<WaiterTabButtonProps> = ({ waiter, onClick }) =>
             className="w-full h-full object-cover"
           />
         </span>
-        <span className="block overflow-hidden max-w-0 opacity-0 motion-safe:animate-waiter-tab-text">
+        <span className={`block overflow-hidden max-w-0 opacity-0 ${playIntro ? 'motion-safe:animate-waiter-tab-text' : ''}`}>
           <span className="block w-[11.5rem] pl-3 pr-2 text-left text-black leading-tight">
             <span className="block text-[13px] font-black truncate">{name ? `Hola, soy ${name}` : 'Hola, soy tu mesero'}</span>
             <span className="block text-[12px] font-semibold text-black/75">pedime lo que necesites</span>
