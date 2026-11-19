@@ -11,9 +11,15 @@ interface TransferPaymentViewProps {
   orderId?: string;
   chargeId?: string | null;
   externalPaid?: boolean;
+  /** Al confirmarse el pago (si todavía hay saldo o se sigue pidiendo). */
+  onFinish?: () => void;
+  /** Pagado todo lo enviado y sin saldos pendientes: ofrece volver al menú o cerrar la mesa. */
+  tableFullyPaid?: boolean;
+  onBackToMenu?: () => void;
+  onCloseTable?: () => void;
 }
 
-const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amount, restaurant, guestId, orderId, chargeId, externalPaid }) => {
+const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amount, restaurant, guestId, orderId, chargeId, externalPaid, onFinish, tableFullyPaid, onBackToMenu, onCloseTable }) => {
   const navigate = useNavigate();
   const [bankData, setBankData] = useState({
     alias: '',
@@ -267,7 +273,7 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
   };
 
   const handleNavigateToConfirmation = () => {
-    navigate('/tip');
+    if (onFinish) onFinish(); else navigate('/tip');
   };
 
   // Determinar el texto y acción del botón según el estado
@@ -412,6 +418,18 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
 
       {/* Footer con botón de confirmación */}
       <div className="fixed bottom-0 z-50 w-full border-t border-white/5 bg-background-dark/95 backdrop-blur-xl p-6 pb-10 shadow-[0_-10px_50px_rgba(0,0,0,0.6)]">
+        {isPaid && tableFullyPaid && onBackToMenu && onCloseTable ? (
+          <div className="flex flex-col gap-3">
+            <button onClick={onBackToMenu} className="flex w-full items-center justify-center gap-3 rounded-2xl h-16 bg-primary shadow-xl shadow-primary/20 active:scale-[0.98] transition-all">
+              <span className="material-symbols-outlined text-black font-black">restaurant_menu</span>
+              <span className="text-lg font-black text-black">Volver al menú</span>
+            </button>
+            <button onClick={onCloseTable} className="flex w-full items-center justify-center gap-2 rounded-2xl h-14 bg-white/5 border border-white/10 text-white font-bold active:scale-[0.98] transition-all">
+              <span className="material-symbols-outlined">door_front</span>
+              <span>Cerrar la mesa e irme</span>
+            </button>
+          </div>
+        ) : (
         <button 
           onClick={handleButtonClick}
           disabled={isWaitingConfirmation && !isPaid}
@@ -435,6 +453,7 @@ const TransferPaymentView: React.FC<TransferPaymentViewProps> = ({ onBack, amoun
             </>
           )}
         </button>
+        )}
       </div>
     </div>
   );

@@ -14,10 +14,14 @@ interface CashPaymentViewProps {
   menuItems: MenuItem[];
   waiter?: any;
   restaurant?: any;
+  /** Pagado todo lo enviado y sin saldos pendientes: ofrece volver al menú o cerrar la mesa. */
+  tableFullyPaid?: boolean;
+  onBackToMenu?: () => void;
+  onCloseTable?: () => void;
 }
 
 const CashPaymentView: React.FC<CashPaymentViewProps> = ({ 
-  onBack, onNext, amount, guestId, orderId, guestName, cart, menuItems, waiter, restaurant 
+  onBack, onNext, amount, guestId, orderId, guestName, cart, menuItems, waiter, restaurant, tableFullyPaid, onBackToMenu, onCloseTable 
 }) => {
   const [isPaid, setIsPaid] = useState(false);
   const channelRef = useRef<any>(null);
@@ -107,6 +111,18 @@ const CashPaymentView: React.FC<CashPaymentViewProps> = ({
         </div>
         <h2 className="text-3xl font-black mb-3 tracking-tight">¡Pago confirmado!</h2>
         <p className="text-text-secondary text-lg mb-10">Gracias por tu pago en efectivo.</p>
+        {tableFullyPaid && onBackToMenu && onCloseTable ? (
+          <div className="w-full max-w-xs flex flex-col gap-3">
+            <button onClick={onBackToMenu} className="w-full h-16 rounded-2xl font-black text-lg bg-primary text-black shadow-primary/20 flex items-center justify-center gap-2">
+              <span className="material-symbols-outlined font-black">restaurant_menu</span>
+              <span>Volver al menú</span>
+            </button>
+            <button onClick={onCloseTable} className="w-full h-14 rounded-2xl font-bold bg-white/5 border border-white/10 text-white flex items-center justify-center gap-2">
+              <span className="material-symbols-outlined">door_front</span>
+              <span>Cerrar la mesa e irme</span>
+            </button>
+          </div>
+        ) : (
         <button 
           onClick={onNext}
           className="w-full max-w-xs h-16 rounded-2xl font-black text-lg bg-primary text-black shadow-primary/20 flex items-center justify-center gap-2"
@@ -114,6 +130,7 @@ const CashPaymentView: React.FC<CashPaymentViewProps> = ({
           <span>Continuar</span>
           <span className="material-symbols-outlined font-black">arrow_forward</span>
         </button>
+        )}
       </div>
     );
   }

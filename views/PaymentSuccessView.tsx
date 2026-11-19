@@ -30,6 +30,10 @@ interface Props {
   onContinue: () => void;
   /** Si viene, el pago fue de una parte y el comensal pidió seguir pidiendo: se ofrece volver al menú. */
   onKeepOrdering?: () => void;
+  /** Pagado todo lo enviado y sin saldos pendientes: ofrece volver al menú o cerrar la mesa. */
+  tableFullyPaid?: boolean;
+  onBackToMenu?: () => void;
+  onCloseTable?: () => void;
 }
 
 const Row: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value }) => (
@@ -39,7 +43,7 @@ const Row: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value
   </div>
 );
 
-const PaymentSuccessView: React.FC<Props> = ({ receipt, onContinue, onKeepOrdering }) => {
+const PaymentSuccessView: React.FC<Props> = ({ receipt, onContinue, onKeepOrdering, tableFullyPaid, onBackToMenu, onCloseTable }) => {
   const when = useMemo(() => {
     const d = new Date(receipt.paidAt);
     return Number.isNaN(d.getTime()) ? '' : d.toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
@@ -82,7 +86,24 @@ const PaymentSuccessView: React.FC<Props> = ({ receipt, onContinue, onKeepOrderi
         </div>
 
         <div className="mt-auto pt-8">
-          {onKeepOrdering ? (
+          {tableFullyPaid && onBackToMenu && onCloseTable ? (
+            <>
+              <button
+                onClick={onBackToMenu}
+                className="w-full h-14 rounded-full bg-white text-emerald-800 font-black text-lg shadow-2xl flex items-center justify-center gap-2 active:scale-[0.98] transition"
+              >
+                Volver al menú
+                <span className="material-symbols-outlined">restaurant_menu</span>
+              </button>
+              <button
+                onClick={onCloseTable}
+                className="mt-3 w-full h-12 rounded-full bg-white/15 border border-white/30 text-white font-bold active:scale-[0.98] transition"
+              >
+                Cerrar la mesa e irme
+              </button>
+              <p className="mt-3 text-center text-xs text-white/70">La cuenta está saldada. Si te vas, te pedimos una propina y tu opinión.</p>
+            </>
+          ) : onKeepOrdering ? (
             <>
               <button
                 onClick={onKeepOrdering}

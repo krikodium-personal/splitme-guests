@@ -18,7 +18,7 @@ interface FeedbackViewProps {
 
 const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuItems, waiter, restaurant, mode = 'final', orderId: orderIdProp }) => {
   const showGeneral = mode !== 'dishes';
-  const showDishes = mode !== 'closeonly';
+  const showDishes = true; // si no hay platos por calificar, la lista simplemente no aparece
   const getItemImageUrl = (imageUrl?: string | null) => (imageUrl || '').trim() || restaurant?.logo_url || '';
   const [restaurantRating, setRestaurantRating] = useState(0);
   const [waiterRating, setWaiterRating] = useState(0);
@@ -27,7 +27,7 @@ const FeedbackView: React.FC<FeedbackViewProps> = ({ onNext, onSkip, cart, menuI
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   // La calificación nunca es obligatoria: "Enviar" solo se habilita si puso al menos una estrella; si no, avanza con "Omitir"
-  const hasAnyRating = restaurantRating > 0 || waiterRating > 0 || Object.values(itemRatings).some(v => v > 0);
+  const hasAnyRating = restaurantRating > 0 || waiterRating > 0 || Object.values(itemRatings).some(v => Number(v) > 0);
 
   // Agrupar items únicos para la interfaz
   const uniqueItems = Array.from(new Set(cart.map(i => i.itemId)))

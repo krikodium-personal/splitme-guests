@@ -2268,9 +2268,55 @@ const App: React.FC = () => {
     }
   };
 
+  // ¿Ya se pagó todo lo enviado y ningún comensal tiene saldo pendiente? (pantallas de pago confirmado)
+  const tableFullyPaid = (() => {
+    const sent = cart.reduce((sum, item) => {
+      if (!item.batch_id) return sum;
+      const batch = batches.find(b => b.id === item.batch_id);
+      if ((batch?.status || '').trim().toUpperCase() === 'CREADO') return sum;
+      const menuItem = menuItems.find(m => m.id === item.itemId);
+      return sum + (item.unitPrice ?? menuItem?.price ?? 0) * item.quantity;
+    }, 0);
+    const payableSent = Math.round(sent * (1 - billDiscount.percent / 100) * 100) / 100;
+    const hasPending = orderGuestCharges.some(c => c.status === 'pending' && (Number(c.amount) || 0) > 0);
+    return paidChargesTotal > 0 && !hasPending && payableSent - paidChargesTotal <= 0.01;
+  })();
+
+  // Última ronda de pago: id de la ronda y platos que cubrió
+  const latestPaidRound = (() => {
+    const paid = orderGuestCharges.filter(c => c.status === 'paid');
+    const latest = [...paid].sort((a, b) => String(b.paid_at || '').localeCompare(String(a.paid_at || '')))[0];
+    if (!latest) return { key: null as string | null, items: cartForSplit };
+    const key = latest.split_round_id || latest.id;
+    const ids = new Set<string>();
+    paid.filter(c => (c.split_round_id || c.id) === key).forEach(c => (c.covered_item_ids || []).forEach(id => ids.add(id)));
+    return { key, items: ids.size > 0 ? cart.filter(i => ids.has(i.id)) : cartForSplit };
+  })();
+
+  // Pago confirmado y mesa saldada: elige volver al menú (califica los platos y sigue) o cerrar la mesa e irse
+  const backToMenuAfterPayment = () => {
+    try { sessionStorage.setItem('splitme_keep_ordering', '1'); } catch (e) {}
+    navigate('/feedback');
+  };
+  const closeTableAndGoToTip = async () => {
+    try { sessionStorage.setItem('splitme_closing_table', '1'); } catch (e) {}
+    // Cierra la orden también en el admin (y libera la mesa). Si falla, el flujo sigue y el mesero puede cerrarla.
+    if (supabase && activeOrderId && restaurant?.id) {
+      try {
+        const { data, error } = await supabase.rpc('close_order_as_cerrado', { order_id: activeOrderId, restaurant_id_param: restaurant.id });
+        if (error || (data && (data as any).error)) console.warn('[DineSplit] No se pudo cerrar la orden:', error || (data as any).error);
+      } catch (e) {
+        console.warn('[DineSplit] Error al cerrar la orden:', e);
+      }
+    }
+    navigate('/tip');
+  };
+
   // Al terminar la calificación: seguir pidiendo → menú; cerrar la mesa → agradecimiento; pago final → estado de cuenta
   const finishFeedback = () => {
     const mode = feedbackModeNow();
+    // Los platos de esta ronda ya pasaron por la calificación (se calificaron o se omitieron)
+    if (latestPaidRound.key) { try { sessionStorage.setItem('splitme_feedback_round_done', latestPaidRound.key); } catch (e) {} }
     if (mode === 'dishes') {
       try { sessionStorage.removeItem('splitme_keep_ordering'); } catch (e) {}
       navigateToView('MENU');
@@ -2877,19 +2923,7 @@ const App: React.FC = () => {
             onDiscardUnsent={handleDiscardUnsentItems}
             alreadyPaidTotal={paidChargesTotal}
             onGoToMenu={() => navigateToView('MENU')}
-            onCloseTable={async () => {
-              try { sessionStorage.setItem('splitme_closing_table', '1'); } catch (e) {}
-              // Cierra la orden también en el admin (y libera la mesa). Si falla, el flujo sigue y el mesero puede cerrarla.
-              if (supabase && activeOrderId && restaurant?.id) {
-                try {
-                  const { data, error } = await supabase.rpc('close_order_as_cerrado', { order_id: activeOrderId, restaurant_id_param: restaurant.id });
-                  if (error || (data && (data as any).error)) console.warn('[DineSplit] No se pudo cerrar la orden:', error || (data as any).error);
-                } catch (e) {
-                  console.warn('[DineSplit] Error al cerrar la orden:', e);
-                }
-              }
-              navigate('/tip');
-            }}
+            onCloseTable={closeTableAndGoToTip}
             menuItems={menuItems} 
             categories={categories} 
             tableNumber={currentTable?.table_number} 
@@ -3086,6 +3120,10 @@ const App: React.FC = () => {
             guestId={guestIdParam || activeGuestId}
             orderId={activeOrderId || ''}
             chargeId={paymentChargeId || activeSplitData?.find(s => s.id === (guestIdParam || activeGuestId))?.charge_id || null}
+            onFinish={() => navigate(isKeepOrdering() ? '/feedback' : '/tip')}
+            tableFullyPaid={tableFullyPaid}
+            onBackToMenu={backToMenuAfterPayment}
+            onCloseTable={closeTableAndGoToTip}
             externalPaid={(paymentChargeId || activeSplitData?.find(s => s.id === (guestIdParam || activeGuestId))?.charge_id)
               ? false
               : (guests.find(g => g.id === (guestIdParam || activeGuestId))?.paid || false)}
@@ -3095,6 +3133,9 @@ const App: React.FC = () => {
           <CashPaymentView 
             onBack={() => navigateToView('INDIVIDUAL_SHARE')}
             onNext={() => navigate(isKeepOrdering() ? '/feedback' : '/tip')}
+            tableFullyPaid={tableFullyPaid}
+            onBackToMenu={backToMenuAfterPayment}
+            onCloseTable={closeTableAndGoToTip}
             amount={(() => {
               // Calcular el amount basándose en el guestId de la URL o activeGuestId
               const targetGuestId = guestIdParam || activeGuestId;
@@ -3140,6 +3181,9 @@ const App: React.FC = () => {
           return receipt
             ? <PaymentSuccessView
                 receipt={receipt}
+                tableFullyPaid={tableFullyPaid}
+                onBackToMenu={backToMenuAfterPayment}
+                onCloseTable={closeTableAndGoToTip}
                 onContinue={() => navigate(isKeepOrdering() ? '/feedback' : '/tip')}
                 onKeepOrdering={(() => { try { return sessionStorage.getItem('splitme_keep_ordering') === '1'; } catch (e) { return false; } })()
                   ? () => navigate('/feedback')
@@ -3183,15 +3227,11 @@ const App: React.FC = () => {
             onNext={() => finishFeedback()}
             onSkip={() => finishFeedback()}
             cart={(() => {
-              if (feedbackModeNow() === 'closeonly') return [];
-              // Solo los platos de la última ronda pagada (los anteriores ya se calificaron en su momento)
-              const paid = orderGuestCharges.filter(c => c.status === 'paid');
-              const latest = [...paid].sort((a, b) => String(b.paid_at || '').localeCompare(String(a.paid_at || '')))[0];
-              if (!latest) return cartForSplit;
-              const roundCharges = paid.filter(c => (c.split_round_id || c.id) === (latest.split_round_id || latest.id));
-              const ids = new Set<string>();
-              roundCharges.forEach(c => (c.covered_item_ids || []).forEach(id => ids.add(id)));
-              return ids.size > 0 ? cart.filter(i => ids.has(i.id)) : cartForSplit;
+              // Solo los platos de la última ronda pagada; si ya se calificaron al pagar esa parte, no se vuelven a pedir
+              let doneKey: string | null = null;
+              try { doneKey = sessionStorage.getItem('splitme_feedback_round_done'); } catch (e) {}
+              if (feedbackModeNow() === 'closeonly' && latestPaidRound.key && latestPaidRound.key === doneKey) return [];
+              return latestPaidRound.items;
             })()}
             menuItems={menuItems}
             waiter={currentWaiter}
